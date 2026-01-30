@@ -97,7 +97,7 @@ async def retrieve_content(
         for result in retrieval_results:
             # 3. 解析代码提取元数据
             parsed_code = parser_service.parse(
-                file_path=result.file_path,
+                file_path=result.source,
                 content=result.content
             )
             

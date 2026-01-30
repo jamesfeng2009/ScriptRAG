@@ -344,12 +344,13 @@ async def evaluate_and_decide(
             # 记录日志
             state.add_log_entry(
                 agent_name="director",
-                action="simplicity_trigger",
+                action="complexity_trigger",
                 details={
                     "step_id": current_step.step_id,
                     "complexity_score": complexity_score,
                     "recommended_skill": recommended_skill,
-                    "reason": reason
+                    "reason": reason,
+                    "trigger_type": "low_complexity"
                 }
             )
             

@@ -158,7 +158,7 @@ class WorkflowOrchestrator:
         try:
             return await ErrorHandler.with_timeout(
                 plan_outline,
-                timeout_seconds=60.0,
+                60.0,
                 state,
                 self.llm_service
             )
@@ -178,7 +178,7 @@ class WorkflowOrchestrator:
         try:
             return await ErrorHandler.with_timeout(
                 retrieve_content,
-                timeout_seconds=60.0,
+                60.0,
                 state,
                 self.retrieval_service,
                 self.parser_service,
@@ -202,7 +202,7 @@ class WorkflowOrchestrator:
         try:
             return await ErrorHandler.with_timeout(
                 evaluate_and_decide,
-                timeout_seconds=60.0,
+                60.0,
                 state,
                 self.llm_service
             )
@@ -221,18 +221,15 @@ class WorkflowOrchestrator:
         """转向管理器节点包装函数（带超时保护）"""
         logger.info("Executing pivot_manager node")
         try:
-            return await ErrorHandler.with_timeout(
-                handle_pivot,
-                timeout_seconds=30.0,
-                state
-            )
-        except CustomTimeoutError as e:
-            logger.error(f"Pivot manager node timed out: {str(e)}")
-            # 超时时跳过转向
+            # handle_pivot is synchronous, call it directly
+            return handle_pivot(state)
+        except Exception as e:
+            logger.error(f"Pivot manager node failed: {str(e)}")
+            # 失败时跳过转向
             state.pivot_triggered = False
             state.add_log_entry(
                 agent_name="pivot_manager",
-                action="timeout",
+                action="error",
                 details={"error": str(e)}
             )
             return state
@@ -241,20 +238,17 @@ class WorkflowOrchestrator:
         """重试保护节点包装函数（带超时保护）"""
         logger.info("Executing retry_protection node")
         try:
-            return await ErrorHandler.with_timeout(
-                check_retry_limit,
-                timeout_seconds=10.0,
-                state
-            )
-        except CustomTimeoutError as e:
-            logger.error(f"Retry protection node timed out: {str(e)}")
-            # 超时时强制降级
+            # check_retry_limit is synchronous, call it directly
+            return check_retry_limit(state)
+        except Exception as e:
+            logger.error(f"Retry protection node failed: {str(e)}")
+            # 失败时强制降级
             current_step = state.get_current_step()
             if current_step:
                 current_step.status = "skipped"
             state.add_log_entry(
                 agent_name="retry_protection",
-                action="timeout",
+                action="error",
                 details={"error": str(e), "fallback": "skipped"}
             )
             return state
@@ -265,7 +259,7 @@ class WorkflowOrchestrator:
         try:
             return await ErrorHandler.with_timeout(
                 generate_fragment,
-                timeout_seconds=60.0,
+                60.0,
                 state,
                 self.llm_service
             )
@@ -288,7 +282,7 @@ class WorkflowOrchestrator:
         try:
             return await ErrorHandler.with_timeout(
                 verify_fragment_node,
-                timeout_seconds=60.0,
+                60.0,
                 state,
                 self.llm_service
             )
@@ -309,7 +303,7 @@ class WorkflowOrchestrator:
         try:
             return await ErrorHandler.with_timeout(
                 compile_screenplay,
-                timeout_seconds=60.0,
+                60.0,
                 state,
                 self.llm_service
             )

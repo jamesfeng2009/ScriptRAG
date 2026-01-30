@@ -42,6 +42,9 @@ setup(
         "tree-sitter-typescript>=0.21.0",
         "python-dotenv>=1.0.0",
         "aiohttp>=3.9.0",
+        "pyyaml>=6.0.1",
+        "fastapi>=0.109.0",
+        "uvicorn[standard]>=0.27.0",
     ],
     extras_require={
         "dev": [
@@ -51,6 +54,11 @@ setup(
             "black>=23.12.0",
             "ruff>=0.1.9",
             "mypy>=1.8.0",
+        ],
+    },
+    entry_points={
+        "console_scripts": [
+            "screenplay-cli=presentation.cli:main",
         ],
     },
 )

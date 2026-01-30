@@ -226,13 +226,24 @@ class ErrorHandler:
         except WriterError as e:
             logger.warning(f"Writer failed: {str(e)}, retrying with simpler skill")
             # 如果编剧失败，尝试使用更简单的 Skill
-            if 'skill' in kwargs and kwargs['skill'] != 'fallback_summary':
-                kwargs['skill'] = 'fallback_summary'
-                try:
-                    return await func(*args, **kwargs)
-                except Exception as retry_error:
-                    logger.error(f"Retry with simpler skill also failed: {str(retry_error)}")
-                    return fallback_value
+            # 检查 state 参数并修改其 current_skill
+            if args and hasattr(args[0], 'current_skill'):
+                state = args[0]
+                if state.current_skill != 'fallback_summary':
+                    state.current_skill = 'fallback_summary'
+                    state.add_log_entry(
+                        agent_name="error_handler",
+                        action="skill_switch",
+                        details={
+                            "reason": "writer_failure",
+                            "new_skill": "fallback_summary"
+                        }
+                    )
+                    try:
+                        return await func(*args, **kwargs)
+                    except Exception as retry_error:
+                        logger.error(f"Retry with simpler skill also failed: {str(retry_error)}")
+                        return fallback_value
             return fallback_value
         except Exception as e:
             logger.error(f"{component_name} failed with unexpected error: {str(e)}")

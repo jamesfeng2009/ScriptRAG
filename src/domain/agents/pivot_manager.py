@@ -263,6 +263,17 @@ def _handle_complexity_pivot(
     is_high_complexity = "high" in state.pivot_reason.lower()
     is_low_complexity = "low" in state.pivot_reason.lower()
     
+    # If neither high nor low is specified, treat as generic complexity trigger
+    if not is_high_complexity and not is_low_complexity:
+        # Generic complexity trigger - modify description
+        if "[COMPLEXITY]" not in current_step.description:
+            current_step.description = (
+                f"[COMPLEXITY] {current_step.description} "
+                f"(Adjust presentation for complexity)"
+            )
+            current_step.status = "in_progress"
+        return state
+    
     if is_high_complexity:
         # Modify current step to emphasize simplification
         if "[SIMPLIFIED]" not in current_step.description:
@@ -290,6 +301,14 @@ def _handle_complexity_pivot(
     
     elif is_low_complexity:
         # Content is simple, switch back to standard tutorial
+        # Modify current step to indicate simplification
+        if "[STANDARD]" not in current_step.description:
+            current_step.description = (
+                f"[STANDARD] {current_step.description} "
+                f"(Use standard tutorial format)"
+            )
+            current_step.status = "in_progress"
+        
         desired_skill = "standard_tutorial"
         new_skill = constrain_skill_switch(
             current_skill=state.current_skill,

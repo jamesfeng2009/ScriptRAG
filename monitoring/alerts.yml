@@ -1,0 +1,105 @@
+# Prometheus Alert Rules for RAG Screenplay Multi-Agent System
+
+groups:
+  - name: screenplay_alerts
+    interval: 30s
+    rules:
+      # High error rate
+      - alert: HighErrorRate
+        expr: rate(errors_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value }} errors/sec for component {{ $labels.component }}"
+
+      # Workflow failure rate
+      - alert: HighWorkflowFailureRate
+        expr: rate(workflow_executions_total{status="failed"}[5m]) / rate(workflow_executions_total[5m]) > 0.2
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "High workflow failure rate"
+          description: "Workflow failure rate is {{ $value | humanizePercentage }}"
+
+      # LLM call failure rate
+      - alert: HighLLMFailureRate
+        expr: rate(llm_calls_total{status="failed"}[5m]) / rate(llm_calls_total[5m]) > 0.1
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High LLM call failure rate for {{ $labels.provider }}"
+          description: "LLM failure rate is {{ $value | humanizePercentage }} for provider {{ $labels.provider }}"
+
+      # Slow workflow execution
+      - alert: SlowWorkflowExecution
+        expr: histogram_quantile(0.95, rate(workflow_duration_seconds_bucket[5m])) > 300
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Slow workflow execution detected"
+          description: "P95 workflow duration is {{ $value }}s"
+
+      # Slow LLM calls
+      - alert: SlowLLMCalls
+        expr: histogram_quantile(0.95, rate(llm_call_duration_seconds_bucket[5m])) > 30
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Slow LLM calls for {{ $labels.provider }}"
+          description: "P95 LLM call duration is {{ $value }}s for provider {{ $labels.provider }}"
+
+      # High token usage
+      - alert: HighTokenUsage
+        expr: rate(llm_tokens_total[1h]) > 1000000
+        for: 1h
+        labels:
+          severity: info
+        annotations:
+          summary: "High token usage for {{ $labels.provider }}"
+          description: "Token usage rate is {{ $value }} tokens/sec for provider {{ $labels.provider }}"
+
+      # Too many active tasks
+      - alert: TooManyActiveTasks
+        expr: active_tasks > 100
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Too many active tasks"
+          description: "Number of active tasks is {{ $value }}"
+
+      # Service down
+      - alert: ServiceDown
+        expr: up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Service {{ $labels.job }} is down"
+          description: "Service {{ $labels.job }} has been down for more than 2 minutes"
+
+      # High retrieval failure rate
+      - alert: HighRetrievalFailureRate
+        expr: rate(retrieval_operations_total{status="failed"}[5m]) / rate(retrieval_operations_total[5m]) > 0.2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High retrieval failure rate"
+          description: "Retrieval failure rate is {{ $value | humanizePercentage }}"
+
+      # Excessive pivots
+      - alert: ExcessivePivots
+        expr: rate(workflow_pivots_total[5m]) > 0.5
+        for: 10m
+        labels:
+          severity: info
+        annotations:
+          summary: "Excessive pivots detected"
+          description: "Pivot rate is {{ $value }} pivots/sec"

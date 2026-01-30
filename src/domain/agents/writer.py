@@ -358,6 +358,18 @@ async def generate_fragment(
     if result == state and (not state.fragments or state.fragments[-1].step_id != state.get_current_step().step_id):
         logger.info("Writer: Error occurred, attempting fallback to fallback_summary skill")
         
+        # Switch to fallback_summary skill
+        if state.current_skill != "fallback_summary":
+            state.current_skill = "fallback_summary"
+            state.add_log_entry(
+                agent_name="writer",
+                action="skill_switch",
+                details={
+                    "reason": "generation_failure",
+                    "new_skill": "fallback_summary"
+                }
+            )
+        
         current_step = state.get_current_step()
         if current_step:
             # 生成简单的回退片段
