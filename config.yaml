@@ -1,0 +1,123 @@
+# RAG Screenplay Multi-Agent System Configuration
+
+# LLM Configuration
+llm:
+  providers:
+    openai:
+      provider: openai
+      models:
+        high_performance: gpt-4o
+        lightweight: gpt-4o-mini
+        embedding: text-embedding-3-large
+      timeout: 60
+      max_retries: 3
+    
+    qwen:
+      provider: qwen
+      models:
+        high_performance: qwen-max
+        lightweight: qwen-turbo
+        embedding: text-embedding-v2
+      timeout: 60
+      max_retries: 3
+    
+    minimax:
+      provider: minimax
+      models:
+        high_performance: abab6.5-chat
+        lightweight: abab5.5-chat
+        embedding: embo-01
+      timeout: 60
+      max_retries: 3
+    
+    glm:
+      provider: glm
+      models:
+        high_performance: glm-4
+        lightweight: glm-3-turbo
+        embedding: embedding-2
+      timeout: 60
+      max_retries: 3
+  
+  active_provider: openai
+  fallback_providers:
+    - qwen
+    - glm
+
+# Skills Configuration
+skills:
+  standard_tutorial:
+    description: "Clear, structured tutorial format"
+    tone: professional
+    compatible_with:
+      - visualization_analogy
+      - warning_mode
+  
+  warning_mode:
+    description: "Highlights deprecated/risky content"
+    tone: cautionary
+    compatible_with:
+      - standard_tutorial
+      - research_mode
+  
+  visualization_analogy:
+    description: "Uses analogies and visualizations for complex concepts"
+    tone: engaging
+    compatible_with:
+      - standard_tutorial
+      - meme_style
+  
+  research_mode:
+    description: "Acknowledges information gaps and suggests research directions"
+    tone: exploratory
+    compatible_with:
+      - standard_tutorial
+      - warning_mode
+  
+  meme_style:
+    description: "Light-hearted, humorous presentation"
+    tone: casual
+    compatible_with:
+      - visualization_analogy
+      - fallback_summary
+  
+  fallback_summary:
+    description: "High-level overview when details unavailable"
+    tone: neutral
+    compatible_with:
+      - standard_tutorial
+      - research_mode
+
+# Retrieval Configuration
+retrieval:
+  vector_search:
+    top_k: 5
+    similarity_threshold: 0.7
+  
+  keyword_search:
+    markers:
+      - "@deprecated"
+      - "FIXME"
+      - "TODO"
+      - "Security"
+      - "WARNING"
+      - "HACK"
+    boost_factor: 1.5
+  
+  hybrid_merge:
+    vector_weight: 0.6
+    keyword_weight: 0.4
+    keyword_boost_factor: 1.5
+    dedup_threshold: 0.9
+  
+  summarization:
+    max_tokens: 10000
+    chunk_size: 2000
+    overlap: 200
+
+# System Configuration
+system:
+  max_retries: 3
+  timeout_seconds: 300
+  log_level: INFO
+  log_file: logs/app.log

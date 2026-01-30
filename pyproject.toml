@@ -1,0 +1,67 @@
+[tool.poetry]
+name = "rag-screenplay-multi-agent"
+version = "0.1.0"
+description = "RAG-based screenplay generation multi-agent system using LangGraph"
+authors = ["Your Name <your.email@example.com>"]
+readme = "README.md"
+packages = [{include = "src"}]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+langgraph = "^0.2.0"
+pydantic = "^2.5.0"
+hypothesis = "^6.92.0"
+
+# LLM Provider SDKs
+openai = "^1.10.0"
+dashscope = "^1.14.0"
+zhipuai = "^2.0.0"
+
+# Database clients
+asyncpg = "^0.29.0"
+psycopg2-binary = "^2.9.9"
+pgvector = "^0.2.4"
+redis = "^5.0.1"
+
+# Code parsing
+tree-sitter = "^0.21.0"
+tree-sitter-python = "^0.21.0"
+tree-sitter-javascript = "^0.21.0"
+tree-sitter-typescript = "^0.21.0"
+
+# Utilities
+python-dotenv = "^1.0.0"
+aiohttp = "^3.9.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.3"
+pytest-asyncio = "^0.23.0"
+pytest-cov = "^4.1.0"
+black = "^23.12.0"
+ruff = "^0.1.9"
+mypy = "^1.8.0"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[tool.black]
+line-length = 100
+target-version = ['py310']
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
