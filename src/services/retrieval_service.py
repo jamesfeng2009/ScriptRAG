@@ -4,6 +4,8 @@ This service implements the hybrid retrieval strategy combining:
 1. Vector similarity search (semantic)
 2. Keyword marker search (@deprecated, FIXME, TODO, Security)
 3. Weighted merging algorithm
+4. Query expansion for improved recall
+5. Multi-factor reranking for improved precision
 """
 
 import logging
@@ -12,6 +14,10 @@ from pydantic import BaseModel
 
 from .database.vector_db import IVectorDBService, VectorSearchResult
 from .llm.service import LLMService
+from .query_expansion import QueryExpansion, QueryOptimizer
+from .reranker import MultiFactorReranker, DiversityFilter, RetrievalQualityMonitor
+from .cache.retrieval_cache import RetrievalCache, CacheConfig
+from .monitoring.retrieval_monitor import RetrievalMonitor, MonitoringConfig
 
 
 logger = logging.getLogger(__name__)
@@ -26,6 +32,21 @@ class RetrievalConfig(BaseModel):
     vector_weight: float = 0.6
     keyword_weight: float = 0.4
     dedup_threshold: float = 0.9
+    
+    # Query expansion settings
+    enable_query_expansion: bool = True
+    expansion_top_k: int = 10  # Retrieve more results before reranking
+    
+    # Reranking settings
+    enable_reranking: bool = True
+    rerank_top_k: int = 5  # Final number of results after reranking
+    
+    # Diversity settings
+    enable_diversity: bool = True
+    diversity_threshold: float = 0.85
+    
+    # Quality monitoring
+    enable_quality_monitoring: bool = True
 
 
 class RetrievalResult(BaseModel):
@@ -58,7 +79,13 @@ class RetrievalService:
         self,
         vector_db_service: IVectorDBService,
         llm_service: LLMService,
-        config: Optional[RetrievalConfig] = None
+        config: Optional[RetrievalConfig] = None,
+        query_expansion: Optional[QueryExpansion] = None,
+        reranker: Optional[MultiFactorReranker] = None,
+        diversity_filter: Optional[DiversityFilter] = None,
+        quality_monitor: Optional[RetrievalQualityMonitor] = None,
+        cache: Optional[RetrievalCache] = None,
+        monitor: Optional[RetrievalMonitor] = None
     ):
         """
         初始化检索服务
@@ -67,10 +94,27 @@ class RetrievalService:
             vector_db_service: 向量数据库服务
             llm_service: LLM 服务（用于生成查询嵌入）
             config: 检索配置
+            query_expansion: 查询扩展组件（可选）
+            reranker: 重排序组件（可选）
+            diversity_filter: 多样性过滤组件（可选）
+            quality_monitor: 质量监控组件（可选）
+            cache: 缓存组件（可选）
+            monitor: 监控组件（可选）
         """
         self.vector_db = vector_db_service
         self.llm_service = llm_service
         self.config = config or RetrievalConfig()
+        
+        # Initialize optional components
+        self.query_expansion = query_expansion or QueryExpansion(llm_service)
+        self.query_optimizer = QueryOptimizer()
+        self.reranker = reranker or MultiFactorReranker()
+        self.diversity_filter = diversity_filter or DiversityFilter()
+        self.quality_monitor = quality_monitor or RetrievalQualityMonitor()
+        
+        # Initialize Phase 3 components
+        self.cache = cache or RetrievalCache(CacheConfig())
+        self.monitor = monitor or RetrievalMonitor(MonitoringConfig())
     
     async def hybrid_retrieve(
         self,
@@ -79,7 +123,7 @@ class RetrievalService:
         top_k: Optional[int] = None
     ) -> List[RetrievalResult]:
         """
-        混合检索（向量 + 关键词搜索）
+        混合检索（向量 + 关键词搜索 + 查询扩展 + 重排序）
         
         Args:
             workspace_id: 工作空间 ID
@@ -89,37 +133,83 @@ class RetrievalService:
         Returns:
             检索结果列表
         """
-        top_k = top_k or self.config.vector_top_k
+        final_top_k = top_k or self.config.rerank_top_k
+        retrieval_top_k = self.config.expansion_top_k if self.config.enable_query_expansion else final_top_k
         
         try:
-            # 1. 生成查询嵌入
-            logger.info(f"Generating query embedding for: {query[:100]}...")
-            query_embeddings = await self.llm_service.embedding([query])
-            query_embedding = query_embeddings[0]
+            # 1. Query optimization and expansion
+            optimized_query = query
+            expanded_queries = [query]
             
-            # 2. 执行向量搜索
-            logger.info("Performing vector search...")
-            vector_results = await self._vector_search(
-                workspace_id=workspace_id,
-                query_embedding=query_embedding,
-                top_k=top_k
-            )
+            if self.config.enable_query_expansion:
+                logger.info("Optimizing and expanding query...")
+                optimized_query = self.query_optimizer.optimize(query)
+                expanded_queries = await self.query_expansion.expand_query(optimized_query)
+                logger.info(f"Expanded to {len(expanded_queries)} queries")
             
-            # 3. 执行关键词搜索
-            logger.info("Performing keyword search...")
-            keyword_results = await self._keyword_search(
-                workspace_id=workspace_id,
-                query_embedding=query_embedding,
-                top_k=top_k
-            )
+            # 2. Generate embeddings for all queries
+            logger.info(f"Generating embeddings for {len(expanded_queries)} queries...")
+            all_embeddings = await self.llm_service.embedding(expanded_queries)
             
-            # 4. 合并结果
+            # 3. Perform searches for each expanded query
+            all_vector_results = []
+            all_keyword_results = []
+            
+            for idx, (exp_query, embedding) in enumerate(zip(expanded_queries, all_embeddings)):
+                logger.info(f"Searching with query {idx + 1}/{len(expanded_queries)}...")
+                
+                # Vector search
+                vector_results = await self._vector_search(
+                    workspace_id=workspace_id,
+                    query_embedding=embedding,
+                    top_k=retrieval_top_k
+                )
+                all_vector_results.extend(vector_results)
+                
+                # Keyword search
+                keyword_results = await self._keyword_search(
+                    workspace_id=workspace_id,
+                    query_embedding=embedding,
+                    top_k=retrieval_top_k
+                )
+                all_keyword_results.extend(keyword_results)
+            
+            # 4. Merge results from all queries
             logger.info("Merging search results...")
             merged_results = self._merge_results(
-                vector_results=vector_results,
-                keyword_results=keyword_results,
-                top_k=top_k
+                vector_results=all_vector_results,
+                keyword_results=all_keyword_results,
+                top_k=retrieval_top_k * 2  # Get more results before reranking
             )
+            
+            # 5. Apply reranking
+            if self.config.enable_reranking and len(merged_results) > 0:
+                logger.info("Applying multi-factor reranking...")
+                merged_results = self.reranker.rerank(
+                    query=optimized_query,
+                    results=merged_results,
+                    top_k=final_top_k * 2  # Get more for diversity filtering
+                )
+            
+            # 6. Apply diversity filtering
+            if self.config.enable_diversity and len(merged_results) > 0:
+                logger.info("Applying diversity filtering...")
+                merged_results = self.diversity_filter.filter(
+                    results=merged_results,
+                    threshold=self.config.diversity_threshold,
+                    top_k=final_top_k
+                )
+            else:
+                # Just take top_k without diversity
+                merged_results = merged_results[:final_top_k]
+            
+            # 7. Monitor quality
+            if self.config.enable_quality_monitoring and len(merged_results) > 0:
+                metrics = self.quality_monitor.calculate_metrics(
+                    query=optimized_query,
+                    results=merged_results
+                )
+                logger.info(f"Retrieval quality metrics: {metrics}")
             
             logger.info(f"Hybrid retrieval returned {len(merged_results)} results")
             return merged_results
