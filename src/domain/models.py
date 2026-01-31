@@ -198,11 +198,14 @@ class SharedState(BaseModel):
     
     @model_validator(mode='after')
     def validate_step_index_in_range(self) -> 'SharedState':
-        """验证当前步骤索引在大纲范围内"""
-        if self.outline and self.current_step_index >= len(self.outline):
+        """验证当前步骤索引在大纲范围内
+        
+        允许 current_step_index == len(outline) 表示所有步骤已完成
+        """
+        if self.outline and self.current_step_index > len(self.outline):
             raise ValueError(
                 f"当前步骤索引 {self.current_step_index} "
-                f"超出大纲范围 (0-{len(self.outline) - 1})"
+                f"超出大纲范围 (0-{len(self.outline)})"
             )
         return self
     

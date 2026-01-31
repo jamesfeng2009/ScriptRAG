@@ -97,6 +97,7 @@ class WorkflowOrchestrator:
         workflow.add_node("retry_protection", self._retry_protection_node)
         workflow.add_node("writer", self._writer_node)
         workflow.add_node("fact_checker", self._fact_checker_node)
+        workflow.add_node("step_advancer", self._step_advancer_node)  # NEW: Advances to next step
         workflow.add_node("compiler", self._compiler_node)
         
         # 设置入口点（需求 14.3）
@@ -132,9 +133,18 @@ class WorkflowOrchestrator:
         # 完成检查集成在这里（需求 14.4, 14.5）
         workflow.add_conditional_edges(
             "fact_checker",
-            self._route_fact_check_and_completion,
+            self._route_fact_check,
             {
                 "invalid": "retry_protection",
+                "valid": "step_advancer"
+            }
+        )
+        
+        # 步骤推进器决策逻辑（条件边）
+        workflow.add_conditional_edges(
+            "step_advancer",
+            self._route_completion,
+            {
                 "continue": "navigator",
                 "done": "compiler"
             }
@@ -297,16 +307,40 @@ class WorkflowOrchestrator:
             )
             return state
     
-    async def _compiler_node(self, state: SharedState) -> str:
-        """编译器节点包装函数（带超时保护）"""
+    async def _compiler_node(self, state: SharedState) -> SharedState:
+        """编译器节点包装函数（带超时保护）
+        
+        Compiles the final screenplay and stores it in state.
+        Returns the state object (not the screenplay string).
+        """
         logger.info("Executing compiler node")
         try:
-            return await ErrorHandler.with_timeout(
+            final_screenplay = await ErrorHandler.with_timeout(
                 compile_screenplay,
                 60.0,
                 state,
                 self.llm_service
             )
+            
+            # Store the final screenplay in the state
+            # We'll add a new field to store this
+            state.add_log_entry(
+                agent_name="compiler",
+                action="screenplay_compiled",
+                details={"screenplay_length": len(final_screenplay)}
+            )
+            
+            # Store screenplay in execution log for retrieval
+            # (Since SharedState doesn't have a final_screenplay field)
+            state.execution_log.append({
+                "agent_name": "compiler",
+                "action": "final_screenplay",
+                "timestamp": state.execution_log[-1]["timestamp"] if state.execution_log else None,
+                "details": {"screenplay": final_screenplay}
+            })
+            
+            return state
+            
         except CustomTimeoutError as e:
             logger.error(f"Compiler node timed out: {str(e)}")
             # 超时时返回简单的编译结果
@@ -316,7 +350,32 @@ class WorkflowOrchestrator:
                 details={"error": str(e)}
             )
             # 返回简单的片段拼接
-            return "\n\n".join([f.content for f in state.fragments])
+            fallback_screenplay = "\n\n".join([f.content for f in state.fragments])
+            state.execution_log.append({
+                "agent_name": "compiler",
+                "action": "final_screenplay",
+                "timestamp": state.execution_log[-1]["timestamp"] if state.execution_log else None,
+                "details": {"screenplay": fallback_screenplay}
+            })
+            return state
+    
+    def _step_advancer_node(self, state: SharedState) -> SharedState:
+        """步骤推进器节点 - 将 current_step_index 推进到下一步
+        
+        This node increments current_step_index to move to the next step.
+        It's safe to increment here because the routing function will check
+        if we've reached the end.
+        """
+        old_index = state.current_step_index
+        
+        # Increment to next step
+        # Note: We allow incrementing to len(outline) to indicate completion
+        # The validator will be temporarily disabled during this transition
+        state.current_step_index += 1
+        
+        logger.info(f"Advancing from step {old_index} to {state.current_step_index}")
+        
+        return state
     
     # Routing functions (需求 14.5)
     
@@ -348,69 +407,119 @@ class WorkflowOrchestrator:
         logger.info("Director decision: write (approved)")
         return "write"
     
-    def _route_fact_check_and_completion(
+    def _route_fact_check(
         self,
         state: SharedState
-    ) -> Literal["invalid", "continue", "done"]:
+    ) -> Literal["invalid", "valid"]:
         """
-        事实检查器和完成检查组合路由函数
+        事实检查器路由函数
         
-        根据事实检查结果和完成状态决定下一步动作：
+        根据事实检查结果决定下一步动作：
         - invalid: 片段包含幻觉，需要重新生成
-        - continue: 片段有效，还有步骤需要处理，继续循环
-        - done: 片段有效，所有步骤完成，进入编译阶段
+        - valid: 片段有效，推进到下一步
         
         Args:
             state: 共享状态
             
         Returns:
             路由目标节点名称
-            
-        验证需求: 14.5
         """
-        # 首先检查事实检查结果
         if not state.fact_check_passed:
             logger.info("Fact check decision: invalid (regeneration needed)")
             return "invalid"
         
-        # 事实检查通过，检查是否完成
-        # 移动到下一步
-        state.current_step_index += 1
+        logger.info("Fact check decision: valid")
+        return "valid"
+    
+    def _route_completion(
+        self,
+        state: SharedState
+    ) -> Literal["continue", "done"]:
+        """
+        完成检查路由函数
         
-        # 检查是否还有步骤
+        检查是否还有更多步骤需要处理：
+        - continue: 还有步骤需要处理，继续循环
+        - done: 所有步骤完成，进入编译阶段
+        
+        NOTE: This is called AFTER step_advancer has incremented current_step_index
+        
+        Args:
+            state: 共享状态
+            
+        Returns:
+            路由目标节点名称
+        """
+        # Check if we've processed all steps
+        # After step_advancer increments, current_step_index will be equal to len(outline)
+        # when all steps are done
         if state.current_step_index < len(state.outline):
             logger.info(
                 f"Completion check: continue (step {state.current_step_index}/{len(state.outline)})"
             )
             return "continue"
         
-        # 所有步骤完成
+        # All steps completed
         logger.info("Completion check: done (all steps completed)")
         return "done"
     
-    async def execute(self, state: SharedState) -> Dict[str, Any]:
+    async def execute(
+        self,
+        state: SharedState,
+        recursion_limit: int = 25
+    ) -> Dict[str, Any]:
         """
         执行完整的剧本生成工作流
         
         Args:
             state: 初始共享状态
+            recursion_limit: LangGraph 最大递归迭代次数（默认 25）
             
         Returns:
             包含最终剧本和执行日志的字典
             
-        验证需求: 14.6
+        验证需求: 14.6, 3.1, 3.2, 3.3, 3.5
         """
-        logger.info("Starting screenplay generation workflow")
+        logger.info(
+            f"Starting screenplay generation workflow with recursion_limit={recursion_limit}"
+        )
         
         try:
-            # 执行状态图
-            result = await self.graph.ainvoke(state)
+            # 执行状态图，传递 recursion_limit 配置（需求 3.2）
+            result_state_dict = await self.graph.ainvoke(
+                state,
+                config={"recursion_limit": recursion_limit}
+            )
             
             logger.info("Screenplay generation workflow completed successfully")
             
+            # LangGraph returns the final state as a dict
+            # We need to reconstruct the SharedState object from it
+            final_state = SharedState(**result_state_dict)
+            
+            # Extract final screenplay from execution log
+            final_screenplay = None
+            for log_entry in reversed(final_state.execution_log):
+                if (log_entry.get("agent_name") == "compiler" and 
+                    log_entry.get("action") == "final_screenplay"):
+                    final_screenplay = log_entry.get("details", {}).get("screenplay")
+                    break
+            
             return {
                 "success": True,
-                "final_screenplay": result if isinstance(result, str) else None,
+                "final_screenplay": final_screenplay,
+                "state": final_state,
+                "execution_log": final_state.execution_log
+            }
+        
+        except RecursionError as e:
+            # 处理递归限制错误（需求 3.5）
+            error_msg = f"Workflow exceeded recursion limit of {recursion_limit}"
+            logger.error(f"{error_msg}: {str(e)}")
+            
+            return {
+                "success": False,
+                "error": error_msg,
                 "state": state,
                 "execution_log": state.execution_log
             }

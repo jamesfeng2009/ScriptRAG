@@ -290,6 +290,11 @@ async def verify_fragment_node(
             # 片段有效，设置标志
             state.fact_check_passed = True
             
+            # 标记当前步骤为完成
+            current_step = state.get_current_step()
+            if current_step:
+                current_step.status = "completed"
+            
             # 记录日志
             state.add_log_entry(
                 agent_name="fact_checker",

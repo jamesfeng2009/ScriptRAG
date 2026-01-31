@@ -2,8 +2,6 @@
 
 This module tests the complete LangGraph state machine workflow,
 including node execution, routing logic, and state transitions.
-
-验证需求: 14.6
 """
 
 import pytest
@@ -68,8 +66,6 @@ def simple_state():
 @pytest.mark.asyncio
 async def test_orchestrator_initialization(mock_services):
     """Test that WorkflowOrchestrator initializes correctly
-    
-    验证需求: 14.2
     """
     orchestrator = WorkflowOrchestrator(
         llm_service=mock_services["llm_service"],
@@ -89,8 +85,6 @@ async def test_orchestrator_initialization(mock_services):
 @pytest.mark.asyncio
 async def test_graph_compilation(mock_services):
     """Test that the LangGraph state machine compiles successfully
-    
-    验证需求: 14.6
     """
     orchestrator = WorkflowOrchestrator(
         llm_service=mock_services["llm_service"],
@@ -112,8 +106,6 @@ async def test_graph_compilation(mock_services):
 @pytest.mark.asyncio
 async def test_director_routing_pivot(mock_services, simple_state):
     """Test director routing when pivot is triggered
-    
-    验证需求: 14.5
     """
     orchestrator = WorkflowOrchestrator(
         llm_service=mock_services["llm_service"],
@@ -136,8 +128,6 @@ async def test_director_routing_pivot(mock_services, simple_state):
 @pytest.mark.asyncio
 async def test_director_routing_write(mock_services, simple_state):
     """Test director routing when content is approved
-    
-    验证需求: 14.5
     """
     orchestrator = WorkflowOrchestrator(
         llm_service=mock_services["llm_service"],
@@ -157,10 +147,8 @@ async def test_director_routing_write(mock_services, simple_state):
 
 
 @pytest.mark.asyncio
-async def test_fact_check_and_completion_invalid(mock_services, simple_state):
+async def test_fact_check_routing_invalid(mock_services, simple_state):
     """Test fact checker routing when fragment is invalid
-    
-    验证需求: 14.5
     """
     orchestrator = WorkflowOrchestrator(
         llm_service=mock_services["llm_service"],
@@ -173,17 +161,15 @@ async def test_fact_check_and_completion_invalid(mock_services, simple_state):
     # Set fact check failed
     simple_state.fact_check_passed = False
     
-    # Test routing
-    route = orchestrator._route_fact_check_and_completion(simple_state)
+    # Test routing using the actual method
+    route = orchestrator._route_fact_check(simple_state)
     
     assert route == "invalid"
 
 
 @pytest.mark.asyncio
-async def test_fact_check_and_completion_continue(mock_services, simple_state):
-    """Test combined routing when fragment is valid and more steps remain
-    
-    验证需求: 14.5
+async def test_completion_routing_continue(mock_services, simple_state):
+    """Test completion routing when more steps remain
     """
     orchestrator = WorkflowOrchestrator(
         llm_service=mock_services["llm_service"],
@@ -193,8 +179,7 @@ async def test_fact_check_and_completion_continue(mock_services, simple_state):
         workspace_id="test-workspace"
     )
     
-    # Set fact check passed and add multiple steps
-    simple_state.fact_check_passed = True
+    # Add multiple steps
     simple_state.outline = [
         OutlineStep(step_id=0, description="Step 1", status="completed", retry_count=0),
         OutlineStep(step_id=1, description="Step 2", status="pending", retry_count=0),
@@ -202,18 +187,15 @@ async def test_fact_check_and_completion_continue(mock_services, simple_state):
     ]
     simple_state.current_step_index = 0
     
-    # Test routing
-    route = orchestrator._route_fact_check_and_completion(simple_state)
+    # Test routing using the actual method
+    route = orchestrator._route_completion(simple_state)
     
     assert route == "continue"
-    assert simple_state.current_step_index == 1
 
 
 @pytest.mark.asyncio
-async def test_fact_check_and_completion_done(mock_services, simple_state):
-    """Test combined routing when fragment is valid and all steps are complete
-    
-    验证需求: 14.5
+async def test_completion_routing_done(mock_services, simple_state):
+    """Test completion routing when all steps are complete
     """
     orchestrator = WorkflowOrchestrator(
         llm_service=mock_services["llm_service"],
@@ -223,19 +205,17 @@ async def test_fact_check_and_completion_done(mock_services, simple_state):
         workspace_id="test-workspace"
     )
     
-    # Set fact check passed and set to last step
-    simple_state.fact_check_passed = True
+    # Set to after last step (current_step_index >= len(outline) means done)
     simple_state.outline = [
         OutlineStep(step_id=0, description="Step 1", status="completed", retry_count=0),
         OutlineStep(step_id=1, description="Step 2", status="completed", retry_count=0)
     ]
-    simple_state.current_step_index = 1
+    simple_state.current_step_index = 2  # After last step
     
-    # Test routing
-    route = orchestrator._route_fact_check_and_completion(simple_state)
+    # Test routing using the actual method
+    route = orchestrator._route_completion(simple_state)
     
     assert route == "done"
-    assert simple_state.current_step_index == 2
 
 
 @pytest.mark.asyncio
@@ -244,8 +224,6 @@ async def test_simple_workflow_execution(mock_services, simple_state):
     
     This test verifies that the graph can execute with a simple outline
     without errors.
-    
-    验证需求: 14.6
     """
     # Mock the planner to return a simple outline
     async def mock_plan_outline(state, llm_service):
