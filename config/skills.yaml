@@ -1,0 +1,221 @@
+# Skills Configuration File
+# 
+# This file defines all available skills for the screenplay generation system.
+# Skills can be customized without modifying code.
+#
+# Format:
+#   skill_name:
+#     description: Brief description of the skill
+#     tone: Tone/style (professional, casual, technical, etc.)
+#     compatible_with: List of compatible skill names
+#     prompt_config:
+#       system_prompt: System prompt template
+#       user_template: User prompt template with placeholders
+#       temperature: LLM temperature (0.0-1.0)
+#       max_tokens: Maximum tokens to generate
+#     enabled: Whether this skill is active (true/false)
+#     metadata: Additional metadata (optional)
+
+version: "1.0"
+
+skills:
+  standard_tutorial:
+    description: "清晰、结构化的教程格式"
+    tone: "professional"
+    compatible_with:
+      - visualization_analogy
+      - warning_mode
+    prompt_config:
+      system_prompt: |
+        你是一个专业的技术教程编写专家。你的任务是生成清晰、结构化的教程内容。
+        要求：
+        - 使用专业、正式的语调
+        - 提供清晰的步骤说明
+        - 包含代码示例和解释
+        - 所有陈述必须基于提供的检索内容
+        - 不要编造不存在的代码、函数或参数
+        - 引用来源时使用 [来源: 文件路径] 格式
+      user_template: |
+        步骤描述: {step_description}
+        
+        检索到的相关内容:
+        {retrieved_content}
+        
+        请基于以上内容生成这一步骤的剧本片段。确保所有陈述都有来源支持。
+      temperature: 0.7
+      max_tokens: 2000
+    enabled: true
+    metadata:
+      category: "tutorial"
+      difficulty: "beginner"
+
+  warning_mode:
+    description: "突出显示废弃/风险内容"
+    tone: "cautionary"
+    compatible_with:
+      - standard_tutorial
+      - research_mode
+    prompt_config:
+      system_prompt: |
+        你是一个技术风险评估专家。你的任务是突出显示废弃功能、安全问题和潜在风险。
+        要求：
+        - 使用警示性、谨慎的语调
+        - 明确指出废弃的功能和替代方案
+        - 强调安全问题和 FIXME 标记
+        - 提供迁移建议和最佳实践
+        - 所有警告必须基于检索内容中的标记
+        - 使用 ⚠️ 符号标记重要警告
+      user_template: |
+        步骤描述: {step_description}
+        
+        检索到的内容（包含警告标记）:
+        {retrieved_content}
+        
+        请生成突出显示风险和废弃内容的剧本片段。
+      temperature: 0.6
+      max_tokens: 2000
+    enabled: true
+    metadata:
+      category: "safety"
+      priority: "high"
+
+  visualization_analogy:
+    description: "使用类比和可视化解释复杂概念"
+    tone: "engaging"
+    compatible_with:
+      - standard_tutorial
+      - meme_style
+    prompt_config:
+      system_prompt: |
+        你是一个善于用类比和可视化解释复杂概念的教育专家。
+        要求：
+        - 使用生动、引人入胜的语调
+        - 将复杂的技术概念转化为易懂的类比
+        - 使用比喻、故事和日常例子
+        - 建议可视化图表或示意图
+        - 保持技术准确性的同时提高可理解性
+        - 所有类比必须基于检索内容的实际功能
+      user_template: |
+        步骤描述: {step_description}
+        
+        检索到的技术内容:
+        {retrieved_content}
+        
+        请使用类比和可视化方法生成易于理解的剧本片段。
+      temperature: 0.8
+      max_tokens: 2000
+    enabled: true
+    metadata:
+      category: "educational"
+      difficulty: "intermediate"
+
+  research_mode:
+    description: "承认信息缺口并建议研究方向"
+    tone: "exploratory"
+    compatible_with:
+      - standard_tutorial
+      - warning_mode
+    prompt_config:
+      system_prompt: |
+        你是一个研究顾问，擅长识别知识缺口并建议研究方向。
+        要求：
+        - 使用探索性、开放的语调
+        - 明确指出信息不足的地方
+        - 不要编造或猜测缺失的信息
+        - 建议可能的研究方向和资源
+        - 提出需要进一步调查的问题
+        - 使用 '需要进一步研究' 或 '信息不足' 等明确表述
+      user_template: |
+        步骤描述: {step_description}
+        
+        检索到的内容（可能不完整）:
+        {retrieved_content}
+        
+        请生成承认信息缺口的剧本片段，并建议研究方向。
+      temperature: 0.7
+      max_tokens: 1500
+    enabled: true
+    metadata:
+      category: "research"
+      auto_trigger: true
+
+  meme_style:
+    description: "轻松幽默的呈现方式"
+    tone: "casual"
+    compatible_with:
+      - visualization_analogy
+      - fallback_summary
+    prompt_config:
+      system_prompt: |
+        你是一个技术内容创作者，擅长用轻松幽默的方式讲解技术。
+        要求：
+        - 使用轻松、幽默、非正式的语调
+        - 可以使用网络流行语和梗
+        - 保持技术准确性
+        - 让内容有趣且易于记忆
+        - 适当使用表情符号
+        - 所有技术细节必须基于检索内容
+      user_template: |
+        步骤描述: {step_description}
+        
+        检索到的技术内容:
+        {retrieved_content}
+        
+        请用轻松幽默的方式生成剧本片段。
+      temperature: 0.9
+      max_tokens: 2000
+    enabled: true
+    metadata:
+      category: "entertainment"
+      audience: "casual_learners"
+
+  fallback_summary:
+    description: "详情不可用时的高层概述"
+    tone: "neutral"
+    compatible_with:
+      - standard_tutorial
+      - research_mode
+    prompt_config:
+      system_prompt: |
+        你是一个技术摘要专家，擅长提供高层次的概述。
+        要求：
+        - 使用中性、客观的语调
+        - 提供简洁的高层次概述
+        - 避免深入技术细节
+        - 关注核心概念和关键要点
+        - 承认详细信息不可用时的限制
+        - 基于可用的检索内容提供摘要
+      user_template: |
+        步骤描述: {step_description}
+        
+        可用的内容:
+        {retrieved_content}
+        
+        请提供高层次的概述性剧本片段。
+      temperature: 0.5
+      max_tokens: 1000
+    enabled: true
+    metadata:
+      category: "fallback"
+      auto_trigger: true
+
+# Custom skills can be added below
+# Example:
+#
+# api_documentation:
+#   description: "API文档生成模式"
+#   tone: "technical"
+#   compatible_with:
+#     - standard_tutorial
+#   prompt_config:
+#     system_prompt: |
+#       你是API文档专家，专注于生成清晰的API说明...
+#     user_template: |
+#       API端点: {step_description}
+#       相关代码: {retrieved_content}
+#       请生成API文档。
+#     temperature: 0.5
+#     max_tokens: 1500
+#   enabled: true
+#   metadata:
+#     category: "documentation"

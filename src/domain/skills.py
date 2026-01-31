@@ -4,8 +4,12 @@ This module defines the Skills system for the RAG screenplay generation system.
 Skills are generation style modes that adjust how screenplay fragments are generated.
 """
 
+import logging
 from typing import Dict, List, Set, Optional, Literal
 from pydantic import BaseModel, Field
+
+
+logger = logging.getLogger(__name__)
 
 
 class SkillConfig(BaseModel):
@@ -190,18 +194,43 @@ class SkillManager:
     
     This class provides a centralized interface for managing skills,
     checking compatibility, and supporting dynamic skill registration.
+    
+    Features:
+    - Load skills from configuration files
+    - Hot-reload configuration changes
+    - Dynamic skill registration
+    - Compatibility validation
     """
     
-    def __init__(self, custom_skills: Optional[Dict[str, SkillConfig]] = None):
+    def __init__(
+        self,
+        custom_skills: Optional[Dict[str, SkillConfig]] = None,
+        config_path: Optional[str] = None,
+        enable_hot_reload: bool = False
+    ):
         """Initialize the Skill Manager
         
         Args:
             custom_skills: Optional dictionary of custom skills to register
+            config_path: Optional path to skills configuration file
+            enable_hot_reload: Whether to enable hot-reloading of configuration
         """
         self._skills: Dict[str, SkillConfig] = SKILLS.copy()
+        self._config_path = config_path
+        self._hot_reload_enabled = enable_hot_reload
+        self._loader = None
         
+        # Load from config file if provided
+        if config_path:
+            self.reload_from_config(config_path)
+        
+        # Register custom skills
         if custom_skills:
             self.register_skills(custom_skills)
+        
+        # Enable hot-reload if requested
+        if enable_hot_reload and config_path:
+            self.enable_hot_reload()
     
     def register_skill(self, name: str, config: SkillConfig) -> None:
         """Register a new skill or update an existing one
@@ -362,6 +391,92 @@ class SkillManager:
                 if compatible_skill not in self._skills:
                     return False
         return True
+    
+    def reload_from_config(self, config_path: str):
+        """Reload skills from configuration file
+        
+        Args:
+            config_path: Path to skills configuration file
+            
+        Raises:
+            FileNotFoundError: If config file doesn't exist
+            ValueError: If config is invalid
+        """
+        from .skill_loader import SkillConfigLoader
+        
+        loader = SkillConfigLoader(config_path)
+        new_skills = loader.load_from_yaml()
+        
+        # Replace current skills with loaded skills
+        self._skills = new_skills
+        self._config_path = config_path
+        
+        logger.info(f"Reloaded {len(new_skills)} skills from configuration")
+    
+    def enable_hot_reload(self):
+        """Enable hot-reloading of configuration file
+        
+        Requires config_path to be set during initialization.
+        """
+        if not self._config_path:
+            raise ValueError("Cannot enable hot-reload without config_path")
+        
+        from .skill_loader import SkillConfigLoader
+        
+        if self._loader is None:
+            self._loader = SkillConfigLoader(self._config_path)
+            self._loader.register_reload_callback(self._on_config_reload)
+            self._loader.start_watching()
+            self._hot_reload_enabled = True
+            logger.info("Hot-reload enabled for skills configuration")
+        else:
+            logger.warning("Hot-reload already enabled")
+    
+    def disable_hot_reload(self):
+        """Disable hot-reloading of configuration file"""
+        if self._loader is not None:
+            self._loader.stop_watching()
+            self._loader = None
+            self._hot_reload_enabled = False
+            logger.info("Hot-reload disabled for skills configuration")
+    
+    def _on_config_reload(self, new_skills: Dict[str, SkillConfig]):
+        """Callback when configuration is reloaded
+        
+        Args:
+            new_skills: New skills loaded from configuration
+        """
+        logger.info(f"Configuration reloaded with {len(new_skills)} skills")
+        self._skills = new_skills
+    
+    def export_to_config(self, output_path: str):
+        """Export current skills to configuration file
+        
+        Args:
+            output_path: Path where to save the configuration
+        """
+        from .skill_loader import SkillConfigLoader
+        from pathlib import Path
+        
+        loader = SkillConfigLoader()
+        loader.export_to_yaml(self._skills, Path(output_path))
+        logger.info(f"Exported skills to: {output_path}")
+    
+    def get_config_path(self) -> Optional[str]:
+        """Get the current configuration file path
+        
+        Returns:
+            Configuration file path or None
+        """
+        return self._config_path
+    
+    def is_hot_reload_enabled(self) -> bool:
+        """Check if hot-reload is enabled
+        
+        Returns:
+            True if hot-reload is enabled
+        """
+        return self._hot_reload_enabled
 
 
 # Create default skill manager instance
