@@ -13,6 +13,7 @@ from typing import List, Dict, Any, Optional
 
 from ..models import SharedState, ScreenplayFragment, RetrievedDocument, OutlineStep
 from ..skills import SKILLS
+from ..prompt_manager import PromptManager
 from ...services.llm.service import LLMService
 from ...infrastructure.error_handler import (
     WriterError,
@@ -21,6 +22,24 @@ from ...infrastructure.error_handler import (
 
 
 logger = logging.getLogger(__name__)
+
+# Initialize prompt manager (can be configured with custom path)
+_prompt_manager = None
+
+def get_prompt_manager() -> PromptManager:
+    """Get or create prompt manager instance"""
+    global _prompt_manager
+    if _prompt_manager is None:
+        _prompt_manager = PromptManager(
+            config_path="config/skills.yaml",
+            enable_hot_reload=False  # Can be enabled via configuration
+        )
+    return _prompt_manager
+
+def set_prompt_manager(manager: PromptManager):
+    """Set custom prompt manager (useful for testing)"""
+    global _prompt_manager
+    _prompt_manager = manager
 
 
 # Skill-specific prompts and guidelines
@@ -146,6 +165,7 @@ def apply_skill(
 
     - 为每种 Skill 模式定义提示和指南
     - 确保 research_mode 明确指出信息缺口
+    - 使用配置文件中的prompt配置
     
     Args:
         skill_name: Skill 名称
@@ -155,6 +175,63 @@ def apply_skill(
         
     Returns:
         包含 messages 和 metadata 的字典
+    """
+    # Get prompt manager
+    prompt_manager = get_prompt_manager()
+    
+    # Check if skill has prompt configuration
+    if skill_name not in prompt_manager.list_available_skills():
+        logger.warning(f"No prompt config for skill: {skill_name}, using fallback")
+        # Fallback to hardcoded prompts if config not found
+        if skill_name in SKILL_PROMPTS:
+            return _apply_skill_legacy(skill_name, step, retrieved_docs)
+        else:
+            logger.warning(f"Unknown skill: {skill_name}, using standard_tutorial")
+            skill_name = "standard_tutorial"
+    
+    # 构建检索内容摘要
+    if not retrieved_docs:
+        retrieved_content = "[无检索内容]"
+    else:
+        retrieved_content = "\n\n".join([
+            f"文档 {i+1} (来源: {doc.source}, 置信度: {doc.confidence:.2f}):\n{doc.content[:1000]}..."
+            for i, doc in enumerate(retrieved_docs[:5])  # 最多使用前 5 个文档
+        ])
+    
+    # Use prompt manager to format messages
+    messages = prompt_manager.format_messages(
+        skill_name=skill_name,
+        step_description=step.description,
+        retrieved_content=retrieved_content
+    )
+    
+    # Get temperature and max_tokens from config
+    temperature = prompt_manager.get_temperature(skill_name)
+    max_tokens = prompt_manager.get_max_tokens(skill_name)
+    
+    # 返回消息和元数据
+    return {
+        "messages": messages,
+        "temperature": temperature,
+        "max_tokens": max_tokens,
+        "metadata": {
+            "skill_used": skill_name,
+            "num_docs": len(retrieved_docs),
+            "sources": [doc.source for doc in retrieved_docs],
+            "config_loaded": True
+        }
+    }
+
+
+def _apply_skill_legacy(
+    skill_name: str,
+    step: OutlineStep,
+    retrieved_docs: List[RetrievedDocument]
+) -> Dict[str, Any]:
+    """
+    Legacy skill application using hardcoded prompts
+    
+    This is a fallback when configuration is not available.
     """
     if skill_name not in SKILL_PROMPTS:
         logger.warning(f"Unknown skill: {skill_name}, using standard_tutorial")
@@ -168,7 +245,7 @@ def apply_skill(
     else:
         retrieved_content = "\n\n".join([
             f"文档 {i+1} (来源: {doc.source}, 置信度: {doc.confidence:.2f}):\n{doc.content[:1000]}..."
-            for i, doc in enumerate(retrieved_docs[:5])  # 最多使用前 5 个文档
+            for i, doc in enumerate(retrieved_docs[:5])
         ])
     
     # 构建消息
@@ -186,10 +263,13 @@ def apply_skill(
     # 返回消息和元数据
     return {
         "messages": messages,
+        "temperature": 0.7,  # Default
+        "max_tokens": 2000,  # Default
         "metadata": {
             "skill_used": skill_name,
             "num_docs": len(retrieved_docs),
-            "sources": [doc.source for doc in retrieved_docs]
+            "sources": [doc.source for doc in retrieved_docs],
+            "config_loaded": False
         }
     }
 
@@ -309,8 +389,8 @@ async def generate_fragment(
             fragment_content = await llm_service.chat_completion(
                 messages=skill_data["messages"],
                 task_type="lightweight",  # 编剧使用轻量级模型
-                temperature=0.7,
-                max_tokens=2000
+                temperature=skill_data.get("temperature", 0.7),
+                max_tokens=skill_data.get("max_tokens", 2000)
             )
         except Exception as e:
             # 如果 LLM 调用失败，抛出 WriterError 以触发错误处理
