@@ -6,6 +6,7 @@ Skills are generation style modes that adjust how screenplay fragments are gener
 
 import logging
 from typing import Dict, List, Set, Optional, Literal
+from collections import deque
 from pydantic import BaseModel, Field
 
 
@@ -60,37 +61,117 @@ SKILLS: Dict[str, SkillConfig] = {
     "standard_tutorial": SkillConfig(
         description="清晰、结构化的教程格式",
         tone="professional",
-        compatible_with=["visualization_analogy", "warning_mode"]
+        compatible_with=[
+            "visualization_analogy",
+            "warning_mode",
+            "research_mode",
+            "fallback_summary"
+        ]
     ),
     "warning_mode": SkillConfig(
         description="突出显示废弃/风险内容",
         tone="cautionary",
-        compatible_with=["standard_tutorial", "research_mode"]
+        compatible_with=[
+            "standard_tutorial",
+            "research_mode",
+            "fallback_summary"
+        ]
     ),
     "visualization_analogy": SkillConfig(
         description="使用类比和可视化解释复杂概念",
         tone="engaging",
-        compatible_with=["standard_tutorial", "meme_style"]
+        compatible_with=[
+            "standard_tutorial",
+            "meme_style",
+            "research_mode"
+        ]
     ),
     "research_mode": SkillConfig(
         description="承认信息缺口并建议研究方向",
         tone="exploratory",
-        compatible_with=["standard_tutorial", "warning_mode"]
+        compatible_with=[
+            "standard_tutorial",
+            "warning_mode",
+            "visualization_analogy",
+            "fallback_summary"
+        ]
     ),
     "meme_style": SkillConfig(
         description="轻松幽默的呈现方式",
         tone="casual",
-        compatible_with=["visualization_analogy", "fallback_summary"]
+        compatible_with=[
+            "visualization_analogy",
+            "fallback_summary",
+            "standard_tutorial"
+        ]
     ),
     "fallback_summary": SkillConfig(
         description="详情不可用时的高层概述",
         tone="neutral",
-        compatible_with=["standard_tutorial", "research_mode"]
+        compatible_with=[
+            "standard_tutorial",
+            "research_mode",
+            "warning_mode",
+            "meme_style"
+        ]
     )
 }
 
 # Retrieval configuration
 RETRIEVAL_CONFIG = RetrievalConfig()
+
+
+def find_skill_path(
+    current_skill: str,
+    desired_skill: str,
+    max_hops: int = 2
+) -> Optional[List[str]]:
+    """
+    使用 BFS 查找从当前 Skill 到目标 Skill 的最短路径
+    
+    Args:
+        current_skill: 当前 Skill
+        desired_skill: 目标 Skill
+        max_hops: 最大跳转次数
+        
+    Returns:
+        Skill 路径列表，如果找不到返回 None
+        
+    示例:
+        find_skill_path("meme_style", "warning_mode")
+        → ["meme_style", "visualization_analogy", "standard_tutorial", "warning_mode"]
+    """
+    if current_skill == desired_skill:
+        return [current_skill]
+    
+    if current_skill not in SKILLS or desired_skill not in SKILLS:
+        return None
+    
+    # BFS 查找
+    queue = deque([(current_skill, [current_skill])])
+    visited = {current_skill}
+    
+    while queue:
+        skill, path = queue.popleft()
+        
+        # 检查是否超过最大跳转次数
+        if len(path) - 1 > max_hops:
+            continue
+        
+        # 获取兼容 Skills
+        compatible = SKILLS[skill].compatible_with
+        
+        for next_skill in compatible:
+            if next_skill == desired_skill:
+                # 找到目标
+                return path + [next_skill]
+            
+            if next_skill not in visited:
+                visited.add(next_skill)
+                queue.append((next_skill, path + [next_skill]))
+    
+    # 找不到路径
+    return None
 
 
 def check_skill_compatibility(current_skill: str, target_skill: str) -> bool:
@@ -140,7 +221,8 @@ def get_compatible_skills(skill_name: str) -> List[str]:
 def find_closest_compatible_skill(
     current_skill: str,
     desired_skill: str,
-    global_tone: Optional[str] = None
+    global_tone: Optional[str] = None,
+    allow_multi_hop: bool = True
 ) -> str:
     """Find the closest compatible skill when direct switch is not possible
     
@@ -148,6 +230,7 @@ def find_closest_compatible_skill(
         current_skill: Current active skill
         desired_skill: Desired target skill
         global_tone: Optional global tone preference
+        allow_multi_hop: Whether to allow multi-hop paths
         
     Returns:
         Name of the closest compatible skill
@@ -163,6 +246,12 @@ def find_closest_compatible_skill(
     # If directly compatible, return desired skill
     if check_skill_compatibility(current_skill, desired_skill):
         return desired_skill
+    
+    # If multi-hop allowed, try to find a path
+    if allow_multi_hop:
+        path = find_skill_path(current_skill, desired_skill, max_hops=2)
+        if path and len(path) > 1:
+            return path[1]  # Return next step
     
     # Get compatible skills
     compatible = get_compatible_skills(current_skill)
@@ -322,7 +411,8 @@ class SkillManager:
         self,
         current_skill: str,
         desired_skill: str,
-        global_tone: Optional[str] = None
+        global_tone: Optional[str] = None,
+        allow_multi_hop: bool = True
     ) -> str:
         """Find closest compatible skill for switching
         
@@ -330,6 +420,7 @@ class SkillManager:
             current_skill: Current active skill
             desired_skill: Desired target skill
             global_tone: Optional global tone preference
+            allow_multi_hop: Whether to allow multi-hop paths
             
         Returns:
             Name of the closest compatible skill
@@ -342,6 +433,12 @@ class SkillManager:
         # If directly compatible, return desired skill
         if self.check_compatibility(current_skill, desired_skill):
             return desired_skill
+        
+        # If multi-hop allowed, try to find a path
+        if allow_multi_hop:
+            path = find_skill_path(current_skill, desired_skill, max_hops=2)
+            if path and len(path) > 1:
+                return path[1]  # Return next step
         
         # Get compatible skills
         compatible = self.get_compatible_skills(current_skill)
