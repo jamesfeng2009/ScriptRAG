@@ -38,6 +38,10 @@ def mock_llm_service():
 步骤4: Error handling in async code | 关键词: try, except, async errors
 步骤5: Best practices and common pitfalls | 关键词: best practices, pitfalls
             """
+        elif "complexity" in last_message.lower() or "复杂度" in last_message:
+            # Director complexity assessment - return a score between 0-1
+            # Use 0.5 to avoid triggering any pivot (not too high, not too low)
+            return "0.5"
         elif "evaluate" in last_message.lower() or "assess" in last_message.lower() or "评估" in last_message.lower():
             # Director response - always approve to avoid infinite loops
             return "approved"
@@ -45,9 +49,10 @@ def mock_llm_service():
              ("generate" in last_message.lower() and "fragment" in last_message.lower()):
             # Writer response
             return "This is a test screenplay fragment based on the retrieved content. It explains the concepts clearly and provides examples."
-        elif "verify" in last_message.lower() or "fact-check" in last_message.lower() or "验证" in last_message.lower():
-            # Fact checker response - always valid
-            return "valid"
+        elif "源文档内容" in last_message or "生成的片段内容" in last_message or \
+             "verify" in last_message.lower() or "fact-check" in last_message.lower():
+            # Fact checker response - return VALID format
+            return "VALID"
         elif ("编译" in last_message or "整合" in last_message) or \
              ("compile" in last_message.lower() or "integrate" in last_message.lower()):
             # Compiler response
@@ -64,11 +69,41 @@ def mock_llm_service():
 @pytest.fixture
 def mock_retrieval_service():
     """Create mock retrieval service for testing"""
+    from src.services.retrieval_service import RetrievalResult
+    
     retrieval_service = Mock()
     
-    # Mock hybrid retrieve to return empty results (no conflicts)
+    # Mock hybrid retrieve to return sample documents
     async def mock_hybrid_retrieve(query, workspace_id, top_k=5):
-        return []
+        # Return sample retrieval results (not RetrievedDocument)
+        return [
+            RetrievalResult(
+                id="doc1",
+                file_path="example.py",
+                content="Sample Python async/await code example",
+                similarity=0.9,
+                confidence=0.9,
+                has_deprecated=False,
+                has_fixme=False,
+                has_todo=False,
+                has_security=False,
+                metadata={},
+                source="vector"
+            ),
+            RetrievalResult(
+                id="doc2",
+                file_path="docs/async.md",
+                content="Documentation about coroutines and event loops",
+                similarity=0.85,
+                confidence=0.85,
+                has_deprecated=False,
+                has_fixme=False,
+                has_todo=False,
+                has_security=False,
+                metadata={},
+                source="vector"
+            )
+        ]
     
     retrieval_service.hybrid_retrieve = AsyncMock(side_effect=mock_hybrid_retrieve)
     
@@ -80,7 +115,7 @@ def mock_parser_service():
     """Create mock parser service for testing"""
     parser_service = Mock()
     
-    def mock_parse(content, language="python"):
+    def mock_parse(file_path=None, content="", language="python"):
         return Mock(
             has_deprecated=False,
             has_fixme=False,

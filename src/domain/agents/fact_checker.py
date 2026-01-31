@@ -103,6 +103,8 @@ async def verify_fragment(
         # 解析响应
         response_text = response.strip()
         
+        logger.info(f"Fact Checker: LLM response: {response_text[:100]}")
+        
         if response_text.startswith("VALID"):
             logger.info(f"Fact Checker: Fragment for step {fragment.step_id} is valid")
             return True, []
