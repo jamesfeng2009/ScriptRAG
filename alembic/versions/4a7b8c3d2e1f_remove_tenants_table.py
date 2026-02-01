@@ -1,7 +1,7 @@
 """Remove tenants table and simplify users table
 
 Revision ID: 4a7b8c3d2e1f
-Revises: 3f8a9b2c1d5e
+Revises: 5f8b9c0d1e2a
 Create Date: 2026-02-01 17:00:00.000000
 
 """
@@ -13,7 +13,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = '4a7b8c3d2e1f'
-down_revision: Union[str, None] = '3f8a9b2c1d5e'
+down_revision: Union[str, None] = '5f8b9c0d1e2a'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

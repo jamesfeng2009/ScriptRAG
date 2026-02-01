@@ -1,7 +1,4 @@
-"""REST API Interface
-
-This module implements the FastAPI REST API for the RAG screenplay generation system.
-"""
+"""简化版 REST API - 专注于剧本生成和动态方向调整"""
 
 import asyncio
 import logging
@@ -11,196 +8,123 @@ from typing import Optional, Dict, Any, List
 from datetime import datetime
 from enum import Enum
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks, Depends, Header, status
-from fastapi.responses import JSONResponse
+from fastapi import FastAPI, HTTPException, BackgroundTasks, UploadFile, File, Query, Form
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import yaml
 from dotenv import load_dotenv
 
 from ..domain.models import SharedState
-from ..application.orchestrator import WorkflowOrchestrator
+from ..application.enhanced_orchestrator import EnhancedWorkflowOrchestrator
 from ..services.llm.service import LLMService
-from ..services.retrieval_service import RetrievalService
+from ..services.retrieval_service import RetrievalService, RetrievalConfig
 from ..services.parser.tree_sitter_parser import TreeSitterParser
 from ..services.summarization_service import SummarizationService
-from ..services.database.postgres import PostgresService
 from ..infrastructure.logging import setup_logging
-from ..infrastructure.metrics import (
-    get_metrics,
-    record_workflow_execution,
-    update_active_tasks,
-    set_system_info
-)
+from ..services.task_persistence_service import TaskDatabaseService, TaskRecord, TaskService
 
 
 logger = logging.getLogger(__name__)
 
 
-# ==================== Models ====================
-
 class TaskStatus(str, Enum):
-    """任务状态枚举"""
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
 
 
+class SkillType(str, Enum):
+    STANDARD_TUTORIAL = "standard_tutorial"
+    WARNING_MODE = "warning_mode"
+    VISUALIZATION_ANALOGY = "visualization_analogy"
+    RESEARCH_MODE = "research_mode"
+    MEME_STYLE = "meme_style"
+
+
+class RAGConfig(BaseModel):
+    """RAG配置"""
+    enable_hybrid_search: bool = True
+    top_k: int = Field(5, ge=1, le=20)
+    enable_reranking: bool = True
+
+
+class SkillConfig(BaseModel):
+    """Skill配置"""
+    initial_skill: SkillType = SkillType.STANDARD_TUTORIAL
+    enable_auto_switch: bool = True
+    switch_threshold: float = Field(0.7, ge=0.0, le=1.0)
+
+
 class GenerateRequest(BaseModel):
-    """生成剧本请求"""
-    topic: str = Field(..., description="User topic for screenplay generation")
-    context: Optional[str] = Field("", description="Additional project context")
-    skill: Optional[str] = Field("standard_tutorial", description="Initial skill mode")
-    tone: Optional[str] = Field("professional", description="Global tone")
-    max_retries: Optional[int] = Field(3, description="Maximum retries per step")
-    config: Optional[Dict[str, Any]] = Field({}, description="Additional configuration options")
+    """剧本生成请求"""
+    topic: str = Field(..., min_length=1, description="生成主题")
+    context: Optional[str] = Field("", description="上下文信息")
     
-    class Config:
-        json_schema_extra = {
-            "example": {
-                "topic": "Explain user authentication",
-                "context": "Using JWT tokens",
-                "skill": "standard_tutorial",
-                "tone": "professional",
-                "max_retries": 3,
-                "config": {
-                    "max_steps": 5,
-                    "complexity": "simple",
-                    "recursion_limit": 100
-                }
-            }
-        }
+    skill: Optional[SkillConfig] = Field(default_factory=SkillConfig)
+    rag: Optional[RAGConfig] = Field(default_factory=RAGConfig)
+    
+    enable_dynamic_adjustment: bool = Field(True, description="启用动态方向调整")
+    max_retries: int = Field(3, ge=1, le=10)
+    recursion_limit: int = Field(100, ge=10, le=200)
 
 
 class GenerateResponse(BaseModel):
-    """生成剧本响应"""
-    task_id: str = Field(..., description="Task ID for tracking")
-    status: TaskStatus = Field(..., description="Task status")
-    message: str = Field(..., description="Status message")
-
-
-class TaskStatusResponse(BaseModel):
-    """任务状态响应"""
-    task_id: str = Field(..., description="Task ID")
-    status: TaskStatus = Field(..., description="Task status")
-    progress: Optional[Dict[str, Any]] = Field(None, description="Progress information")
-    result: Optional[Dict[str, Any]] = Field(None, description="Result if completed")
-    error: Optional[str] = Field(None, description="Error message if failed")
-    created_at: datetime = Field(..., description="Task creation time")
-    updated_at: datetime = Field(..., description="Task last update time")
+    """剧本生成响应"""
+    task_id: str
+    status: TaskStatus
+    screenplay: Optional[str] = None
+    outline: Optional[List[Dict[str, Any]]] = None
+    skill_history: Optional[List[Dict[str, Any]]] = None
+    direction_changes: Optional[List[Dict[str, Any]]] = None
+    error: Optional[str] = None
+    created_at: datetime
 
 
 class HealthResponse(BaseModel):
     """健康检查响应"""
-    status: str = Field(..., description="Service status")
-    version: str = Field(..., description="API version")
-    timestamp: datetime = Field(..., description="Current timestamp")
-    services: Dict[str, str] = Field(..., description="Service statuses")
+    status: str
+    llm_available: bool
 
 
-# ==================== Task Storage ====================
-
-class TaskStore:
-    """任务存储（内存存储，生产环境应使用 Redis）"""
-    
-    def __init__(self):
-        self.tasks: Dict[str, Dict[str, Any]] = {}
-    
-    def create_task(self, task_id: str, request: GenerateRequest) -> Dict[str, Any]:
-        """创建任务"""
-        task = {
-            "task_id": task_id,
-            "status": TaskStatus.PENDING,
-            "request": request.model_dump(),
-            "progress": {},
-            "result": None,
-            "error": None,
-            "created_at": datetime.now(),
-            "updated_at": datetime.now()
-        }
-        self.tasks[task_id] = task
-        return task
-    
-    def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
-        """获取任务"""
-        return self.tasks.get(task_id)
-    
-    def update_task(self, task_id: str, **kwargs):
-        """更新任务"""
-        if task_id in self.tasks:
-            self.tasks[task_id].update(kwargs)
-            self.tasks[task_id]["updated_at"] = datetime.now()
-    
-    def list_tasks(self) -> List[Dict[str, Any]]:
-        """列出所有任务"""
-        return list(self.tasks.values())
-
-
-# ==================== Global State ====================
-
-task_store = TaskStore()
+task_store: Dict[str, Dict[str, Any]] = {}
+task_service: Optional[TaskService] = None
+skill_service: Optional[Any] = None
 app_config = None
 llm_service = None
 retrieval_service = None
 parser_service = None
 summarization_service = None
-persistence_service = None
-orm_service = None
+orchestrator: Optional[EnhancedWorkflowOrchestrator] = None
+document_service = None
 
-
-# ==================== FastAPI App ====================
 
 app = FastAPI(
-    title="RAG Screenplay Multi-Agent System API",
-    description="REST API for generating screenplays based on code context using multi-agent system",
-    version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc"
+    title="RAG Screenplay Generator",
+    description="带RAG和动态方向调整的剧本生成系统",
+    version="1.0.0"
 )
 
-# CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 生产环境应限制具体域名
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-# ==================== Dependencies ====================
-
-# 移除 API Key 认证，简化开发和测试
-# 生产环境可以重新启用认证机制
-
-
-# ==================== Startup/Shutdown ====================
-
-@app.on_event("startup")
-async def startup_event():
-    """应用启动事件"""
-    global app_config, llm_service, retrieval_service, parser_service, summarization_service, persistence_service, orm_service
+def init_services():
+    """初始化服务"""
+    global app_config, llm_service, retrieval_service, parser_service, summarization_service, orchestrator, task_service, skill_service
     
-    logger.info("Starting RAG Screenplay API...")
+    logger.info("Initializing services...")
     
-    # 加载环境变量
     load_dotenv()
     
-    # 设置日志
     log_level = os.getenv("LOG_LEVEL", "INFO")
-    log_file = os.getenv("LOG_FILE", "logs/api.log")
-    setup_logging(level=log_level, log_file=log_file)
+    setup_logging(level=log_level)
     
-    # 设置系统信息
-    set_system_info({
-        'version': '1.0.0',
-        'environment': os.getenv('ENVIRONMENT', 'production'),
-        'api_host': os.getenv('API_HOST', '0.0.0.0'),
-        'api_port': os.getenv('API_PORT', '8000')
-    })
-    
-    # 加载配置
     config_path = os.getenv("CONFIG_PATH", "config.yaml")
     try:
         with open(config_path, 'r', encoding='utf-8') as f:
@@ -210,30 +134,51 @@ async def startup_event():
         logger.error(f"Failed to load configuration: {e}")
         app_config = {}
     
-    # 初始化服务
+    # 从环境变量注入 API keys
+    llm_providers = app_config.get("llm", {}).setdefault("providers", {})
+    
+    glm_key = os.getenv("GLM_API_KEY")
+    if glm_key:
+        llm_providers.setdefault("glm", {})["api_key"] = glm_key
+        logger.info("GLM API key loaded")
+    
+    openai_key = os.getenv("OPENAI_API_KEY")
+    if openai_key:
+        llm_providers.setdefault("openai", {})["api_key"] = openai_key
+        logger.info("OpenAI API key loaded")
+    
+    qwen_key = os.getenv("QWEN_API_KEY")
+    if qwen_key:
+        llm_providers.setdefault("qwen", {})["api_key"] = qwen_key
+        logger.info("QWEN API key loaded")
+    
     try:
-        # LLM 服务
         llm_service = LLMService(app_config.get('llm', {}))
         logger.info("LLM service initialized")
-        
-        # 数据库服务
-        db_config = {
-            'host': os.getenv('POSTGRES_HOST', 'localhost'),
-            'port': int(os.getenv('POSTGRES_PORT', 5432)),
-            'database': os.getenv('POSTGRES_DB', 'screenplay_system'),
-            'user': os.getenv('POSTGRES_USER', 'postgres'),
-            'password': os.getenv('POSTGRES_PASSWORD', '')
-        }
-        
-        try:
-            postgres_service = PostgresService(db_config)
-            await postgres_service.connect()
-            logger.info("Database service initialized")
-        except Exception as e:
-            logger.warning(f"Database connection failed: {e}, continuing without database")
-            postgres_service = None
-        
-        # 向量数据库服务
+    except Exception as e:
+        logger.error(f"Failed to initialize LLM service: {e}")
+        llm_service = None
+    
+    try:
+        db_service = TaskDatabaseService.create_from_env()
+        task_service = TaskService(db_service, enable_cache=True)
+        logger.info("Task service initialized with database persistence")
+    except Exception as e:
+        logger.error(f"Failed to initialize task service: {e}")
+        task_service = None
+
+    try:
+        from ..services.skill_persistence_service import SkillDatabaseService, SkillService
+        skill_db_service = SkillDatabaseService.create_from_env()
+        skill_service = SkillService(skill_db_service, enable_cache=True)
+        logger.info("Skill service initialized")
+    except Exception as e:
+        logger.error(f"Failed to initialize skill service: {e}")
+        import traceback
+        traceback.print_exc()
+        skill_service = None
+    
+    try:
         from ..services.database.vector_db import PostgresVectorDBService
         vector_db_service = PostgresVectorDBService(
             host=os.getenv('POSTGRES_HOST', 'localhost'),
@@ -243,16 +188,6 @@ async def startup_event():
             password=os.getenv('POSTGRES_PASSWORD', 'postgres')
         )
         
-        # ORM 数据库服务
-        from ..services.database.orm_service import DatabaseServiceFactory
-        orm_service = DatabaseServiceFactory.create_from_env()
-        
-        # 持久化服务
-        from ..services.persistence_service import PersistenceService
-        persistence_service = PersistenceService(orm_service)
-        
-        # 检索服务
-        from ..services.retrieval_service import RetrievalConfig
         retrieval_config = RetrievalConfig(**app_config.get('retrieval', {}))
         retrieval_service = RetrievalService(
             vector_db_service=vector_db_service,
@@ -260,317 +195,698 @@ async def startup_event():
             config=retrieval_config
         )
         logger.info("Retrieval service initialized")
-        
-        # 解析服务
+    except Exception as e:
+        logger.error(f"Failed to initialize retrieval service: {e}")
+        retrieval_service = None
+    
+    try:
         parser_service = TreeSitterParser()
         logger.info("Parser service initialized")
-        
-        # 摘要服务
+    except Exception as e:
+        logger.error(f"Failed to initialize parser service: {e}")
+        parser_service = None
+    
+    try:
         summarization_service = SummarizationService(
             llm_service=llm_service,
             config=app_config.get('retrieval', {}).get('summarization', {})
         )
         logger.info("Summarization service initialized")
-        
-        logger.info("All services initialized successfully")
-    
     except Exception as e:
-        logger.error(f"Failed to initialize services: {e}")
-
-
-@app.on_event("shutdown")
-async def shutdown_event():
-    """应用关闭事件"""
-    logger.info("Shutting down RAG Screenplay API...")
-
-
-# ==================== Background Task ====================
-
-async def generate_screenplay_task(task_id: str, request: GenerateRequest):
-    """
-    后台任务：生成剧本
-    
-    Args:
-        task_id: 任务 ID
-        request: 生成请求
-    """
-    import time
-    start_time = time.time()
+        logger.error(f"Failed to initialize summarization service: {e}")
+        summarization_service = None
     
     try:
-        # 更新任务状态为运行中
-        task_store.update_task(task_id, status=TaskStatus.RUNNING)
-        update_active_tasks(len([t for t in task_store.list_tasks() if t['status'] == TaskStatus.RUNNING]))
-        logger.info(f"Task {task_id} started")
-        
-        # 创建编排器
-        orchestrator = WorkflowOrchestrator(
+        orchestrator = EnhancedWorkflowOrchestrator(
             llm_service=llm_service,
             retrieval_service=retrieval_service,
             parser_service=parser_service,
-            summarization_service=summarization_service
+            summarization_service=summarization_service,
+            workspace_id=DEFAULT_WORKSPACE,
+            enable_dynamic_adjustment=True
         )
-        
-        # 创建初始状态
-        state = SharedState(
-            user_topic=request.topic,
-            project_context=request.context,
-            current_skill=request.skill,
-            global_tone=request.tone,
-            max_retries=request.max_retries
-        )
-        
-        # 执行工作流（增加递归限制以处理复杂工作流）
-        recursion_limit = request.config.get('recursion_limit', 100) if request.config else 100
-        result = await orchestrator.execute(state, recursion_limit=recursion_limit)
-        
-        # 计算执行时长
-        duration = time.time() - start_time
-        
-        # 更新任务结果
-        if result['success']:
-            # 记录指标
-            pivots_count = sum(1 for log in state.execution_log if log.get('action') == 'pivot_triggered')
-            retries_count = sum(step.retry_count for step in state.outline)
-            
-            record_workflow_execution(
-                duration=duration,
-                status='success',
-                steps_count=len(state.outline),
-                pivots_count=pivots_count,
-                retries_count=retries_count
-            )
-            
-            task_store.update_task(
-                task_id,
-                status=TaskStatus.COMPLETED,
-                result={
-                    "screenplay": result.get('final_screenplay', ''),
-                    "statistics": {
-                        "total_steps": len(state.outline),
-                        "fragments_generated": len(state.fragments),
-                        "documents_retrieved": len(state.retrieved_docs),
-                        "pivots_triggered": pivots_count,
-                        "duration_seconds": duration
-                    },
-                    "execution_log": state.execution_log
-                }
-            )
-            logger.info(f"Task {task_id} completed successfully")
-        else:
-            # 记录失败指标
-            record_workflow_execution(
-                duration=duration,
-                status='failed',
-                steps_count=len(state.outline)
-            )
-            
-            task_store.update_task(
-                task_id,
-                status=TaskStatus.FAILED,
-                error=result.get('error', 'Unknown error')
-            )
-            logger.error(f"Task {task_id} failed: {result.get('error')}")
-    
+        logger.info("Orchestrator initialized")
     except Exception as e:
-        duration = time.time() - start_time
-        record_workflow_execution(
-            duration=duration,
-            status='failed',
-            steps_count=0
-        )
-        
-        task_store.update_task(
-            task_id,
-            status=TaskStatus.FAILED,
-            error=str(e)
-        )
-        logger.error(f"Task {task_id} failed with exception: {e}")
+        logger.error(f"Failed to initialize orchestrator: {e}")
+        orchestrator = None
     
-    finally:
-        # 更新活动任务数
-        update_active_tasks(len([t for t in task_store.list_tasks() if t['status'] == TaskStatus.RUNNING]))
+    logger.info("All services initialized")
 
 
-# ==================== API Endpoints ====================
+@app.on_event("startup")
+async def startup():
+    init_services()
+    
+    if skill_service:
+        try:
+            await skill_service.db_service.connect()
+            await skill_service.db_service.create_table()
+            logger.info("Skill service database connected and tables created")
+        except Exception as e:
+            logger.error(f"Failed to connect skill service database: {e}")
+    
+    try:
+        from ..services.document_persistence_service import DocumentService
+        global document_service
+        document_service = DocumentService()
+        await document_service.init()
+        logger.info("Document service initialized")
+    except Exception as e:
+        logger.error(f"Failed to initialize document service: {e}")
+        document_service = None
+
 
 @app.get("/", response_model=Dict[str, str])
 async def root():
-    """根路径"""
-    return {
-        "message": "RAG Screenplay Multi-Agent System API",
-        "version": "1.0.0",
-        "docs": "/docs",
-        "health": "/health"
-    }
+    return {"message": "RAG Screenplay Generator", "version": "1.0.0"}
 
 
 @app.get("/health", response_model=HealthResponse)
-async def health_check():
-    """
-    健康检查端点
-    
-    Returns:
-        服务健康状态
-    """
-    services = {
-        "llm_service": "healthy" if llm_service else "unavailable",
-        "retrieval_service": "healthy" if retrieval_service else "unavailable",
-        "parser_service": "healthy" if parser_service else "unavailable",
-        "summarization_service": "healthy" if summarization_service else "unavailable",
-        "persistence_service": "healthy" if persistence_service else "unavailable",
-        "database": "healthy" if orm_service and await orm_service.health_check() else "unavailable"
-    }
-    
-    overall_status = "healthy" if all(s == "healthy" for s in services.values()) else "degraded"
-    
+async def health():
     return HealthResponse(
-        status=overall_status,
-        version="1.0.0",
-        timestamp=datetime.now(),
-        services=services
+        status="healthy" if llm_service else "degraded",
+        llm_available=llm_service is not None
     )
 
 
 @app.post("/generate", response_model=GenerateResponse)
-async def generate_screenplay(
-    request: GenerateRequest,
-    background_tasks: BackgroundTasks
-):
-    """
-    生成剧本端点（异步）
-    
-    Args:
-        request: 生成请求
-        background_tasks: 后台任务管理器
-        api_key: API Key（认证）
-        
-    Returns:
-        任务 ID 和状态
-    """
-    # 生成任务 ID
+async def generate(request: GenerateRequest, background_tasks: BackgroundTasks):
+    """生成剧本（核心接口）"""
     task_id = str(uuid.uuid4())
     
-    # 创建任务
-    task_store.create_task(task_id, request)
+    logger.info(f"Generating screenplay for topic: {request.topic}")
     
-    # 添加后台任务
-    background_tasks.add_task(generate_screenplay_task, task_id, request)
+    if not orchestrator:
+        raise HTTPException(status_code=503, detail="Orchestrator not available")
     
-    logger.info(f"Created task {task_id} for topic: {request.topic}")
+    if not task_service:
+        raise HTTPException(status_code=503, detail="Task service not available")
+    
+    task_record = TaskRecord(
+        task_id=task_id,
+        status=TaskStatus.PENDING.value,
+        topic=request.topic,
+        context=request.context,
+        current_skill=request.skill.initial_skill.value if request.skill else "standard_tutorial",
+        request_data=request.model_dump()
+    )
+    
+    await task_service.create(task_record)
+    
+    background_tasks.add_task(
+        run_generation,
+        task_id,
+        request.model_dump()
+    )
     
     return GenerateResponse(
         task_id=task_id,
         status=TaskStatus.PENDING,
-        message="Task created successfully. Use /status/{task_id} to check progress."
+        created_at=datetime.now()
     )
 
 
-@app.get("/status/{task_id}", response_model=TaskStatusResponse)
-async def get_task_status(task_id: str):
-    """
-    获取任务状态端点
+async def run_generation(task_id: str, request_data: Dict[str, Any]):
+    """后台执行剧本生成"""
+    if not task_service:
+        logger.error(f"Task service not available for task {task_id}")
+        return
     
-    Args:
-        task_id: 任务 ID
+    await task_service.update(task_id, status=TaskStatus.RUNNING.value)
+    
+    try:
+        skill = request_data.get("skill", {})
+        if isinstance(skill, dict):
+            initial_skill = skill.get("initial_skill", "standard_tutorial")
+        else:
+            initial_skill = str(skill) if skill else "standard_tutorial"
         
-    Returns:
-        任务状态信息
-    """
-    task = task_store.get_task(task_id)
+        state = SharedState(
+            user_topic=request_data.get("topic", ""),
+            project_context=request_data.get("context", ""),
+            current_skill=initial_skill,
+            max_retries=request_data.get("max_retries", 3)
+        )
+        
+        from ..application.enhanced_orchestrator import EnhancedWorkflowOrchestrator
+        
+        runtime_orchestrator = EnhancedWorkflowOrchestrator(
+            llm_service=llm_service,
+            retrieval_service=retrieval_service,
+            parser_service=parser_service,
+            summarization_service=summarization_service,
+            workspace_id=DEFAULT_WORKSPACE,
+            enable_dynamic_adjustment=request_data.get("enable_dynamic_adjustment", True)
+        )
+        
+        recursion_limit = request_data.get("recursion_limit", 100)
+        result = await runtime_orchestrator.execute(state, recursion_limit=recursion_limit)
+        
+        if result['success']:
+            final_state = result['state']
+            
+            screenplay = None
+            for log in reversed(final_state.execution_log):
+                if log.get("action") == "final_screenplay":
+                    screenplay = log.get("details", {}).get("screenplay")
+                    break
+            
+            await task_service.update(
+                task_id,
+                status=TaskStatus.COMPLETED.value,
+                screenplay=screenplay,
+                outline=[
+                    {"step_id": s.step_id, "description": s.description, "status": s.status}
+                    for s in final_state.outline
+                ],
+                skill_history=final_state.skill_history,
+                direction_changes=[
+                    {
+                        "reason": h.get("reason"),
+                        "from_skill": h.get("from_skill"),
+                        "to_skill": h.get("to_skill"),
+                        "triggered_by": h.get("step_id", "system")
+                    }
+                    for h in final_state.skill_history
+                ]
+            )
+            logger.info(f"Task {task_id} completed")
+        else:
+            await task_service.update(
+                task_id,
+                status=TaskStatus.FAILED.value,
+                error=result.get("error", "Unknown error")
+            )
+            logger.error(f"Task {task_id} failed: {result.get('error')}")
+    
+    except Exception as e:
+        await task_service.update(
+            task_id,
+            status=TaskStatus.FAILED.value,
+            error=str(e)
+        )
+        logger.error(f"Task {task_id} error: {e}")
+
+
+class AdjustRequest(BaseModel):
+    """方向调整请求"""
+    action: str = Field(..., description="调整动作: switch_skill, skip_step, add_step, abort")
+    skill: Optional[str] = Field(None, description="目标 Skill（switch_skill 时必填）")
+    step_index: Optional[int] = Field(None, description="步骤索引（skip_step 时必填）")
+    new_step: Optional[str] = Field(None, description="新步骤描述（add_step 时必填）")
+    reason: str = Field(..., description="调整原因")
+
+
+class AdjustResponse(BaseModel):
+    """调整响应"""
+    success: bool
+    task_id: str
+    action: str
+    result: Dict[str, Any]
+    message: str
+
+
+@app.get("/result/{task_id}", response_model=GenerateResponse)
+async def get_result(task_id: str):
+    """获取生成结果"""
+    if not task_service:
+        raise HTTPException(status_code=503, detail="Task service not available")
+    
+    task = await task_service.get(task_id)
     
     if not task:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Task {task_id} not found"
-        )
+        raise HTTPException(status_code=404, detail="Task not found")
     
-    return TaskStatusResponse(
-        task_id=task["task_id"],
-        status=task["status"],
-        progress=task.get("progress"),
-        result=task.get("result"),
-        error=task.get("error"),
-        created_at=task["created_at"],
-        updated_at=task["updated_at"]
+    return GenerateResponse(
+        task_id=task_id,
+        status=TaskStatus(task.status),
+        screenplay=task.screenplay,
+        outline=task.outline,
+        skill_history=task.skill_history,
+        direction_changes=task.direction_changes,
+        error=task.error,
+        created_at=task.created_at
     )
 
 
-@app.get("/tasks", response_model=List[TaskStatusResponse])
-async def list_tasks():
-    """
-    列出所有任务端点
+@app.post("/adjust/{task_id}", response_model=AdjustResponse)
+async def adjust_task(task_id: str, request: AdjustRequest):
+    """手动调整任务方向（手动干预 RAG/Skill）"""
+    if not task_service:
+        raise HTTPException(status_code=503, detail="Task service not available")
     
-    Returns:
-        任务列表
-    """
-    tasks = task_store.list_tasks()
+    task = await task_service.get(task_id)
     
-    return [
-        TaskStatusResponse(
-            task_id=task["task_id"],
-            status=task["status"],
-            progress=task.get("progress"),
-            result=task.get("result"),
-            error=task.get("error"),
-            created_at=task["created_at"],
-            updated_at=task["updated_at"]
-        )
-        for task in tasks
-    ]
-
-
-@app.get("/metrics")
-async def metrics():
-    """
-    Prometheus 指标端点
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
     
-    Returns:
-        Prometheus 格式的指标
-    """
-    return get_metrics()
-
-
-# ==================== Error Handlers ====================
-
-@app.exception_handler(HTTPException)
-async def http_exception_handler(request, exc):
-    """HTTP 异常处理器"""
-    return JSONResponse(
-        status_code=exc.status_code,
-        content={
-            "error": exc.detail,
-            "status_code": exc.status_code
+    if task.status not in [TaskStatus.PENDING.value, TaskStatus.RUNNING.value]:
+        raise HTTPException(status_code=400, detail="Task already completed or failed")
+    
+    logger.info(f"Manual adjustment on task {task_id}: action={request.action}")
+    
+    result = {}
+    
+    if request.action == "switch_skill":
+        if not request.skill:
+            raise HTTPException(status_code=400, detail="Skill is required for switch_skill action")
+        
+        current_skill = task.current_skill
+        task.current_skill = request.skill
+        task.skill_history.append({
+            "reason": f"manual_adjustment: {request.reason}",
+            "from_skill": current_skill,
+            "to_skill": request.skill,
+            "triggered_by": "user"
+        })
+        result = {
+            "from_skill": current_skill,
+            "to_skill": request.skill
         }
-    )
-
-
-@app.exception_handler(Exception)
-async def general_exception_handler(request, exc):
-    """通用异常处理器"""
-    logger.error(f"Unhandled exception: {exc}")
-    return JSONResponse(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={
-            "error": "Internal server error",
-            "detail": str(exc)
+        message = f"Skill switched from {current_skill} to {request.skill}"
+    
+    elif request.action == "skip_step":
+        if request.step_index is None:
+            raise HTTPException(status_code=400, detail="step_index is required for skip_step action")
+        
+        if request.step_index < 0 or request.step_index >= len(task.outline):
+            raise HTTPException(status_code=400, detail="Invalid step_index")
+        
+        task.outline[request.step_index]["status"] = "skipped"
+        result = {
+            "step_index": request.step_index,
+            "step_description": task.outline[request.step_index].get("description", "")[:100]
         }
+        message = f"Step {request.step_index} skipped"
+    
+    elif request.action == "add_step":
+        if not request.new_step:
+            raise HTTPException(status_code=400, detail="new_step is required for add_step action")
+        
+        new_step = {
+            "step_id": f"manual_{len(task.outline) + 1}",
+            "description": request.new_step,
+            "status": "pending"
+        }
+        task.outline.append(new_step)
+        task.direction_changes.append({
+            "reason": f"manual_adjustment: {request.reason}",
+            "action": "add_step",
+            "step_description": request.new_step[:100]
+        })
+        result = {
+            "new_step": request.new_step[:100],
+            "total_steps": len(task.outline)
+        }
+        message = f"New step added: {request.new_step[:50]}..."
+    
+    elif request.action == "abort":
+        task.status = TaskStatus.FAILED.value
+        task.error = f"Aborted by user: {request.reason}"
+        result = {"aborted": True}
+        message = "Task aborted"
+    
+    else:
+        raise HTTPException(status_code=400, detail=f"Unknown action: {request.action}")
+    
+    await task_service.update(
+        task_id,
+        current_skill=task.current_skill,
+        skill_history=task.skill_history,
+        outline=task.outline,
+        direction_changes=task.direction_changes,
+        status=task.status,
+        error=task.error
+    )
+    
+    return AdjustResponse(
+        success=True,
+        task_id=task_id,
+        action=request.action,
+        result=result,
+        message=message
     )
 
 
-# ==================== Main ====================
+class SkillCreateRequest(BaseModel):
+    """创建技能请求"""
+    skill_name: str = Field(..., min_length=1, max_length=100, description="技能名称")
+    description: str = Field(..., description="技能描述")
+    tone: str = Field(..., description="语调风格")
+    compatible_with: List[str] = Field(default_factory=list, description="兼容的技能列表")
+    prompt_config: Dict[str, Any] = Field(default_factory=dict, description="提示配置")
+    is_enabled: bool = Field(True, description="是否启用")
+    is_default: bool = Field(False, description="是否为默认技能")
+
+
+class SkillUpdateRequest(BaseModel):
+    """更新技能请求"""
+    description: Optional[str] = None
+    tone: Optional[str] = None
+    compatible_with: Optional[List[str]] = None
+    prompt_config: Optional[Dict[str, Any]] = None
+    is_enabled: Optional[bool] = None
+    is_default: Optional[bool] = None
+
+
+class SkillResponse(BaseModel):
+    """技能响应"""
+    workspace_id: str
+    skill_name: str
+    description: str
+    tone: str
+    compatible_with: List[str]
+    is_enabled: bool
+    is_default: bool
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class WorkspaceSkillsResponse(BaseModel):
+    """技能列表响应"""
+    skills: List[SkillResponse]
+    default_skill: Optional[str] = None
+    total_count: int
+
+
+DEFAULT_WORKSPACE = "default"
+
+
+@app.get("/skills", response_model=WorkspaceSkillsResponse)
+async def list_skills():
+    """列出所有技能"""
+    if not skill_service:
+        raise HTTPException(status_code=503, detail="Skill service not available")
+
+    skills = await skill_service.get_by_workspace(DEFAULT_WORKSPACE)
+    default_skill = await skill_service.get_default(DEFAULT_WORKSPACE)
+
+    return WorkspaceSkillsResponse(
+        skills=[
+            SkillResponse(
+                workspace_id=s.workspace_id,
+                skill_name=s.skill_name,
+                description=s.description,
+                tone=s.tone,
+                compatible_with=s.compatible_with,
+                is_enabled=s.is_enabled,
+                is_default=s.is_default,
+                created_at=s.created_at,
+                updated_at=s.updated_at
+            )
+            for s in skills
+        ],
+        default_skill=default_skill.skill_name if default_skill else None,
+        total_count=len(skills)
+    )
+
+
+@app.post("/skills", response_model=SkillResponse)
+async def create_skill(request: SkillCreateRequest):
+    """创建新技能"""
+    if not skill_service:
+        raise HTTPException(status_code=503, detail="Skill service not available")
+
+    from ..services.skill_persistence_service import SkillRecord
+
+    existing = await skill_service.get(DEFAULT_WORKSPACE, request.skill_name)
+    if existing:
+        raise HTTPException(status_code=409, detail=f"Skill '{request.skill_name}' already exists")
+
+    record = SkillRecord(
+        workspace_id=DEFAULT_WORKSPACE,
+        skill_name=request.skill_name,
+        description=request.description,
+        tone=request.tone,
+        compatible_with=request.compatible_with,
+        prompt_config=request.prompt_config,
+        is_enabled=request.is_enabled,
+        is_default=request.is_default
+    )
+
+    result = await skill_service.create(record)
+
+    return SkillResponse(
+        workspace_id=result.workspace_id,
+        skill_name=result.skill_name,
+        description=result.description,
+        tone=result.tone,
+        compatible_with=result.compatible_with,
+        is_enabled=result.is_enabled,
+        is_default=result.is_default,
+        created_at=result.created_at,
+        updated_at=result.updated_at
+    )
+
+
+@app.get("/skills/{skill_name}", response_model=SkillResponse)
+async def get_skill(skill_name: str):
+    """获取指定技能"""
+    if not skill_service:
+        raise HTTPException(status_code=503, detail="Skill service not available")
+
+    record = await skill_service.get(DEFAULT_WORKSPACE, skill_name)
+    if not record:
+        raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
+
+    return SkillResponse(
+        workspace_id=record.workspace_id,
+        skill_name=record.skill_name,
+        description=record.description,
+        tone=record.tone,
+        compatible_with=record.compatible_with,
+        is_enabled=record.is_enabled,
+        is_default=record.is_default,
+        created_at=record.created_at,
+        updated_at=record.updated_at
+    )
+
+
+@app.patch("/skills/{skill_name}", response_model=SkillResponse)
+async def update_skill(skill_name: str, request: SkillUpdateRequest):
+    """更新指定技能"""
+    if not skill_service:
+        raise HTTPException(status_code=503, detail="Skill service not available")
+
+    update_data = {k: v for k, v in request.model_dump().items() if v is not None}
+    result = await skill_service.update(DEFAULT_WORKSPACE, skill_name, **update_data)
+
+    if not result:
+        raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
+
+    return SkillResponse(
+        workspace_id=result.workspace_id,
+        skill_name=result.skill_name,
+        description=result.description,
+        tone=result.tone,
+        compatible_with=result.compatible_with,
+        is_enabled=result.is_enabled,
+        is_default=result.is_default,
+        created_at=result.created_at,
+        updated_at=result.updated_at
+    )
+
+
+@app.delete("/skills/{skill_name}")
+async def delete_skill(skill_name: str):
+    """删除指定技能"""
+    if not skill_service:
+        raise HTTPException(status_code=503, detail="Skill service not available")
+
+    if skill_name == "standard_tutorial":
+        raise HTTPException(status_code=400, detail="Cannot delete default skill 'standard_tutorial'")
+
+    deleted = await skill_service.delete(DEFAULT_WORKSPACE, skill_name)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
+
+    return {"message": f"Skill '{skill_name}' deleted"}
+
+
+@app.post("/skills/initialize")
+async def initialize_skills():
+    """初始化默认技能（从全局 SKILLS 复制）"""
+    if not skill_service:
+        raise HTTPException(status_code=503, detail="Skill service not available")
+
+    skills = await skill_service.ensure_default_skills(DEFAULT_WORKSPACE)
+
+    return {
+        "message": f"Initialized {len(skills)} default skills",
+        "skills": [s.skill_name for s in skills]
+    }
+
+
+@app.get("/skills/{skill_name}/config")
+async def get_skill_config(skill_name: str):
+    """获取技能配置（用于剧本生成）"""
+    if not skill_service:
+        raise HTTPException(status_code=503, detail="Skill service not available")
+
+    config = await skill_service.get_skill_config(DEFAULT_WORKSPACE, skill_name)
+    if not config:
+        raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
+
+    return {
+        "skill_name": skill_name,
+        "description": config.description,
+        "tone": config.tone,
+        "compatible_with": config.compatible_with
+    }
+
+
+class DocumentUploadRequest(BaseModel):
+    """文档上传请求"""
+    title: Optional[str] = None
+    category: Optional[str] = None
+
+
+class DocumentResponse(BaseModel):
+    """文档响应"""
+    doc_id: str
+    title: str
+    file_name: str
+    category: Optional[str] = None
+    file_size: int
+    indexed_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+
+
+class DocumentListResponse(BaseModel):
+    """文档列表响应"""
+    documents: List[DocumentResponse]
+    total: int
+    page: int
+    page_size: int
+
+
+class DocumentSearchResponse(BaseModel):
+    """文档搜索响应"""
+    query: str
+    results: List[Dict[str, Any]]
+    total_results: int
+    retrieved_at: datetime
+
+
+@app.post("/documents", response_model=DocumentResponse)
+async def upload_document(
+    file: UploadFile = File(...),
+    title: Optional[str] = Form(None),
+    category: Optional[str] = Form(None)
+):
+    """上传并索引文档"""
+    if not document_service:
+        raise HTTPException(status_code=503, detail="Document service not available")
+    
+    content = await file.read()
+    text_content = content.decode('utf-8', errors='ignore')
+    file_name = file.filename or "unknown"
+    doc_title = title or file_name
+    file_size = len(content)
+    
+    try:
+        doc = await document_service.create(
+            title=doc_title,
+            file_name=file_name,
+            content=text_content,
+            file_path=None,
+            category=category,
+            file_size=file_size,
+            metadata={"content_type": file.content_type}
+        )
+        
+        return DocumentResponse(
+            doc_id=doc.id,
+            title=doc.title,
+            file_name=doc.file_name,
+            category=doc.category,
+            file_size=doc.file_size,
+            indexed_at=doc.indexed_at,
+            created_at=doc.created_at
+        )
+    except Exception as e:
+        logger.error(f"Failed to upload document: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to upload document: {str(e)}")
+
+
+@app.get("/documents", response_model=DocumentListResponse)
+async def list_documents(
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    category: Optional[str] = Query(None)
+):
+    """列出已索引文档"""
+    if not document_service:
+        raise HTTPException(status_code=503, detail="Document service not available")
+    
+    docs, total = await document_service.list_all(
+        page=page,
+        page_size=page_size,
+        category=category
+    )
+    
+    return DocumentListResponse(
+        documents=[
+            DocumentResponse(
+                doc_id=str(doc.id),
+                title=doc.title,
+                file_name=doc.file_name,
+                category=doc.category,
+                file_size=doc.file_size,
+                indexed_at=doc.indexed_at,
+                created_at=doc.created_at
+            )
+            for doc in docs
+        ],
+        total=total,
+        page=page,
+        page_size=page_size
+    )
+
+
+@app.get("/documents/search", response_model=DocumentSearchResponse)
+async def search_documents(
+    query: str = Query(..., min_length=1, description="搜索关键词"),
+    top_k: int = Query(5, ge=1, le=20)
+):
+    """搜索文档（测试检索效果）"""
+    if not document_service:
+        raise HTTPException(status_code=503, detail="Document service not available")
+    
+    results = await document_service.search_by_content(query, top_k=top_k)
+    
+    return DocumentSearchResponse(
+        query=query,
+        results=results,
+        total_results=len(results),
+        retrieved_at=datetime.now()
+    )
+
+
+@app.delete("/documents/{doc_id}")
+async def delete_document(doc_id: str):
+    """删除文档"""
+    if not document_service:
+        raise HTTPException(status_code=503, detail="Document service not available")
+    
+    try:
+        deleted = await document_service.delete(doc_id)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        return {"message": "Document deleted", "doc_id": doc_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete document: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to delete document: {str(e)}")
+
 
 if __name__ == "__main__":
     import uvicorn
-    
-    port = int(os.getenv("API_PORT", 8000))
-    host = os.getenv("API_HOST", "0.0.0.0")
-    
     uvicorn.run(
-        "presentation.api:app",
-        host=host,
-        port=port,
-        reload=True,
-        log_level="info"
+        "src.presentation.api:app",
+        host="0.0.0.0",
+        port=8000,
+        reload=True
     )
-
