@@ -1,8 +1,6 @@
 """Command Line Interface
 
 This module implements the CLI for the RAG screenplay generation system.
-
-验证需求: 12.8
 """
 
 import asyncio
@@ -246,11 +244,23 @@ Examples:
             logger.warning("Continuing without database connection (retrieval will be limited)")
             postgres_service = None
         
+        # 初始化向量数据库服务
+        from ..services.database.vector_db import PostgresVectorDBService
+        vector_db_service = PostgresVectorDBService(
+            host=config['database']['host'],
+            port=config['database']['port'],
+            database=config['database']['name'],
+            user=config['database']['user'],
+            password=config['database']['password']
+        )
+        
         # 初始化检索服务
+        from ..services.retrieval_service import RetrievalConfig
+        retrieval_config = RetrievalConfig(**config['retrieval'])
         self.retrieval_service = RetrievalService(
+            vector_db_service=vector_db_service,
             llm_service=self.llm_service,
-            postgres_service=postgres_service,
-            config=config['retrieval']
+            config=retrieval_config
         )
         logger.info("Retrieval service initialized")
         

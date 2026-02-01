@@ -1,37 +1,12 @@
 -- ============================================================================
 -- 核心业务表创建脚本
--- 包含用户管理、租户、工作空间、会话、大纲步骤、剧本片段和检索文档表
+-- 包含用户管理、会话、大纲步骤、剧本片段和检索文档表
 -- ============================================================================
 
 SET search_path TO screenplay, public;
 
 -- ============================================================================
--- 1. 租户表（多租户支持）
--- ============================================================================
-CREATE TABLE IF NOT EXISTS tenants (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    name VARCHAR(255) NOT NULL,
-    plan VARCHAR(50) NOT NULL DEFAULT 'free',
-    quota_limit INTEGER DEFAULT 1000,
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    is_active BOOLEAN DEFAULT TRUE,
-    
-    -- 约束
-    CONSTRAINT tenants_plan_check CHECK (plan IN ('free', 'basic', 'pro', 'enterprise'))
-);
-
--- 索引
-CREATE INDEX IF NOT EXISTS idx_tenants_is_active ON tenants(is_active);
-CREATE INDEX IF NOT EXISTS idx_tenants_plan ON tenants(plan);
-
--- 注释
-COMMENT ON TABLE tenants IS '租户表，支持多租户架构';
-COMMENT ON COLUMN tenants.plan IS '订阅计划：free, basic, pro, enterprise';
-COMMENT ON COLUMN tenants.quota_limit IS 'API 调用配额限制';
-
--- ============================================================================
--- 2. 用户表
+-- 1. 用户表
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -39,7 +14,6 @@ CREATE TABLE IF NOT EXISTS users (
     email VARCHAR(255) UNIQUE NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
     role VARCHAR(50) NOT NULL DEFAULT 'user',
-    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     is_active BOOLEAN DEFAULT TRUE,
@@ -47,11 +21,10 @@ CREATE TABLE IF NOT EXISTS users (
     
     -- 约束
     CONSTRAINT users_role_check CHECK (role IN ('admin', 'user', 'viewer')),
-    CONSTRAINT users_email_format CHECK (email ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$')
+    CONSTRAINT users_email_format CHECK (email ~* '^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$'))
 );
 
 -- 索引
-CREATE INDEX IF NOT EXISTS idx_users_tenant ON users(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
 CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
 CREATE INDEX IF NOT EXISTS idx_users_is_active ON users(is_active);
@@ -62,37 +35,52 @@ COMMENT ON COLUMN users.role IS '用户角色：admin, user, viewer';
 COMMENT ON COLUMN users.password_hash IS '密码哈希值（bcrypt）';
 
 -- ============================================================================
--- 3. 工作空间表
+-- 2. 代码文档表（全局代码库，不再按工作空间隔离）
 -- ============================================================================
-CREATE TABLE IF NOT EXISTS workspaces (
+CREATE TABLE IF NOT EXISTS code_documents (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-    name VARCHAR(255) NOT NULL,
-    description TEXT,
-    settings JSONB DEFAULT '{}',
-    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    file_path VARCHAR(1000) NOT NULL,
+    content TEXT NOT NULL,
+    content_hash VARCHAR(64) NOT NULL,
+    embedding VECTOR(1536),  -- OpenAI text-embedding-3-large 维度
+    file_size INTEGER NOT NULL,
+    language VARCHAR(50),
+    has_deprecated BOOLEAN DEFAULT FALSE,
+    has_fixme BOOLEAN DEFAULT FALSE,
+    has_todo BOOLEAN DEFAULT FALSE,
+    has_security BOOLEAN DEFAULT FALSE,
+    metadata JSONB DEFAULT '{}',
+    indexed_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-    is_active BOOLEAN DEFAULT TRUE,
     
     -- 约束
-    CONSTRAINT workspaces_unique_name_per_tenant UNIQUE (tenant_id, name)
+    CONSTRAINT code_documents_unique_path UNIQUE (file_path)
 );
 
 -- 索引
-CREATE INDEX IF NOT EXISTS idx_workspaces_tenant ON workspaces(tenant_id);
-CREATE INDEX IF NOT EXISTS idx_workspaces_is_active ON workspaces(is_active);
-CREATE INDEX IF NOT EXISTS idx_workspaces_created_at ON workspaces(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_code_documents_file_path ON code_documents(file_path);
+CREATE INDEX IF NOT EXISTS idx_code_documents_language ON code_documents(language);
+CREATE INDEX IF NOT EXISTS idx_code_documents_deprecated ON code_documents(has_deprecated) WHERE has_deprecated = TRUE;
+CREATE INDEX IF NOT EXISTS idx_code_documents_fixme ON code_documents(has_fixme) WHERE has_fixme = TRUE;
+CREATE INDEX IF NOT EXISTS idx_code_documents_todo ON code_documents(has_todo) WHERE has_todo = TRUE;
+CREATE INDEX IF NOT EXISTS idx_code_documents_security ON code_documents(has_security) WHERE has_security = TRUE;
+CREATE INDEX IF NOT EXISTS idx_code_documents_updated_at ON code_documents(updated_at DESC);
+
+-- 为向量列创建 HNSW 索引（高性能相似度搜索）
+CREATE INDEX IF NOT EXISTS idx_code_documents_embedding ON code_documents 
+USING hnsw (embedding vector_cosine_ops)
+WITH (m = 16, ef_construction = 64);
 
 -- 注释
-COMMENT ON TABLE workspaces IS '工作空间表，用于组织项目和代码库';
-COMMENT ON COLUMN workspaces.settings IS 'JSON 格式的工作空间配置';
+COMMENT ON TABLE code_documents IS '代码文档表，存储全局代码库的文档和向量';
+COMMENT ON COLUMN code_documents.embedding IS '文档的向量嵌入，用于语义搜索';
+COMMENT ON COLUMN code_documents.content_hash IS '内容哈希值，用于检测文件变更';
 
 -- ============================================================================
--- 4. 剧本生成会话表
+-- 3. 剧本生成会话表
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS screenplay_sessions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     user_topic TEXT NOT NULL,
     project_context TEXT,
@@ -118,7 +106,6 @@ CREATE TABLE IF NOT EXISTS screenplay_sessions (
 );
 
 -- 索引
-CREATE INDEX IF NOT EXISTS idx_sessions_workspace ON screenplay_sessions(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_user ON screenplay_sessions(user_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_status ON screenplay_sessions(status);
 CREATE INDEX IF NOT EXISTS idx_sessions_created_at ON screenplay_sessions(created_at DESC);
@@ -131,7 +118,7 @@ COMMENT ON COLUMN screenplay_sessions.current_skill IS '当前使用的 Skill �
 COMMENT ON COLUMN screenplay_sessions.global_tone IS '全局语调设置';
 
 -- ============================================================================
--- 5. 大纲步骤表
+-- 4. 大纲步骤表
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS outline_steps (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -164,7 +151,7 @@ COMMENT ON COLUMN outline_steps.step_id IS '步骤序号（从 0 开始）';
 COMMENT ON COLUMN outline_steps.retry_count IS '重试次数计数器';
 
 -- ============================================================================
--- 6. 剧本片段表
+-- 5. 剧本片段表
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS screenplay_fragments (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -195,7 +182,7 @@ COMMENT ON COLUMN screenplay_fragments.sources IS 'JSON 数组，包含引用的
 COMMENT ON COLUMN screenplay_fragments.is_valid IS '事实检查器验证结果';
 
 -- ============================================================================
--- 7. 检索文档表
+-- 6. 检索文档表
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS retrieved_documents (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -241,18 +228,13 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- 为需要的表添加触发器
-CREATE TRIGGER update_tenants_updated_at
-    BEFORE UPDATE ON tenants
-    FOR EACH ROW
-    EXECUTE FUNCTION update_updated_at_column();
-
 CREATE TRIGGER update_users_updated_at
     BEFORE UPDATE ON users
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
-CREATE TRIGGER update_workspaces_updated_at
-    BEFORE UPDATE ON workspaces
+CREATE TRIGGER update_code_documents_updated_at
+    BEFORE UPDATE ON code_documents
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
@@ -273,5 +255,5 @@ CREATE TRIGGER update_outline_steps_updated_at
 DO $$
 BEGIN
     RAISE NOTICE 'Core business tables created successfully.';
-    RAISE NOTICE 'Tables: tenants, users, workspaces, screenplay_sessions, outline_steps, screenplay_fragments, retrieved_documents';
+    RAISE NOTICE 'Tables: users, code_documents, screenplay_sessions, outline_steps, screenplay_fragments, retrieved_documents';
 END $$;

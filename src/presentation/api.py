@@ -50,21 +50,25 @@ class TaskStatus(str, Enum):
 class GenerateRequest(BaseModel):
     """生成剧本请求"""
     topic: str = Field(..., description="User topic for screenplay generation")
-    workspace_id: str = Field(..., description="Workspace ID for code retrieval")
     context: Optional[str] = Field("", description="Additional project context")
     skill: Optional[str] = Field("standard_tutorial", description="Initial skill mode")
     tone: Optional[str] = Field("professional", description="Global tone")
     max_retries: Optional[int] = Field(3, description="Maximum retries per step")
+    config: Optional[Dict[str, Any]] = Field({}, description="Additional configuration options")
     
     class Config:
         json_schema_extra = {
             "example": {
                 "topic": "Explain user authentication",
-                "workspace_id": "abc123",
                 "context": "Using JWT tokens",
                 "skill": "standard_tutorial",
                 "tone": "professional",
-                "max_retries": 3
+                "max_retries": 3,
+                "config": {
+                    "max_steps": 5,
+                    "complexity": "simple",
+                    "recursion_limit": 100
+                }
             }
         }
 
@@ -141,6 +145,8 @@ llm_service = None
 retrieval_service = None
 parser_service = None
 summarization_service = None
+persistence_service = None
+orm_service = None
 
 
 # ==================== FastAPI App ====================
@@ -165,24 +171,8 @@ app.add_middleware(
 
 # ==================== Dependencies ====================
 
-async def get_api_key(x_api_key: Optional[str] = Header(None)) -> str:
-    """
-    API Key 认证（简单实现）
-    生产环境应使用更安全的认证机制（OAuth2、JWT等）
-    """
-    expected_key = os.getenv("API_KEY")
-    
-    # 如果未配置 API_KEY，则跳过认证
-    if not expected_key:
-        return "no-auth"
-    
-    if not x_api_key or x_api_key != expected_key:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or missing API key"
-        )
-    
-    return x_api_key
+# 移除 API Key 认证，简化开发和测试
+# 生产环境可以重新启用认证机制
 
 
 # ==================== Startup/Shutdown ====================
@@ -190,7 +180,7 @@ async def get_api_key(x_api_key: Optional[str] = Header(None)) -> str:
 @app.on_event("startup")
 async def startup_event():
     """应用启动事件"""
-    global app_config, llm_service, retrieval_service, parser_service, summarization_service
+    global app_config, llm_service, retrieval_service, parser_service, summarization_service, persistence_service, orm_service
     
     logger.info("Starting RAG Screenplay API...")
     
@@ -243,11 +233,31 @@ async def startup_event():
             logger.warning(f"Database connection failed: {e}, continuing without database")
             postgres_service = None
         
+        # 向量数据库服务
+        from ..services.database.vector_db import PostgresVectorDBService
+        vector_db_service = PostgresVectorDBService(
+            host=os.getenv('POSTGRES_HOST', 'localhost'),
+            port=int(os.getenv('POSTGRES_PORT', 5432)),
+            database=os.getenv('POSTGRES_DB', 'screenplay_system'),
+            user=os.getenv('POSTGRES_USER', 'postgres'),
+            password=os.getenv('POSTGRES_PASSWORD', 'postgres')
+        )
+        
+        # ORM 数据库服务
+        from ..services.database.orm_service import DatabaseServiceFactory
+        orm_service = DatabaseServiceFactory.create_from_env()
+        
+        # 持久化服务
+        from ..services.persistence_service import PersistenceService
+        persistence_service = PersistenceService(orm_service)
+        
         # 检索服务
+        from ..services.retrieval_service import RetrievalConfig
+        retrieval_config = RetrievalConfig(**app_config.get('retrieval', {}))
         retrieval_service = RetrievalService(
+            vector_db_service=vector_db_service,
             llm_service=llm_service,
-            postgres_service=postgres_service,
-            config=app_config.get('retrieval', {})
+            config=retrieval_config
         )
         logger.info("Retrieval service initialized")
         
@@ -298,8 +308,7 @@ async def generate_screenplay_task(task_id: str, request: GenerateRequest):
             llm_service=llm_service,
             retrieval_service=retrieval_service,
             parser_service=parser_service,
-            summarization_service=summarization_service,
-            workspace_id=request.workspace_id
+            summarization_service=summarization_service
         )
         
         # 创建初始状态
@@ -311,8 +320,9 @@ async def generate_screenplay_task(task_id: str, request: GenerateRequest):
             max_retries=request.max_retries
         )
         
-        # 执行工作流
-        result = await orchestrator.execute(state)
+        # 执行工作流（增加递归限制以处理复杂工作流）
+        recursion_limit = request.config.get('recursion_limit', 100) if request.config else 100
+        result = await orchestrator.execute(state, recursion_limit=recursion_limit)
         
         # 计算执行时长
         duration = time.time() - start_time
@@ -407,7 +417,9 @@ async def health_check():
         "llm_service": "healthy" if llm_service else "unavailable",
         "retrieval_service": "healthy" if retrieval_service else "unavailable",
         "parser_service": "healthy" if parser_service else "unavailable",
-        "summarization_service": "healthy" if summarization_service else "unavailable"
+        "summarization_service": "healthy" if summarization_service else "unavailable",
+        "persistence_service": "healthy" if persistence_service else "unavailable",
+        "database": "healthy" if orm_service and await orm_service.health_check() else "unavailable"
     }
     
     overall_status = "healthy" if all(s == "healthy" for s in services.values()) else "degraded"
@@ -423,8 +435,7 @@ async def health_check():
 @app.post("/generate", response_model=GenerateResponse)
 async def generate_screenplay(
     request: GenerateRequest,
-    background_tasks: BackgroundTasks,
-    api_key: str = Depends(get_api_key)
+    background_tasks: BackgroundTasks
 ):
     """
     生成剧本端点（异步）
@@ -456,16 +467,12 @@ async def generate_screenplay(
 
 
 @app.get("/status/{task_id}", response_model=TaskStatusResponse)
-async def get_task_status(
-    task_id: str,
-    api_key: str = Depends(get_api_key)
-):
+async def get_task_status(task_id: str):
     """
     获取任务状态端点
     
     Args:
         task_id: 任务 ID
-        api_key: API Key（认证）
         
     Returns:
         任务状态信息
@@ -490,15 +497,10 @@ async def get_task_status(
 
 
 @app.get("/tasks", response_model=List[TaskStatusResponse])
-async def list_tasks(
-    api_key: str = Depends(get_api_key)
-):
+async def list_tasks():
     """
     列出所有任务端点
     
-    Args:
-        api_key: API Key（认证）
-        
     Returns:
         任务列表
     """
