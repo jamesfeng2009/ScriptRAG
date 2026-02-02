@@ -143,7 +143,7 @@ class RetrievalService:
             
             if self.config.enable_query_expansion:
                 logger.info("Optimizing and expanding query...")
-                optimized_query = self.query_optimizer.optimize(query)
+                optimized_query = self.query_optimizer.optimize_query(query)
                 expanded_queries = await self.query_expansion.expand_query(optimized_query)
                 logger.info(f"Expanded to {len(expanded_queries)} queries")
             

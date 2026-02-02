@@ -1,8 +1,6 @@
 """简化版 REST API - 专注于剧本生成和动态方向调整"""
 
-import asyncio
 import logging
-import os
 import uuid
 from typing import Optional, Dict, Any, List
 from datetime import datetime
@@ -405,6 +403,46 @@ class AdjustResponse(BaseModel):
     message: str
 
 
+class RAGAnalysisResponse(BaseModel):
+    """RAG分析结果响应"""
+    task_id: str
+    has_analysis: bool
+    content_types: Optional[List[str]] = None
+    main_topic: Optional[str] = None
+    sub_topics: Optional[List[str]] = None
+    difficulty_level: Optional[float] = None
+    tone_style: Optional[str] = None
+    key_concepts: Optional[List[str]] = None
+    warnings: Optional[List[str]] = None
+    prerequisites: Optional[List[str]] = None
+    suggested_skill: Optional[str] = None
+    confidence: Optional[float] = None
+    direction_changes: Optional[List[Dict[str, Any]]] = None
+    skill_history: Optional[List[Dict[str, Any]]] = None
+    analyzed_at: Optional[datetime] = None
+
+
+class RAGAdjustRequest(BaseModel):
+    """RAG动态调整请求"""
+    top_k: Optional[int] = Field(None, ge=1, le=20, description="检索文档数量")
+    similarity_threshold: Optional[float] = Field(None, ge=0.0, le=1.0, description="相似度阈值")
+    enable_hybrid_search: Optional[bool] = Field(None, description="启用混合搜索")
+    enable_reranking: Optional[bool] = Field(None, description="启用重排序")
+    force_reanalysis: bool = Field(False, description="强制重新分析")
+    query: Optional[str] = Field(None, description="重新检索的查询词")
+
+
+class RAGAdjustResponse(BaseModel):
+    """RAG动态调整响应"""
+    success: bool
+    task_id: str
+    previous_config: Dict[str, Any]
+    new_config: Dict[str, Any]
+    retrieved_docs_count: int
+    analysis_result: Optional[Dict[str, Any]] = None
+    message: str
+
+
 @app.get("/result/{task_id}", response_model=GenerateResponse)
 async def get_result(task_id: str):
     """获取生成结果"""
@@ -525,6 +563,186 @@ async def adjust_task(task_id: str, request: AdjustRequest):
         result=result,
         message=message
     )
+
+
+@app.get("/tasks/{task_id}/rag-analysis", response_model=RAGAnalysisResponse)
+async def get_rag_analysis(task_id: str):
+    """获取任务的RAG分析结果"""
+    if not task_service:
+        raise HTTPException(status_code=503, detail="Task service not available")
+    
+    task = await task_service.get(task_id)
+    
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    rag_analysis = getattr(task, 'rag_analysis', None)
+    
+    return RAGAnalysisResponse(
+        task_id=task_id,
+        has_analysis=rag_analysis is not None,
+        content_types=rag_analysis.get("content_types") if rag_analysis else None,
+        main_topic=rag_analysis.get("main_topic") if rag_analysis else None,
+        sub_topics=rag_analysis.get("sub_topics") if rag_analysis else None,
+        difficulty_level=rag_analysis.get("difficulty_level") if rag_analysis else None,
+        tone_style=rag_analysis.get("tone_style") if rag_analysis else None,
+        key_concepts=rag_analysis.get("key_concepts") if rag_analysis else None,
+        warnings=rag_analysis.get("warnings") if rag_analysis else None,
+        prerequisites=rag_analysis.get("prerequisites") if rag_analysis else None,
+        suggested_skill=rag_analysis.get("suggested_skill") if rag_analysis else None,
+        confidence=rag_analysis.get("confidence") if rag_analysis else None,
+        direction_changes=task.direction_changes,
+        skill_history=task.skill_history,
+        analyzed_at=datetime.now()
+    )
+
+
+@app.post("/tasks/{task_id}/rag-adjust", response_model=RAGAdjustResponse)
+async def adjust_rag(task_id: str, request: RAGAdjustRequest):
+    """动态调整RAG参数并重新分析
+    
+    支持调整：
+    - top_k: 检索文档数量
+    - similarity_threshold: 相似度阈值
+    - enable_hybrid_search: 启用混合搜索
+    - enable_reranking: 启用重排序
+    - force_reanalysis: 强制重新分析
+    - query: 重新检索的查询词
+    """
+    if not task_service:
+        raise HTTPException(status_code=503, detail="Task service not available")
+    
+    if not retrieval_service:
+        raise HTTPException(status_code=503, detail="Retrieval service not available")
+    
+    task = await task_service.get(task_id)
+    
+    if not task:
+        raise HTTPException(status_code=404, detail="Task not found")
+    
+    previous_config = {
+        "top_k": getattr(task, 'rag_top_k', None),
+        "similarity_threshold": getattr(task, 'rag_similarity_threshold', None),
+        "enable_hybrid_search": getattr(task, 'rag_enable_hybrid_search', None),
+        "enable_reranking": getattr(task, 'rag_enable_reranking', None)
+    }
+    
+    new_config = {}
+    update_fields = {}
+    
+    if request.top_k is not None:
+        new_config["top_k"] = request.top_k
+        update_fields["rag_top_k"] = request.top_k
+    
+    if request.similarity_threshold is not None:
+        new_config["similarity_threshold"] = request.similarity_threshold
+        update_fields["rag_similarity_threshold"] = request.similarity_threshold
+    
+    if request.enable_hybrid_search is not None:
+        new_config["enable_hybrid_search"] = request.enable_hybrid_search
+        update_fields["rag_enable_hybrid_search"] = request.enable_hybrid_search
+    
+    if request.enable_reranking is not None:
+        new_config["enable_reranking"] = request.enable_reranking
+        update_fields["rag_enable_reranking"] = request.enable_reranking
+    
+    query = request.query or task.topic
+    
+    previous_config = {
+        "top_k": getattr(task, 'rag_top_k', None),
+        "similarity_threshold": getattr(task, 'rag_similarity_threshold', None),
+        "enable_hybrid_search": getattr(task, 'rag_enable_hybrid_search', None),
+        "enable_reranking": getattr(task, 'rag_enable_reranking', None)
+    }
+    
+    new_config = {}
+    update_fields = {}
+    
+    if request.top_k is not None:
+        new_config["top_k"] = request.top_k
+        update_fields["rag_top_k"] = request.top_k
+    
+    if request.similarity_threshold is not None:
+        new_config["similarity_threshold"] = request.similarity_threshold
+        update_fields["rag_similarity_threshold"] = request.similarity_threshold
+    
+    if request.enable_hybrid_search is not None:
+        new_config["enable_hybrid_search"] = request.enable_hybrid_search
+        update_fields["rag_enable_hybrid_search"] = request.enable_hybrid_search
+    
+    if request.enable_reranking is not None:
+        new_config["enable_reranking"] = request.enable_reranking
+        update_fields["rag_enable_reranking"] = request.enable_reranking
+    
+    retrieved_docs_count = 0
+    analysis_result = None
+    message_parts = []
+    
+    if new_config:
+        message_parts.append(f"RAG参数已更新")
+    
+    try:
+        if request.force_reanalysis or request.query:
+            logger.info(f"Re-retrieving documents for task {task_id} with query: {query}")
+            
+            if retrieval_service:
+                try:
+                    search_results = await retrieval_service.hybrid_retrieve(
+                        workspace_id=DEFAULT_WORKSPACE,
+                        query=query,
+                        top_k=request.top_k or 5
+                    )
+                    
+                    retrieved_docs_count = len(search_results)
+                    
+                    analysis_result = {
+                        "query": query,
+                        "top_k": request.top_k or 5,
+                        "results_count": retrieved_docs_count,
+                        "docs_preview": [
+                            {
+                                "content": doc.content[:100] + "..." if len(doc.content) > 100 else doc.content,
+                                "confidence": doc.confidence
+                            }
+                            for doc in search_results[:3]
+                        ]
+                    }
+                    
+                    if retrieved_docs_count > 0:
+                        message_parts.append(f"检索到 {retrieved_docs_count} 个相关文档")
+                    else:
+                        message_parts.append("未检索到相关文档")
+                        
+                except Exception as retrieval_error:
+                    logger.warning(f"Retrieval failed: {retrieval_error}")
+                    message_parts.append("文档检索失败（LLM服务不可用），但参数已保存")
+        
+        if update_fields:
+            await task_service.update(task_id, **update_fields)
+        
+        message = "; ".join(message_parts) if message_parts else "配置已更新"
+        
+        return RAGAdjustResponse(
+            success=True,
+            task_id=task_id,
+            previous_config=previous_config,
+            new_config=new_config if new_config else previous_config,
+            retrieved_docs_count=retrieved_docs_count,
+            analysis_result=analysis_result,
+            message=message
+        )
+        
+    except Exception as e:
+        logger.error(f"RAG adjustment failed: {e}")
+        return RAGAdjustResponse(
+            success=False,
+            task_id=task_id,
+            previous_config=previous_config,
+            new_config=new_config if new_config else {},
+            retrieved_docs_count=retrieved_docs_count,
+            analysis_result=analysis_result,
+            message=f"RAG调整失败: {str(e)}"
+        )
 
 
 class SkillCreateRequest(BaseModel):
