@@ -138,6 +138,7 @@ def init_services():
     
     if llm_config.glm_api_key:
         llm_providers.setdefault("glm", {})["api_key"] = llm_config.glm_api_key
+        llm_providers.setdefault("glm", {})["base_url"] = "https://open.bigmodel.cn/api/paas/v4"
         logger.info("GLM API key loaded")
     
     if llm_config.openai_api_key:
@@ -326,6 +327,9 @@ async def run_generation(task_id: str, request_data: Dict[str, Any]):
         )
         
         from ..application.enhanced_orchestrator import EnhancedWorkflowOrchestrator
+        
+        if llm_service:
+            llm_service.session_id = task_id
         
         runtime_orchestrator = EnhancedWorkflowOrchestrator(
             llm_service=llm_service,
