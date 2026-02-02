@@ -769,33 +769,45 @@ class DocumentSearchResponse(BaseModel):
 
 @app.post("/documents", response_model=DocumentResponse)
 async def upload_document(
-    file: UploadFile = File(...),
+    file: Optional[UploadFile] = File(None),
     title: Optional[str] = Form(None),
-    category: Optional[str] = Form(None)
+    content: Optional[str] = Form(None),
+    category: Optional[str] = Form(None),
+    file_name: Optional[str] = Form(None)
 ):
-    """上传并索引文档"""
+    """上传并索引文档（支持文件上传或直接输入内容）"""
     if not document_service:
         raise HTTPException(status_code=503, detail="Document service not available")
     
-    content = await file.read()
-    text_content = content.decode('utf-8', errors='ignore')
-    file_name = file.filename or "unknown"
-    doc_title = title or file_name
-    file_size = len(content)
+    if file is not None:
+        file_content = await file.read()
+        text_content = file_content.decode('utf-8', errors='ignore')
+        actual_file_name = file.filename or "unknown"
+        doc_title = title or actual_file_name
+        file_size = len(file_content)
+        content_type = file.content_type
+    elif content is not None:
+        text_content = content
+        actual_file_name = file_name or "text_content.txt"
+        doc_title = title or actual_file_name
+        file_size = len(content.encode('utf-8'))
+        content_type = "text/plain"
+    else:
+        raise HTTPException(status_code=400, detail="Either file or content is required")
     
     try:
         doc = await document_service.create(
             title=doc_title,
-            file_name=file_name,
+            file_name=actual_file_name,
             content=text_content,
             file_path=None,
             category=category,
             file_size=file_size,
-            metadata={"content_type": file.content_type}
+            metadata={"content_type": content_type}
         )
         
         return DocumentResponse(
-            doc_id=doc.id,
+            doc_id=str(doc.id),
             title=doc.title,
             file_name=doc.file_name,
             category=doc.category,
