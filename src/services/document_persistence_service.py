@@ -12,7 +12,6 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy import text, select, update, delete
 from sqlalchemy.dialects.postgresql import insert
 
-import os
 import asyncio
 
 logger = logging.getLogger(__name__)
@@ -20,12 +19,9 @@ logger = logging.getLogger(__name__)
 
 def get_db_url():
     """构建数据库连接 URL"""
-    user = os.getenv("POSTGRES_USER", "postgres")
-    password = os.getenv("POSTGRES_PASSWORD", "123456")
-    host = os.getenv("POSTGRES_HOST", "localhost")
-    port = os.getenv("POSTGRES_PORT", 5432)
-    db = os.getenv("POSTGRES_DB", "term_sheet_db")
-    return f"postgresql+asyncpg://{user}:{password}@{host}:{port}/{db}"
+    from ..config import get_database_config
+    db_config = get_database_config()
+    return f"postgresql+asyncpg://{db_config.user}:{db_config.password}@{db_config.host}:{db_config.port}/{db_config.database}"
 
 
 class DocumentRecord:

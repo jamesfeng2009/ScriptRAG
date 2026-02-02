@@ -103,9 +103,7 @@ class TaskRecord:
             skill_history=self.skill_history,
             direction_changes=self.direction_changes,
             error=self.error,
-            request_data=self.request_data,
-            created_at=self.created_at,
-            updated_at=self.updated_at
+            request_data=self.request_data
         )
 
 
@@ -117,10 +115,10 @@ class TaskDatabaseService:
     def __init__(
         self,
         host: str = "localhost",
-        port: int = 5432,
-        database: str = "screenplay_system",
+        port: int = 5433,
+        database: str = "Screenplay",
         user: str = "postgres",
-        password: str = "postgres",
+        password: str = "123456",
         echo: bool = False
     ):
         """
@@ -168,14 +166,42 @@ class TaskDatabaseService:
     @classmethod
     def create_from_env(cls) -> "TaskDatabaseService":
         """从环境变量创建服务"""
-        import os
+        from sqlalchemy import create_engine, text
+        from ..config import get_database_config
+        
+        db_config = get_database_config()
+        
+        sync_engine = create_engine(db_config.url, echo=False)
+        
+        with sync_engine.connect() as conn:
+            conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS screenplay.tasks (
+                    task_id VARCHAR(36) PRIMARY KEY,
+                    status VARCHAR(50) NOT NULL DEFAULT 'pending',
+                    topic TEXT NOT NULL,
+                    context TEXT DEFAULT '',
+                    current_skill VARCHAR(100) DEFAULT 'standard_tutorial',
+                    screenplay TEXT,
+                    outline JSON DEFAULT '[]',
+                    skill_history JSON DEFAULT '[]',
+                    direction_changes JSON DEFAULT '[]',
+                    error TEXT,
+                    request_data JSON DEFAULT '{}',
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                )
+            """))
+            conn.commit()
+        
+        sync_engine.dispose()
+        
         return cls(
-            host=os.getenv('POSTGRES_HOST', 'localhost'),
-            port=int(os.getenv('POSTGRES_PORT', 5432)),
-            database=os.getenv('POSTGRES_DB', 'screenplay_system'),
-            user=os.getenv('POSTGRES_USER', 'postgres'),
-            password=os.getenv('POSTGRES_PASSWORD', 'postgres'),
-            echo=os.getenv('DATABASE_ECHO', 'false').lower() == 'true'
+            host=db_config.host,
+            port=db_config.port,
+            database=db_config.database,
+            user=db_config.user,
+            password=db_config.password,
+            echo=db_config.echo
         )
     
     async def create_tables(self):

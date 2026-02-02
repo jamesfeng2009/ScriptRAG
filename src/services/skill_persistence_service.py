@@ -59,10 +59,10 @@ class SkillDatabaseService:
     def __init__(
         self,
         host: str = "localhost",
-        port: int = 5432,
-        database: str = "screenplay_system",
+        port: int = 5433,
+        database: str = "Screenplay",
         user: str = "postgres",
-        password: str = "postgres",
+        password: str = "123456",
         echo: bool = False
     ):
         self.host = host
@@ -77,14 +77,15 @@ class SkillDatabaseService:
     @classmethod
     def create_from_env(cls) -> "SkillDatabaseService":
         """从环境变量创建服务"""
-        import os
+        from ..config import get_database_config
+        db_config = get_database_config()
         return cls(
-            host=os.getenv('POSTGRES_HOST', 'localhost'),
-            port=int(os.getenv('POSTGRES_PORT', 5432)),
-            database=os.getenv('POSTGRES_DB', 'screenplay_system'),
-            user=os.getenv('POSTGRES_USER', 'postgres'),
-            password=os.getenv('POSTGRES_PASSWORD', 'postgres'),
-            echo=os.getenv('DATABASE_ECHO', 'false').lower() == 'true'
+            host=db_config.host,
+            port=db_config.port,
+            database=db_config.database,
+            user=db_config.user,
+            password=db_config.password,
+            echo=db_config.echo
         )
 
     async def connect(self):
@@ -423,8 +424,14 @@ class SkillService:
                 is_enabled=True,
                 is_default=(skill_name == "standard_tutorial")
             )
-            await self.db_service.create(record)
-            records.append(record)
+            try:
+                await self.db_service.create(record)
+                records.append(record)
+            except Exception as e:
+                if "duplicate key" in str(e).lower():
+                    logger.debug(f"Skill '{skill_name}' already exists for workspace '{workspace_id}'")
+                else:
+                    raise
 
         logger.info(f"Initialized {len(records)} default skills for workspace '{workspace_id}'")
         self._invalidate_cache(workspace_id)

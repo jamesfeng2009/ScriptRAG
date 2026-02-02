@@ -187,9 +187,9 @@ class DatabaseServiceFactory:
         
         return ORMDatabaseService(
             host=os.getenv('POSTGRES_HOST', 'localhost'),
-            port=int(os.getenv('POSTGRES_PORT', 5432)),
-            database=os.getenv('POSTGRES_DB', 'screenplay_system'),
+            port=int(os.getenv('POSTGRES_PORT', 5433)),
+            database=os.getenv('POSTGRES_DB', 'Screenplay'),
             user=os.getenv('POSTGRES_USER', 'postgres'),
-            password=os.getenv('POSTGRES_PASSWORD', 'postgres'),
+            password=os.getenv('POSTGRES_PASSWORD', '123456'),
             echo=os.getenv('DATABASE_ECHO', 'false').lower() == 'true'
         )

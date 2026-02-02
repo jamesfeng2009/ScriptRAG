@@ -14,6 +14,7 @@ from pydantic import BaseModel, Field
 import yaml
 from dotenv import load_dotenv
 
+from ..config import get_app_config, get_llm_config, get_database_config
 from ..domain.models import SharedState
 from ..application.enhanced_orchestrator import EnhancedWorkflowOrchestrator
 from ..services.llm.service import LLMService
@@ -122,38 +123,35 @@ def init_services():
     
     load_dotenv()
     
-    log_level = os.getenv("LOG_LEVEL", "INFO")
-    setup_logging(level=log_level)
+    app_config = get_app_config()
+    setup_logging(level=app_config.log_level)
     
-    config_path = os.getenv("CONFIG_PATH", "config.yaml")
+    config_path = app_config.config_path
     try:
         with open(config_path, 'r', encoding='utf-8') as f:
-            app_config = yaml.safe_load(f)
+            config_data = yaml.safe_load(f)
         logger.info(f"Configuration loaded from {config_path}")
     except Exception as e:
         logger.error(f"Failed to load configuration: {e}")
-        app_config = {}
+        config_data = {}
     
-    # 从环境变量注入 API keys
-    llm_providers = app_config.get("llm", {}).setdefault("providers", {})
+    llm_config = get_llm_config()
+    llm_providers = config_data.get("llm", {}).setdefault("providers", {})
     
-    glm_key = os.getenv("GLM_API_KEY")
-    if glm_key:
-        llm_providers.setdefault("glm", {})["api_key"] = glm_key
+    if llm_config.glm_api_key:
+        llm_providers.setdefault("glm", {})["api_key"] = llm_config.glm_api_key
         logger.info("GLM API key loaded")
     
-    openai_key = os.getenv("OPENAI_API_KEY")
-    if openai_key:
-        llm_providers.setdefault("openai", {})["api_key"] = openai_key
+    if llm_config.openai_api_key:
+        llm_providers.setdefault("openai", {})["api_key"] = llm_config.openai_api_key
         logger.info("OpenAI API key loaded")
     
-    qwen_key = os.getenv("QWEN_API_KEY")
-    if qwen_key:
-        llm_providers.setdefault("qwen", {})["api_key"] = qwen_key
+    if llm_config.qwen_api_key:
+        llm_providers.setdefault("qwen", {})["api_key"] = llm_config.qwen_api_key
         logger.info("QWEN API key loaded")
     
     try:
-        llm_service = LLMService(app_config.get('llm', {}))
+        llm_service = LLMService(config_data.get('llm', {}))
         logger.info("LLM service initialized")
     except Exception as e:
         logger.error(f"Failed to initialize LLM service: {e}")
@@ -180,15 +178,16 @@ def init_services():
     
     try:
         from ..services.database.vector_db import PostgresVectorDBService
+        db_config = get_database_config()
         vector_db_service = PostgresVectorDBService(
-            host=os.getenv('POSTGRES_HOST', 'localhost'),
-            port=int(os.getenv('POSTGRES_PORT', 5432)),
-            database=os.getenv('POSTGRES_DB', 'screenplay_system'),
-            user=os.getenv('POSTGRES_USER', 'postgres'),
-            password=os.getenv('POSTGRES_PASSWORD', 'postgres')
+            host=db_config.host,
+            port=db_config.port,
+            database=db_config.database,
+            user=db_config.user,
+            password=db_config.password
         )
         
-        retrieval_config = RetrievalConfig(**app_config.get('retrieval', {}))
+        retrieval_config = RetrievalConfig(**config_data.get('retrieval', {}))
         retrieval_service = RetrievalService(
             vector_db_service=vector_db_service,
             llm_service=llm_service,
@@ -209,7 +208,7 @@ def init_services():
     try:
         summarization_service = SummarizationService(
             llm_service=llm_service,
-            config=app_config.get('retrieval', {}).get('summarization', {})
+            config=config_data.get('retrieval', {}).get('summarization', {})
         )
         logger.info("Summarization service initialized")
     except Exception as e:
@@ -569,7 +568,7 @@ class WorkspaceSkillsResponse(BaseModel):
     total_count: int
 
 
-DEFAULT_WORKSPACE = "default"
+DEFAULT_WORKSPACE = ""
 
 
 @app.get("/skills", response_model=WorkspaceSkillsResponse)

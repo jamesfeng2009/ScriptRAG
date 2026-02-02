@@ -105,7 +105,6 @@ class ScreenplaySession(Base):
     __table_args__ = {'schema': 'screenplay'}
     
     id = Column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
-    user_id = Column(PG_UUID(as_uuid=True), ForeignKey('screenplay.users.id'), nullable=False)
     topic = Column(Text, nullable=False)
     context = Column(Text, default='')
     current_skill = Column(String(100), default='standard_tutorial')
@@ -123,7 +122,6 @@ class ScreenplaySession(Base):
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
     
     # 关系
-    user = relationship("User", back_populates="screenplay_sessions")
     outline_steps = relationship("OutlineStep", back_populates="session", cascade="all, delete-orphan")
     screenplay_fragments = relationship("ScreenplayFragment", back_populates="session", cascade="all, delete-orphan")
     retrieved_documents = relationship("RetrievedDocument", back_populates="session", cascade="all, delete-orphan")
