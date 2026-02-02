@@ -18,6 +18,7 @@ from ...infrastructure.error_handler import (
     ProviderUnavailableError,
     ErrorHandler
 )
+from ...services.llm_call_logger import get_llm_call_logger
 
 
 logger = logging.getLogger(__name__)
@@ -362,30 +363,24 @@ class LLMService:
             "error_message": error_message
         }
         
-        # 内存日志
         if status == "success":
             logger.info(f"LLM call succeeded: {log_data}")
         else:
             logger.error(f"LLM call failed: {log_data}")
         
-        # 数据库持久化（异步，不阻塞主流程）
-        if self.logging_db_service:
-            try:
-                # 创建任务但不等待完成
-                asyncio.create_task(
-                    self.logging_db_service.log_llm_call(
-                        session_id=self.session_id,
-                        provider=provider,
-                        model=model,
-                        task_type=task_type,
-                        status=status,
-                        response_time_ms=response_time_ms,
-                        token_count=token_count,
-                        error_message=error_message
-                    )
-                )
-            except Exception as e:
-                logger.warning(f"Failed to schedule database logging: {str(e)}")
+        try:
+            llm_logger = get_llm_call_logger()
+            llm_logger.log_call(
+                task_id=self.session_id,
+                provider=provider,
+                model=model,
+                request_type=task_type,
+                response_time_ms=response_time_ms,
+                status=status,
+                error_message=error_message
+            )
+        except Exception as e:
+            logger.warning(f"Failed to log LLM call: {e}")
     
     def _log_provider_switch(
         self,

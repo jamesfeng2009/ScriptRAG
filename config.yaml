@@ -39,10 +39,30 @@ llm:
       timeout: 60
       max_retries: 3
   
-  active_provider: openai
+  active_provider: glm
   fallback_providers:
     - qwen
-    - glm
+
+  model_mappings:
+    openai:
+      high_performance: gpt-4o
+      lightweight: gpt-4o-mini
+      embedding: text-embedding-3-large
+    
+    qwen:
+      high_performance: qwen-max
+      lightweight: qwen-turbo
+      embedding: text-embedding-v2
+    
+    glm:
+      high_performance: glm-4
+      lightweight: glm-3-turbo
+      embedding: embedding-2
+    
+    minimax:
+      high_performance: abab6.5-chat
+      lightweight: abab5.5-chat
+      embedding: embo-01
 
 # Skills Configuration
 skills:

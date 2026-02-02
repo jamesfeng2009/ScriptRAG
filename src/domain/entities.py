@@ -8,6 +8,7 @@
 - tasks: 剧本生成任务记录
 - documents: RAG 知识库文档
 - workspace_skills: 技能配置
+- llm_call_logs: LLM 调用记录
 """
 
 from typing import Optional, Dict, Any, List
@@ -89,3 +90,27 @@ class Task(Base):
     request_data = Column(JSON, default={})
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class LLMCallLog(Base):
+    """LLM 调用记录实体（用于追踪大模型调用情况）"""
+    __tablename__ = 'llm_call_logs'
+    __table_args__ = {'schema': 'screenplay'}
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    task_id = Column(String(36), nullable=True, index=True)
+    provider = Column(String(50), nullable=False, index=True)
+    model = Column(String(100), nullable=False)
+    request_type = Column(String(50), nullable=False)
+    input_tokens = Column(Integer, nullable=True)
+    output_tokens = Column(Integer, nullable=True)
+    total_tokens = Column(Integer, nullable=True)
+    response_time_ms = Column(Float, nullable=True)
+    status = Column(String(20), nullable=False, default='success')
+    error_message = Column(Text, nullable=True)
+    error_code = Column(String(50), nullable=True)
+    cost_estimate = Column(Float, nullable=True)
+    request_preview = Column(Text, nullable=True)
+    response_preview = Column(Text, nullable=True)
+    extra_data = Column(JSON, default={})
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
