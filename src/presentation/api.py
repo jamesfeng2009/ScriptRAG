@@ -964,9 +964,16 @@ class DocumentResponse(BaseModel):
     title: str
     file_name: str
     category: Optional[str] = None
-    file_size: int
+    file_size: Optional[int] = None
     indexed_at: Optional[datetime] = None
     created_at: Optional[datetime] = None
+
+
+class DocumentDeleteResponse(BaseModel):
+    """删除文档响应"""
+    success: bool = True
+    doc_id: str
+    message: str = "Document deleted successfully"
 
 
 class DocumentListResponse(BaseModel):
@@ -1092,7 +1099,7 @@ async def search_documents(
     )
 
 
-@app.delete("/documents/{doc_id}")
+@app.delete("/documents/{doc_id}", response_model=DocumentDeleteResponse)
 async def delete_document(doc_id: str):
     """删除文档"""
     if not document_service:
@@ -1103,7 +1110,7 @@ async def delete_document(doc_id: str):
         if not deleted:
             raise HTTPException(status_code=404, detail="Document not found")
         
-        return {"message": "Document deleted", "doc_id": doc_id}
+        return DocumentDeleteResponse(doc_id=doc_id)
     except HTTPException:
         raise
     except Exception as e:
