@@ -11,6 +11,16 @@ llm:
         embedding: text-embedding-3-large
       timeout: 60
       max_retries: 3
+      pricing:
+        gpt-4o:
+          input: 5.0      # $ per 1M tokens
+          output: 15.0
+        gpt-4o-mini:
+          input: 0.15
+          output: 0.60
+        text-embedding-3-large:
+          input: 0.13
+          output: 0.0
     
     qwen:
       provider: qwen
@@ -20,6 +30,16 @@ llm:
         embedding: text-embedding-v2
       timeout: 60
       max_retries: 3
+      pricing:
+        qwen-max:
+          input: 0.02
+          output: 0.06
+        qwen-turbo:
+          input: 0.008
+          output: 0.024
+        text-embedding-v2:
+          input: 0.02
+          output: 0.0
     
     minimax:
       provider: minimax
@@ -29,6 +49,16 @@ llm:
         embedding: embo-01
       timeout: 60
       max_retries: 3
+      pricing:
+        abab6.5-chat:
+          input: 0.10
+          output: 0.10
+        abab5.5-chat:
+          input: 0.01
+          output: 0.01
+        embo-01:
+          input: 0.01
+          output: 0.0
     
     glm:
       provider: glm
@@ -38,10 +68,21 @@ llm:
         embedding: embedding-2
       timeout: 60
       max_retries: 3
+      pricing:
+        glm-4:
+          input: 0.05
+          output: 0.15
+        glm-3-turbo:
+          input: 0.005
+          output: 0.015
+        embedding-2:
+          input: 0.005
+          output: 0.0
   
-  active_provider: glm
+  active_provider: qwen
   fallback_providers:
-    - qwen
+    - openai
+    - glm
 
   model_mappings:
     openai:
@@ -64,80 +105,274 @@ llm:
       lightweight: abab5.5-chat
       embedding: embo-01
 
-# Skills Configuration
-skills:
-  standard_tutorial:
-    description: "Clear, structured tutorial format"
-    tone: professional
-    compatible_with:
-      - visualization_analogy
-      - warning_mode
+# Cost Control Configuration
+cost_control:
+  enabled: true
   
-  warning_mode:
-    description: "Highlights deprecated/risky content"
-    tone: cautionary
-    compatible_with:
-      - standard_tutorial
-      - research_mode
+  # Token limits
+  max_tokens_per_request: 8000
+  max_tokens_per_day: 500000
   
-  visualization_analogy:
-    description: "Uses analogies and visualizations for complex concepts"
-    tone: engaging
-    compatible_with:
-      - standard_tutorial
-      - meme_style
+  # Cost limits (USD)
+  max_cost_per_day: 10.0
   
-  research_mode:
-    description: "Acknowledges information gaps and suggests research directions"
-    tone: exploratory
-    compatible_with:
-      - standard_tutorial
-      - warning_mode
+  # Alert thresholds
+  budget_alert_threshold: 0.8    # Alert at 80% of budget
+  cost_warning_threshold: 0.5    # Warning at 50% of budget
   
-  meme_style:
-    description: "Light-hearted, humorous presentation"
-    tone: casual
-    compatible_with:
-      - visualization_analogy
-      - fallback_summary
+  # Default model for cost calculation
+  default_provider: qwen
+  default_model: qwen-turbo
   
-  fallback_summary:
-    description: "High-level overview when details unavailable"
-    tone: neutral
-    compatible_with:
-      - standard_tutorial
-      - research_mode
+  # Tracking options
+  track_usage: true
+  track_cost: true
+  log_history: true
+  history_retention_days: 30
 
-# Retrieval Configuration
+# Context Compression Configuration
+compression:
+  enabled: true
+  
+  # Compression strategy: "llm" or "rule-based"
+  strategy: "hybrid"
+  
+  # LLM-based compression
+  llm_compression:
+    enabled: true
+    max_tokens: 4000
+    compression_ratio: 0.5
+    preserve_key_info: true
+    summary_prompt: |
+      请根据以下查询和相关文档，生成一个简洁的摘要：
+      
+      查询：{query}
+      
+      文档内容：
+      {content}
+      
+      要求：
+      1. 摘要应突出与查询相关的信息
+      2. 保留关键的技术细节和代码示例
+      3. 移除冗余和重复的信息
+      4. 摘要长度适中，便于后续处理
+  
+  # Rule-based compression
+  rule_compression:
+    enabled: true
+    max_content_length: 2000
+    remove_short_comments: true
+    min_comment_length: 50
+    remove_empty_lines: true
+    max_consecutive_empty: 2
+    deduplicate: true
+    similarity_threshold: 0.9
+  
+  # Document chunking
+  chunking:
+    enabled: true
+    chunk_size: 1000
+    chunk_overlap: 200
+    max_chunks_per_document: 50
+
+# Retrieval Configuration (Extensible Architecture)
 retrieval:
-  vector_search:
-    top_k: 5
-    similarity_threshold: 0.7
-  
-  keyword_search:
-    markers:
-      - "@deprecated"
-      - "FIXME"
-      - "TODO"
-      - "Security"
-      - "WARNING"
-      - "HACK"
-    boost_factor: 1.5
-  
-  hybrid_merge:
-    vector_weight: 0.6
-    keyword_weight: 0.4
-    keyword_boost_factor: 1.5
-    dedup_threshold: 0.9
-  
-  summarization:
-    max_tokens: 10000
-    chunk_size: 2000
-    overlap: 200
+  version: "1.0"
 
-# System Configuration
-system:
-  max_retries: 3
-  timeout_seconds: 300
-  log_level: INFO
-  log_file: logs/app.log
+  # Retrieval Strategies Configuration
+  strategy:
+    # Main strategy to use (vector_search, keyword_search, hybrid_search)
+    name: hybrid_search
+
+    # Vector Search Strategy
+    vector:
+      enabled: true
+      top_k: 5
+      similarity_threshold: 0.7
+
+    # Keyword Search Strategy
+    keyword:
+      enabled: true
+      top_k: 5
+      # Default keyword markers
+      markers:
+        - "@deprecated"
+        - "FIXME"
+        - "TODO"
+        - "Security"
+      # Custom keyword markers (can be added dynamically via API)
+      custom_markers: []
+      # Boost factors for each marker type
+      boost_factors:
+        "@deprecated": 1.5
+        "Security": 1.5
+        "FIXME": 1.3
+        "TODO": 1.2
+
+    # Hybrid Search Merge Configuration
+    hybrid_merge:
+      enabled: true
+      vector_weight: 0.6
+      keyword_weight: 0.4
+      dedup_threshold: 0.9
+
+    # Strategy weights for merging
+    weights:
+      vector_search: 0.6
+      keyword_search: 0.4
+
+  # Result Merger Configuration
+  merger:
+    # Merger type: weighted_merge, rrf_merge, round_robin_merge, fusion_merge
+    type: weighted_merge
+
+    # Weighted merger configuration
+    weighted:
+      dedup_threshold: 0.9
+
+    # RRF merger configuration
+    rrf:
+      k: 60
+
+    # Fusion merger configuration
+    fusion:
+      alpha: 0.5
+      dedup_threshold: 0.9
+
+    # Round-robin merger configuration
+    max_per_strategy: 3
+
+  # Query Expansion Configuration
+  query_expansion:
+    enabled: true
+    max_queries: 3
+
+  # Reranking Configuration
+  reranking:
+    enabled: true
+    top_k: 5
+
+  # Diversity Filter Configuration
+  diversity:
+    enabled: true
+    threshold: 0.85
+    max_per_file: 2
+
+# Database Configuration (pgvector)
+database:
+  pgvector:
+    enabled: true
+    
+    # Connection settings
+    host: "localhost"
+    port: 5432
+    database: "rag_system"
+    user: "postgres"
+    password: "${PG_PASSWORD}"
+    
+    # Connection pool
+    min_pool_size: 5
+    max_pool_size: 20
+    connection_timeout: 30
+    
+    # Vector settings
+    embedding_dim: 1024
+    metric: cosine  # cosine, euclidean, inner_product
+    
+    # Index settings
+    index_type: hnsw  # hnsw, ivfflat
+    ef_construction: 200
+    m: 16
+    
+    # Document chunking
+    chunk_size: 1000
+    chunk_overlap: 200
+    
+    # Maintenance
+    vacuum_schedule: "0 3 * * *"  # Daily at 3 AM
+    analyze_schedule: "0 4 * * *"  # Daily at 4 AM
+    
+  # Redis cache (optional)
+  redis:
+    enabled: false
+    host: "localhost"
+    port: 6379
+    db: 0
+    key_prefix: "rag:"
+    cache_ttl: 3600  # seconds
+    max_memory: "1gb"
+
+# Workspace Configuration
+workspace:
+  default_workspace: "default"
+  max_workspaces: 100
+  max_documents_per_workspace: 10000
+  max_storage_per_workspace_mb: 1024
+
+# Logging and Monitoring
+logging:
+  level: INFO
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  
+  # File logging
+  file:
+    enabled: true
+    path: "logs/rag_system.log"
+    max_size_mb: 100
+    backup_count: 5
+  
+  # Metrics
+  metrics:
+    enabled: true
+    export_interval: 60  # seconds
+    backend: "prometheus"  # prometheus, statsd
+  
+  # Cost tracking
+  cost_tracking:
+    enabled: true
+    export_daily_report: true
+    alert_on_threshold: true
+
+# Performance Settings
+performance:
+  # Concurrency
+  max_concurrent_requests: 100
+  max_concurrent_embeddings: 10
+  
+  # Batch processing
+  batch_indexing:
+    enabled: true
+    batch_size: 100
+    max_concurrent_batches: 5
+  
+  # Caching
+  embedding_cache:
+    enabled: true
+    max_size: 10000
+    ttl: 86400  # 24 hours
+  
+  # Query optimization
+  query_timeout: 30
+  max_retry_attempts: 3
+  retry_delay: 1.0
+
+# Security Settings
+security:
+  # API keys
+  api_key_header: "X-API-Key"
+  
+  # Rate limiting
+  rate_limit:
+    enabled: true
+    requests_per_minute: 60
+    requests_per_hour: 1000
+  
+  # Data encryption
+  encryption:
+    enabled: false
+    algorithm: "aes-256-gcm"
+  
+  # Access control
+  access_control:
+    enabled: true
+    default_policy: "deny"

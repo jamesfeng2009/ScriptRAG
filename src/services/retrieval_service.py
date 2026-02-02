@@ -1,80 +1,54 @@
-"""Retrieval Service - Hybrid retrieval (vector + keyword search)
+"""Retrieval Service - Hybrid retrieval with pluggable strategies
 
-This service implements the hybrid retrieval strategy combining:
-1. Vector similarity search (semantic)
-2. Keyword marker search (@deprecated, FIXME, TODO, Security)
-3. Weighted merging algorithm
-4. Query expansion for improved recall
-5. Multi-factor reranking for improved precision
+This service implements the hybrid retrieval strategy using:
+- Multiple retrieval strategies (vector, keyword, hybrid)
+- Configurable result merging algorithms
+- Query expansion and reranking support
 """
 
 import logging
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel
 
-from .database.vector_db import IVectorDBService, VectorSearchResult
+from .database.vector_db import IVectorDBService
 from .llm.service import LLMService
 from .query_expansion import QueryExpansion, QueryOptimizer
 from .reranker import MultiFactorReranker, DiversityFilter, RetrievalQualityMonitor
 from .cache.retrieval_cache import RetrievalCache, CacheConfig
 from .monitoring.retrieval_monitor import RetrievalMonitor, MonitoringConfig
 
+from . import (
+    RetrievalConfig,
+    RetrievalStrategyConfig,
+    MergerConfig,
+    RetrievalResult,
+    RetrievalStrategy,
+    VectorSearchStrategy,
+    KeywordSearchStrategy,
+    HybridSearchStrategy,
+    StrategyRegistry,
+    ResultMerger,
+    WeightedMerger,
+    ReciprocalRankMerger,
+    FusionMerger,
+    MergerRegistry
+)
+
 
 logger = logging.getLogger(__name__)
-
-
-class RetrievalConfig(BaseModel):
-    """检索配置"""
-    vector_top_k: int = 5
-    vector_similarity_threshold: float = 0.7
-    keyword_markers: List[str] = ["@deprecated", "FIXME", "TODO", "Security"]
-    keyword_boost_factor: float = 1.5
-    vector_weight: float = 0.6
-    keyword_weight: float = 0.4
-    dedup_threshold: float = 0.9
-    
-    # Query expansion settings
-    enable_query_expansion: bool = True
-    expansion_top_k: int = 10  # Retrieve more results before reranking
-    
-    # Reranking settings
-    enable_reranking: bool = True
-    rerank_top_k: int = 5  # Final number of results after reranking
-    
-    # Diversity settings
-    enable_diversity: bool = True
-    diversity_threshold: float = 0.85
-    
-    # Quality monitoring
-    enable_quality_monitoring: bool = True
-
-
-class RetrievalResult(BaseModel):
-    """检索结果"""
-    id: str
-    file_path: str
-    content: str
-    similarity: float
-    confidence: float
-    has_deprecated: bool = False
-    has_fixme: bool = False
-    has_todo: bool = False
-    has_security: bool = False
-    metadata: Dict[str, Any] = {}
-    source: str = "hybrid"  # "vector", "keyword", or "hybrid"
 
 
 class RetrievalService:
     """
     检索服务
-    
+
     功能：
-    - 混合检索（向量 + 关键词）
-    - 向量搜索结果排序
-    - 关键词搜索结果排序
-    - 加权合并算法
+    - 支持多种检索策略（向量、关键词、混合）
+    - 可配置的结果合并算法
+    - 查询扩展和重排序
+    - 自定义关键词标记支持
     """
-    
+
     def __init__(
         self,
         vector_db_service: IVectorDBService,
@@ -89,323 +63,367 @@ class RetrievalService:
     ):
         """
         初始化检索服务
-        
+
         Args:
             vector_db_service: 向量数据库服务
-            llm_service: LLM 服务（用于生成查询嵌入）
+            llm_service: LLM 服务
             config: 检索配置
-            query_expansion: 查询扩展组件（可选）
-            reranker: 重排序组件（可选）
-            diversity_filter: 多样性过滤组件（可选）
-            quality_monitor: 质量监控组件（可选）
-            cache: 缓存组件（可选）
-            monitor: 监控组件（可选）
+            query_expansion: 查询扩展组件
+            reranker: 重排序组件
+            diversity_filter: 多样性过滤组件
+            quality_monitor: 质量监控组件
+            cache: 缓存组件
+            monitor: 监控组件
         """
         self.vector_db = vector_db_service
         self.llm_service = llm_service
         self.config = config or RetrievalConfig()
-        
-        # Initialize optional components
+
+        self._initialize_strategies()
+        self._initialize_merger()
+
         self.query_expansion = query_expansion or QueryExpansion(llm_service)
         self.query_optimizer = QueryOptimizer()
         self.reranker = reranker or MultiFactorReranker()
         self.diversity_filter = diversity_filter or DiversityFilter()
         self.quality_monitor = quality_monitor or RetrievalQualityMonitor()
-        
-        # Initialize Phase 3 components
+
         self.cache = cache or RetrievalCache(CacheConfig())
         self.monitor = monitor or RetrievalMonitor(MonitoringConfig())
-    
+
+    def _initialize_strategies(self):
+        """初始化检索策略"""
+        self.strategies: Dict[str, RetrievalStrategy] = {}
+        strategy_config = self.config.strategy
+
+        if strategy_config.vector.enabled:
+            self.strategies["vector_search"] = VectorSearchStrategy(
+                vector_db_service=self.vector_db,
+                llm_service=self.llm_service,
+                similarity_threshold=strategy_config.vector.similarity_threshold
+            )
+
+        if strategy_config.keyword.enabled:
+            self.strategies["keyword_search"] = KeywordSearchStrategy(
+                vector_db_service=self.vector_db,
+                llm_service=self.llm_service,
+                markers=strategy_config.keyword.markers,
+                boost_factors=strategy_config.keyword.boost_factors
+            )
+
+        if strategy_config.hybrid_merge.enabled:
+            self.strategies["hybrid_search"] = HybridSearchStrategy(
+                vector_db_service=self.vector_db,
+                llm_service=self.llm_service,
+                vector_strategy=self.strategies.get("vector_search"),
+                keyword_strategy=self.strategies.get("keyword_search"),
+                vector_weight=strategy_config.hybrid_merge.vector_weight,
+                keyword_weight=strategy_config.hybrid_merge.keyword_weight
+            )
+
+        logger.info(f"Initialized {len(self.strategies)} retrieval strategies")
+
+    def _initialize_merger(self):
+        """初始化结果合并策略"""
+        merger_config = self.config.merger
+
+        merger_map = {
+            "weighted_merge": WeightedMerger,
+            "rrf_merge": ReciprocalRankMerger,
+            "fusion_merge": FusionMerger
+        }
+
+        merger_class = merger_map.get(merger_config.type.value)
+        if merger_class:
+            if merger_config.type.value == "weighted_merge":
+                self.merger = merger_class(
+                    dedup_threshold=self.config.strategy.hybrid_merge.dedup_threshold
+                )
+            elif merger_config.type.value == "fusion_merge":
+                self.merger = merger_class(
+                    alpha=merger_config.fusion.alpha if merger_config.fusion else 0.5,
+                    dedup_threshold=merger_config.fusion.dedup_threshold if merger_config.fusion else 0.9
+                )
+            else:
+                self.merger = merger_class()
+        else:
+            self.merger = WeightedMerger(
+                dedup_threshold=self.config.strategy.hybrid_merge.dedup_threshold
+            )
+
+        logger.info(f"Initialized merger: {self.merger.name}")
+
+    def register_strategy(
+        self,
+        name: str,
+        strategy: RetrievalStrategy
+    ) -> bool:
+        """
+        注册自定义检索策略
+
+        Args:
+            name: 策略名称
+            strategy: 策略实例
+
+        Returns:
+            是否注册成功
+        """
+        if not name or not strategy:
+            return False
+
+        self.strategies[name] = strategy
+        logger.info(f"Registered custom strategy: {name}")
+        return True
+
+    def unregister_strategy(self, name: str) -> bool:
+        """注销检索策略"""
+        if name in self.strategies:
+            del self.strategies[name]
+            logger.info(f"Unregistered strategy: {name}")
+            return True
+        return False
+
+    def get_strategy(self, name: str) -> Optional[RetrievalStrategy]:
+        """获取检索策略"""
+        return self.strategies.get(name)
+
+    def list_strategies(self) -> List[str]:
+        """列出所有可用策略"""
+        return list(self.strategies.keys())
+
+    def set_merger(self, merger: ResultMerger):
+        """设置结果合并策略"""
+        self.merger = merger
+        logger.info(f"Set merger: {merger.name}")
+
+    def add_custom_marker(self, marker: str) -> bool:
+        """添加自定义关键词标记"""
+        return self.config.add_custom_marker(marker)
+
+    def remove_custom_marker(self, marker: str) -> bool:
+        """移除自定义关键词标记"""
+        return self.config.remove_custom_marker(marker)
+
+    def get_all_markers(self) -> List[str]:
+        """获取所有关键词标记"""
+        return self.config.get_all_markers()
+
     async def hybrid_retrieve(
         self,
         workspace_id: str,
         query: str,
-        top_k: Optional[int] = None
+        top_k: Optional[int] = None,
+        strategy_name: Optional[str] = None,
+        merger_name: Optional[str] = None,
+        **kwargs
     ) -> List[RetrievalResult]:
         """
-        混合检索（向量 + 关键词搜索 + 查询扩展 + 重排序）
-        
+        混合检索（使用配置的策略和合并算法）
+
         Args:
             workspace_id: 工作空间 ID
             query: 查询文本
-            top_k: 返回结果数量（默认使用配置值）
-            
+            top_k: 返回结果数量
+            strategy_name: 使用的检索策略（默认使用配置的主策略）
+            merger_name: 使用的合并策略（默认使用配置的策略）
+            **kwargs: 额外参数
+
         Returns:
             检索结果列表
         """
-        final_top_k = top_k or self.config.rerank_top_k
-        retrieval_top_k = self.config.expansion_top_k if self.config.enable_query_expansion else final_top_k
-        
+        final_top_k = top_k or self.config.strategy.vector.top_k
+
         try:
-            # 1. Query optimization and expansion
-            optimized_query = query
-            expanded_queries = [query]
-            
-            if self.config.enable_query_expansion:
-                logger.info("Optimizing and expanding query...")
-                optimized_query = self.query_optimizer.optimize_query(query)
-                expanded_queries = await self.query_expansion.expand_query(optimized_query)
-                logger.info(f"Expanded to {len(expanded_queries)} queries")
-            
-            # 2. Generate embeddings for all queries
-            logger.info(f"Generating embeddings for {len(expanded_queries)} queries...")
-            all_embeddings = await self.llm_service.embedding(expanded_queries)
-            
-            # 3. Perform searches for each expanded query
-            all_vector_results = []
-            all_keyword_results = []
-            
-            for idx, (exp_query, embedding) in enumerate(zip(expanded_queries, all_embeddings)):
-                logger.info(f"Searching with query {idx + 1}/{len(expanded_queries)}...")
-                
-                # Vector search
-                vector_results = await self._vector_search(
-                    workspace_id=workspace_id,
-                    query_embedding=embedding,
-                    top_k=retrieval_top_k
-                )
-                all_vector_results.extend(vector_results)
-                
-                # Keyword search
-                keyword_results = await self._keyword_search(
-                    workspace_id=workspace_id,
-                    query_embedding=embedding,
-                    top_k=retrieval_top_k
-                )
-                all_keyword_results.extend(keyword_results)
-            
-            # 4. Merge results from all queries
-            logger.info("Merging search results...")
-            merged_results = self._merge_results(
-                vector_results=all_vector_results,
-                keyword_results=all_keyword_results,
-                top_k=retrieval_top_k * 2  # Get more results before reranking
+            optimized_query = self._optimize_query(query)
+            expanded_queries = self._expand_query(optimized_query)
+
+            results_by_strategy = await self._search_all_strategies(
+                workspace_id=workspace_id,
+                query=optimized_query,
+                expanded_queries=expanded_queries,
+                top_k=final_top_k * 2,
+                **kwargs
             )
-            
-            # 5. Apply reranking
-            if self.config.enable_reranking and len(merged_results) > 0:
-                logger.info("Applying multi-factor reranking...")
-                merged_results = self.reranker.rerank(
-                    query=optimized_query,
-                    results=merged_results,
-                    top_k=final_top_k * 2  # Get more for diversity filtering
-                )
-            
-            # 6. Apply diversity filtering
-            if self.config.enable_diversity and len(merged_results) > 0:
-                logger.info("Applying diversity filtering...")
-                merged_results = self.diversity_filter.filter(
-                    results=merged_results,
-                    threshold=self.config.diversity_threshold,
-                    top_k=final_top_k
-                )
-            else:
-                # Just take top_k without diversity
-                merged_results = merged_results[:final_top_k]
-            
-            # 7. Monitor quality
-            if self.config.enable_quality_monitoring and len(merged_results) > 0:
-                metrics = self.quality_monitor.calculate_metrics(
-                    query=optimized_query,
-                    results=merged_results
-                )
-                logger.info(f"Retrieval quality metrics: {metrics}")
-            
-            logger.info(f"Hybrid retrieval returned {len(merged_results)} results")
-            return merged_results
-            
+
+            if not results_by_strategy:
+                logger.warning("No results from any strategy")
+                return []
+
+            merged_results = self._merge_results(
+                results_by_strategy=results_by_strategy,
+                strategy_name=strategy_name,
+                merger_name=merger_name,
+                top_k=final_top_k
+            )
+
+            reranked_results = self._rerank_results(
+                query=optimized_query,
+                results=merged_results,
+                top_k=final_top_k
+            )
+
+            final_results = self._apply_diversity_filter(reranked_results, final_top_k)
+
+            logger.info(f"Hybrid retrieval returned {len(final_results)} results")
+            return final_results
+
         except Exception as e:
             logger.error(f"Hybrid retrieval failed: {str(e)}")
             raise
-    
-    async def _vector_search(
+
+    def _optimize_query(self, query: str) -> str:
+        """优化查询"""
+        if self.config.query_expansion.enabled:
+            return self.query_optimizer.optimize_query(query)
+        return query
+
+    def _expand_query(self, query: str) -> List[str]:
+        """扩展查询"""
+        if self.config.query_expansion.enabled:
+            max_queries = self.config.query_expansion.max_queries
+            return [query] * max_queries
+        return [query]
+
+    async def _search_all_strategies(
         self,
         workspace_id: str,
-        query_embedding: List[float],
-        top_k: int
-    ) -> List[RetrievalResult]:
-        """
-        向量搜索
-        
-        实现需求 3.2:
-        - 按相似度分数降序排列
-        - 应用相似度阈值过滤（0.7）
-        """
-        try:
-            # 调用向量数据库服务
-            db_results = await self.vector_db.vector_search(
-                workspace_id=workspace_id,
-                query_embedding=query_embedding,
-                top_k=top_k,
-                similarity_threshold=self.config.vector_similarity_threshold
-            )
-            
-            # 转换为 RetrievalResult
-            results = []
-            for db_result in db_results:
-                result = RetrievalResult(
-                    id=db_result.id,
-                    file_path=db_result.file_path,
-                    content=db_result.content,
-                    similarity=db_result.similarity,
-                    confidence=db_result.similarity,  # 向量搜索的置信度等于相似度
-                    has_deprecated=db_result.has_deprecated,
-                    has_fixme=db_result.has_fixme,
-                    has_todo=db_result.has_todo,
-                    has_security=db_result.has_security,
-                    metadata=db_result.metadata,
-                    source="vector"
+        query: str,
+        expanded_queries: List[str],
+        top_k: int,
+        **kwargs
+    ) -> Dict[str, List[RetrievalResult]]:
+        """并行执行所有策略的检索"""
+        results_by_strategy: Dict[str, List[RetrievalResult]] = {}
+
+        for strategy_name, strategy in self.strategies.items():
+            try:
+                query_embedding = await self.llm_service.embedding([query])
+                if not query_embedding:
+                    continue
+
+                strategy_results = await strategy.search(
+                    query=query,
+                    query_embedding=query_embedding[0],
+                    workspace_id=workspace_id,
+                    top_k=top_k,
+                    custom_markers=self.config.custom_markers,
+                    **kwargs
                 )
-                results.append(result)
-            
-            # 结果已经按相似度降序排列（由数据库函数保证）
-            logger.info(f"Vector search returned {len(results)} results")
-            return results
-            
-        except Exception as e:
-            logger.error(f"Vector search failed: {str(e)}")
-            # 优雅降级：返回空结果
-            return []
-    
-    async def _keyword_search(
-        self,
-        workspace_id: str,
-        query_embedding: List[float],
-        top_k: int
-    ) -> List[RetrievalResult]:
-        """
-        关键词搜索
-        
-        实现需求 3.3, 3.9:
-        - 按关键词匹配数量排序
-        - 敏感标记命中时应用 1.5 倍加权
-        """
-        try:
-            # 构建关键词过滤器（搜索所有标记）
-            keyword_filters = {
-                'has_deprecated': True,
-                'has_fixme': True,
-                'has_todo': True,
-                'has_security': True
-            }
-            
-            # 调用混合搜索（实际上是关键词过滤的向量搜索）
-            db_results = await self.vector_db.hybrid_search(
-                workspace_id=workspace_id,
-                query_embedding=query_embedding,
-                keyword_filters=keyword_filters,
-                top_k=top_k
-            )
-            
-            # 转换为 RetrievalResult 并计算加权分数
-            results = []
-            for db_result in db_results:
-                # 计算关键词匹配数量
-                keyword_count = sum([
-                    db_result.has_deprecated,
-                    db_result.has_fixme,
-                    db_result.has_todo,
-                    db_result.has_security
-                ])
-                
-                # 应用加权因子（敏感标记命中时 1.5 倍）
-                boost_factor = 1.0
-                if db_result.has_deprecated or db_result.has_security:
-                    boost_factor = self.config.keyword_boost_factor
-                elif db_result.has_fixme:
-                    boost_factor = 1.3
-                elif db_result.has_todo:
-                    boost_factor = 1.2
-                
-                # 计算加权相似度
-                weighted_similarity = db_result.similarity * boost_factor
-                
-                result = RetrievalResult(
-                    id=db_result.id,
-                    file_path=db_result.file_path,
-                    content=db_result.content,
-                    similarity=weighted_similarity,
-                    confidence=weighted_similarity,
-                    has_deprecated=db_result.has_deprecated,
-                    has_fixme=db_result.has_fixme,
-                    has_todo=db_result.has_todo,
-                    has_security=db_result.has_security,
-                    metadata={
-                        **db_result.metadata,
-                        'keyword_count': keyword_count,
-                        'boost_factor': boost_factor
-                    },
-                    source="keyword"
-                )
-                results.append(result)
-            
-            # 按加权相似度降序排序
-            results.sort(key=lambda x: x.similarity, reverse=True)
-            
-            logger.info(f"Keyword search returned {len(results)} results")
-            return results
-            
-        except Exception as e:
-            logger.error(f"Keyword search failed: {str(e)}")
-            # 优雅降级：返回空结果
-            return []
-    
+
+                if strategy_results:
+                    results_by_strategy[strategy_name] = strategy_results
+                    logger.debug(f"Strategy {strategy_name}: {len(strategy_results)} results")
+
+            except Exception as e:
+                logger.error(f"Strategy {strategy_name} failed: {str(e)}")
+                continue
+
+        return results_by_strategy
+
     def _merge_results(
         self,
-        vector_results: List[RetrievalResult],
-        keyword_results: List[RetrievalResult],
+        results_by_strategy: Dict[str, List[RetrievalResult]],
+        strategy_name: Optional[str],
+        merger_name: Optional[str],
         top_k: int
     ) -> List[RetrievalResult]:
-        """
-        合并向量搜索和关键词搜索结果
-        
-        实现需求 3.8, 3.9:
-        - 向量搜索权重 0.6，关键词搜索权重 0.4
-        - 去重相似度阈值 0.9
-        - 返回合并后的 top-k 结果
-        """
-        # 创建结果字典（用于去重）
-        result_dict: Dict[str, RetrievalResult] = {}
-        
-        # 处理向量搜索结果
-        for result in vector_results:
-            # 应用向量权重
-            weighted_score = result.similarity * self.config.vector_weight
-            result.confidence = weighted_score
-            result_dict[result.id] = result
-        
-        # 处理关键词搜索结果
-        for result in keyword_results:
-            # 应用关键词权重
-            weighted_score = result.similarity * self.config.keyword_weight
-            
-            if result.id in result_dict:
-                # 如果已存在，合并分数
-                existing = result_dict[result.id]
-                # 使用向量搜索的原始相似度 + 关键词加权分数
-                combined_score = (
-                    existing.similarity * self.config.vector_weight +
-                    weighted_score
-                )
-                existing.confidence = combined_score
-                existing.source = "hybrid"
-                
-                # 合并元数据
-                if 'keyword_count' in result.metadata:
-                    existing.metadata['keyword_count'] = result.metadata['keyword_count']
-                if 'boost_factor' in result.metadata:
-                    existing.metadata['boost_factor'] = result.metadata['boost_factor']
-            else:
-                # 新结果，直接添加
-                result.confidence = weighted_score
-                result_dict[result.id] = result
-        
-        # 转换为列表并排序
-        merged_results = list(result_dict.values())
-        merged_results.sort(key=lambda x: x.confidence, reverse=True)
-        
-        # 返回 top-k 结果
-        final_results = merged_results[:top_k]
-        
-        logger.info(f"Merged results: {len(final_results)} from {len(vector_results)} vector + {len(keyword_results)} keyword")
-        return final_results
+        """合并检索结果"""
+        if not results_by_strategy:
+            return []
+
+        if len(results_by_strategy) == 1:
+            strategy_name = list(results_by_strategy.keys())[0]
+            results = results_by_strategy[strategy_name]
+            return results[:top_k]
+
+        weights = {
+            name: self.config.strategy.weights.get(name, 1.0)
+            for name in results_by_strategy.keys()
+        }
+
+        if merger_name:
+            merger = MergerRegistry.create_merger(merger_name)
+            if merger:
+                return merger.merge(results_by_strategy, weights, top_k)
+
+        return self.merger.merge(results_by_strategy, weights, top_k)
+
+    def _rerank_results(
+        self,
+        query: str,
+        results: List[RetrievalResult],
+        top_k: int
+    ) -> List[RetrievalResult]:
+        """重排序结果"""
+        if not self.config.reranking.enabled or not results:
+            return results
+
+        reranked = self.reranker.rerank(
+            query=query,
+            results=results,
+            top_k=top_k * 2
+        )
+        return reranked
+
+    def _apply_diversity_filter(
+        self,
+        results: List[RetrievalResult],
+        top_k: int
+    ) -> List[RetrievalResult]:
+        """应用多样性过滤"""
+        if not self.config.diversity.enabled or not results:
+            return results[:top_k]
+
+        filtered = self.diversity_filter.filter(
+            results=results,
+            threshold=self.config.diversity.threshold,
+            top_k=top_k
+        )
+        return filtered
+
+    async def retrieve_with_strategy(
+        self,
+        workspace_id: str,
+        query: str,
+        strategy_name: str,
+        top_k: Optional[int] = None,
+        **kwargs
+    ) -> List[RetrievalResult]:
+        """使用指定策略进行检索"""
+        strategy = self.strategies.get(strategy_name)
+        if not strategy:
+            logger.error(f"Unknown strategy: {strategy_name}")
+            return []
+
+        final_top_k = top_k or self.config.strategy.vector.top_k
+
+        try:
+            query_embedding = await self.llm_service.embedding([query])
+            if not query_embedding:
+                return []
+
+            results = await strategy.search(
+                query=query,
+                query_embedding=query_embedding[0],
+                workspace_id=workspace_id,
+                top_k=final_top_k,
+                custom_markers=self.config.custom_markers,
+                **kwargs
+            )
+
+            logger.info(f"Strategy {strategy_name} returned {len(results)} results")
+            return results
+
+        except Exception as e:
+            logger.error(f"Strategy {strategy_name} failed: {str(e)}")
+            return []
+
+    def get_strategy_stats(self) -> Dict[str, Any]:
+        """获取策略统计信息"""
+        return {
+            "available_strategies": self.list_strategies(),
+            "current_strategy": self.config.strategy.name.value,
+            "current_merger": self.merger.name,
+            "custom_markers": self.config.custom_markers,
+            "total_strategies": len(self.strategies)
+        }
