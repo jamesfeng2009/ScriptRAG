@@ -772,11 +772,11 @@ class SkillUpdateRequest(BaseModel):
 
 class SkillResponse(BaseModel):
     """技能响应"""
-    workspace_id: str
     skill_name: str
     description: str
     tone: str
     compatible_with: List[str]
+    prompt_config: Optional[Dict[str, Any]] = None
     is_enabled: bool
     is_default: bool
     created_at: Optional[datetime] = None
@@ -799,17 +799,17 @@ async def list_skills():
     if not skill_service:
         raise HTTPException(status_code=503, detail="Skill service not available")
 
-    skills = await skill_service.get_by_workspace(DEFAULT_WORKSPACE)
-    default_skill = await skill_service.get_default(DEFAULT_WORKSPACE)
+    skills = await skill_service.get_all()
+    default_skill = await skill_service.get_default()
 
     return WorkspaceSkillsResponse(
         skills=[
             SkillResponse(
-                workspace_id=s.workspace_id,
                 skill_name=s.skill_name,
                 description=s.description,
                 tone=s.tone,
                 compatible_with=s.compatible_with,
+                prompt_config=s.prompt_config,
                 is_enabled=s.is_enabled,
                 is_default=s.is_default,
                 created_at=s.created_at,
@@ -830,12 +830,11 @@ async def create_skill(request: SkillCreateRequest):
 
     from ..services.skill_persistence_service import SkillRecord
 
-    existing = await skill_service.get(DEFAULT_WORKSPACE, request.skill_name)
+    existing = await skill_service.get(request.skill_name)
     if existing:
         raise HTTPException(status_code=409, detail=f"Skill '{request.skill_name}' already exists")
 
     record = SkillRecord(
-        workspace_id=DEFAULT_WORKSPACE,
         skill_name=request.skill_name,
         description=request.description,
         tone=request.tone,
@@ -848,11 +847,11 @@ async def create_skill(request: SkillCreateRequest):
     result = await skill_service.create(record)
 
     return SkillResponse(
-        workspace_id=result.workspace_id,
         skill_name=result.skill_name,
         description=result.description,
         tone=result.tone,
         compatible_with=result.compatible_with,
+        prompt_config=result.prompt_config,
         is_enabled=result.is_enabled,
         is_default=result.is_default,
         created_at=result.created_at,
@@ -866,16 +865,16 @@ async def get_skill(skill_name: str):
     if not skill_service:
         raise HTTPException(status_code=503, detail="Skill service not available")
 
-    record = await skill_service.get(DEFAULT_WORKSPACE, skill_name)
+    record = await skill_service.get(skill_name)
     if not record:
         raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
 
     return SkillResponse(
-        workspace_id=record.workspace_id,
         skill_name=record.skill_name,
         description=record.description,
         tone=record.tone,
         compatible_with=record.compatible_with,
+        prompt_config=record.prompt_config,
         is_enabled=record.is_enabled,
         is_default=record.is_default,
         created_at=record.created_at,
@@ -890,17 +889,17 @@ async def update_skill(skill_name: str, request: SkillUpdateRequest):
         raise HTTPException(status_code=503, detail="Skill service not available")
 
     update_data = {k: v for k, v in request.model_dump().items() if v is not None}
-    result = await skill_service.update(DEFAULT_WORKSPACE, skill_name, **update_data)
+    result = await skill_service.update(skill_name, **update_data)
 
     if not result:
         raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
 
     return SkillResponse(
-        workspace_id=result.workspace_id,
         skill_name=result.skill_name,
         description=result.description,
         tone=result.tone,
         compatible_with=result.compatible_with,
+        prompt_config=result.prompt_config,
         is_enabled=result.is_enabled,
         is_default=result.is_default,
         created_at=result.created_at,
@@ -917,7 +916,7 @@ async def delete_skill(skill_name: str):
     if skill_name == "standard_tutorial":
         raise HTTPException(status_code=400, detail="Cannot delete default skill 'standard_tutorial'")
 
-    deleted = await skill_service.delete(DEFAULT_WORKSPACE, skill_name)
+    deleted = await skill_service.delete(skill_name)
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
 
@@ -930,11 +929,11 @@ async def initialize_skills():
     if not skill_service:
         raise HTTPException(status_code=503, detail="Skill service not available")
 
-    skills = await skill_service.ensure_default_skills(DEFAULT_WORKSPACE)
+    skills = await skill_service.ensure_default_skills()
 
     return {
         "message": f"Initialized {len(skills)} default skills",
-        "skills": [s.skill_name for s in skills]
+        "skills": [s.skill_name for a in skills for s in [await skill_service.get(a)] if s]
     }
 
 
@@ -944,7 +943,7 @@ async def get_skill_config(skill_name: str):
     if not skill_service:
         raise HTTPException(status_code=503, detail="Skill service not available")
 
-    config = await skill_service.get_skill_config(DEFAULT_WORKSPACE, skill_name)
+    config = await skill_service.get_skill_config(skill_name)
     if not config:
         raise HTTPException(status_code=404, detail=f"Skill '{skill_name}' not found")
 

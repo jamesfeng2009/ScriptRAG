@@ -5,7 +5,7 @@
 """
 
 import logging
-from typing import Dict, List, Set, Optional, Literal
+from typing import Dict, List, Set, Optional, Literal, Any
 from collections import deque
 from pydantic import BaseModel, Field
 
@@ -18,6 +18,7 @@ class SkillConfig(BaseModel):
     description: str = Field(..., description="技能用途的描述")
     tone: str = Field(..., description="技能的语气/风格")
     compatible_with: List[str] = Field(default_factory=list, description="兼容的技能名称列表")
+    prompt_config: Dict[str, Any] = Field(default_factory=dict, description="LLM 生成配置")
 
 
 class RetrievalConfig(BaseModel):
