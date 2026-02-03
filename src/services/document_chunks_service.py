@@ -9,7 +9,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
 
-from ..config import get_database_config
+from src.utils.database_utils import build_db_url
 
 logger = logging.getLogger(__name__)
 
@@ -24,12 +24,12 @@ class DocumentChunksService:
         self._initialized = False
     
     def _get_db_url(self) -> str:
+        """获取数据库连接 URL"""
         if self._config is not None:
             db_config = self._config
         else:
-            from ..config import get_database_config
-            db_config = get_database_config()
-        return f"postgresql+asyncpg://{db_config.user}:{db_config.password}@{db_config.host}:{db_config.port}/{db_config.database}"
+            db_config = None
+        return build_db_url(db_config)
     
     async def initialize(self):
         try:

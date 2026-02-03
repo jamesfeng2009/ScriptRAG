@@ -14,14 +14,14 @@ from sqlalchemy.dialects.postgresql import insert
 
 import asyncio
 
+from src.utils.database_utils import build_db_url
+
 logger = logging.getLogger(__name__)
 
 
 def get_db_url():
-    """构建数据库连接 URL"""
-    from ..config import get_database_config
-    db_config = get_database_config()
-    return f"postgresql+asyncpg://{db_config.user}:{db_config.password}@{db_config.host}:{db_config.port}/{db_config.database}"
+    """构建数据库连接 URL（已废弃，请使用 database_utils.build_db_url）"""
+    return build_db_url()
 
 
 class DocumentRecord:
@@ -347,6 +347,104 @@ class DocumentService:
         """关闭数据库连接"""
         if self.engine:
             await self.engine.dispose()
+
+
+def _create_chunker(llm_service=None):
+    """创建智能分块器
+
+    Args:
+        llm_service: LLM 服务实例（用于上下文增强）
+
+    Returns:
+        SmartChunker 实例
+    """
+    from .document_chunker import SmartChunker
+
+    return SmartChunker(
+        llm_service=llm_service,
+        enable_contextual_enrichment=llm_service is not None,
+        enable_atomic_chunking=llm_service is not None,
+        enable_strategy_cache=True
+    )
+
+
+async def process_and_index_document(
+    content: str,
+    file_path: str,
+    title: str = None,
+    category: str = None,
+    document_service: DocumentService = None,
+    chunks_service: "DocumentChunksService" = None,
+    llm_service: None = None
+) -> Dict[str, Any]:
+    """一站式文档处理：创建文档记录 + 分块 + 存储分块
+
+    Args:
+        content: 文档内容
+        file_path: 文件路径
+        title: 文档标题（默认从文件名提取）
+        category: 文档分类
+        document_service: 文档服务实例
+        chunks_service: 分块服务实例
+        llm_service: LLM 服务实例（用于上下文增强）
+
+    Returns:
+        处理结果字典
+    """
+    from pathlib import Path
+    from .document_chunker import SmartChunker
+
+    title = title or Path(file_path).stem
+    file_name = Path(file_path).name
+    file_size = len(content.encode())
+
+    if document_service is None:
+        document_service = document_service or DocumentService()
+    if chunks_service is None:
+        from .document_chunks_service import DocumentChunksService
+        chunks_service = DocumentChunksService()
+
+    await document_service.init()
+    await chunks_service.initialize()
+
+    doc_record = await document_service.create(
+        title=title,
+        file_name=file_name,
+        content=content,
+        file_path=file_path,
+        category=category,
+        file_size=file_size
+    )
+
+    chunker = _create_chunker(llm_service)
+    chunks = chunker(content, file_path)
+
+    created_chunks = []
+    for chunk in chunks:
+        chunk_id = await chunks_service.create_chunk(
+            document_id=str(doc_record.id),
+            chunk_index=int(chunk.id.split('_')[-1]) if '_' in chunk.id else 0,
+            content=chunk.content,
+            start_line=chunk.metadata.start_line,
+            end_line=chunk.metadata.end_line,
+            char_count=chunk.metadata.char_count
+        )
+        created_chunks.append({
+            "chunk_id": chunk_id,
+            "content": chunk.content,
+            "start_line": chunk.metadata.start_line,
+            "end_line": chunk.metadata.end_line
+        })
+
+    await chunks_service.close()
+
+    return {
+        "document_id": str(doc_record.id),
+        "title": doc_record.title,
+        "file_name": doc_record.file_name,
+        "chunks_count": len(created_chunks),
+        "chunks": created_chunks
+    }
 
 
 document_service = DocumentService()
