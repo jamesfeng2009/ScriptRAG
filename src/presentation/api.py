@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 
 from ..config import get_app_config, get_llm_config, get_database_config
 from ..domain.models import SharedState
-from ..application.enhanced_orchestrator import EnhancedWorkflowOrchestrator
+from ..application.orchestrator import WorkflowOrchestrator, EnhancedWorkflowOrchestrator
 from ..services.llm.service import LLMService
 from ..services.retrieval_service import RetrievalService, RetrievalConfig
 from ..services.parser.tree_sitter_parser import TreeSitterParser

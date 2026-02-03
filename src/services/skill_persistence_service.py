@@ -1,4 +1,4 @@
-"""Skill Persistence Service - Skills data access layer"""
+"""技能持久化服务 - 技能数据访问层"""
 
 import logging
 import asyncio

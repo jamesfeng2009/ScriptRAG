@@ -1,8 +1,8 @@
-"""Vector Database Service - PostgreSQL + pgvector integration"""
+"""向量数据库服务 - PostgreSQL + pgvector 集成"""
 
 import logging
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Optional
+from typing import Optional, List, Dict, Any
 from pydantic import BaseModel
 
 
@@ -60,114 +60,88 @@ class IVectorDBService(ABC):
         pass
     
     @abstractmethod
-    async def vector_search(
+    async def search(
         self,
         workspace_id: str,
         query_embedding: List[float],
         top_k: int = 5,
-        similarity_threshold: float = 0.7
+        filters: Optional[Dict[str, Any]] = None
     ) -> List[VectorSearchResult]:
         """
-        向量相似度搜索
+        搜索相似文档
         
         Args:
             workspace_id: 工作空间 ID
             query_embedding: 查询嵌入向量
             top_k: 返回结果数量
-            similarity_threshold: 相似度阈值
+            filters: 可选过滤器
             
         Returns:
-            搜索结果列表
+            相似文档列表
         """
         pass
     
     @abstractmethod
-    async def hybrid_search(
+    async def delete_documents(
         self,
-        workspace_id: str,
-        query_embedding: List[float],
-        keyword_filters: Optional[Dict[str, bool]] = None,
-        top_k: int = 5
-    ) -> List[VectorSearchResult]:
-        """
-        混合搜索（向量 + 关键词）
-        
-        Args:
-            workspace_id: 工作空间 ID
-            query_embedding: 查询嵌入向量
-            keyword_filters: 关键词过滤器（has_deprecated, has_fixme, has_todo, has_security）
-            top_k: 返回结果数量
-            
-        Returns:
-            搜索结果列表
-        """
-        pass
-    
-    @abstractmethod
-    async def delete_document(
-        self,
-        workspace_id: str,
-        file_path: str
-    ) -> bool:
+        document_ids: List[str]
+    ) -> int:
         """
         删除文档
         
         Args:
-            workspace_id: 工作空间 ID
-            file_path: 文件路径
+            document_ids: 要删除的文档 ID 列表
             
         Returns:
-            是否删除成功
+            删除的文档数量
         """
         pass
     
     @abstractmethod
-    async def close(self):
-        """关闭数据库连接"""
+    async def delete_workspace(
+        self,
+        workspace_id: str
+    ) -> int:
+        """
+        删除工作空间的所有文档
+        
+        Args:
+            workspace_id: 工作空间 ID
+            
+        Returns:
+            删除的文档数量
+        """
+        pass
+    
+    @abstractmethod
+    async def get_document_count(
+        self,
+        workspace_id: str
+    ) -> int:
+        """
+        获取工作空间的文档数量
+        
+        Args:
+            workspace_id: 工作空间 ID
+            
+        Returns:
+            文档数量
+        """
         pass
 
 
-class PostgresVectorDBService(IVectorDBService):
-    """
-    PostgreSQL + pgvector 向量数据库服务实现
+class PGVectorService(IVectorDBService):
+    """PostgreSQL + pgvector 向量数据库服务"""
     
-    功能：
-    - 文档索引与嵌入存储
-    - 向量相似度搜索（HNSW 索引）
-    - 混合搜索（向量 + 标量过滤）
-    - 连接池和错误重试
-    """
-    
-    def __init__(
-        self,
-        host: str,
-        port: int,
-        database: str,
-        user: str,
-        password: str,
-        min_pool_size: int = 10,
-        max_pool_size: int = 20
-    ):
+    def __init__(self, db_pool):
         """
-        初始化 PostgreSQL 向量数据库服务
+        初始化 pgvector 服务
         
         Args:
-            host: 数据库主机
-            port: 数据库端口
-            database: 数据库名称
-            user: 用户名
-            password: 密码
-            min_pool_size: 最小连接池大小
-            max_pool_size: 最大连接池大小
+            db_pool: AsyncPG 连接池
         """
-        self.host = host
-        self.port = port
-        self.database = database
-        self.user = user
-        self.password = password
-        self.min_pool_size = min_pool_size
-        self.max_pool_size = max_pool_size
-        self.pool = None
+        self.db_pool = db_pool
+        self._table_initialized = False
     
     async def initialize(self):
         """初始化连接池"""
@@ -237,14 +211,25 @@ class PostgresVectorDBService(IVectorDBService):
             logger.error(f"Failed to index document {file_path}: {str(e)}")
             raise
     
-    async def vector_search(
+    async def search(
         self,
         workspace_id: str,
         query_embedding: List[float],
         top_k: int = 5,
-        similarity_threshold: float = 0.7
+        filters: Optional[Dict[str, Any]] = None
     ) -> List[VectorSearchResult]:
-        """向量相似度搜索"""
+        """
+        搜索相似文档
+        
+        Args:
+            workspace_id: 工作空间 ID
+            query_embedding: 查询嵌入向量
+            top_k: 返回结果数量
+            filters: 可选过滤器
+            
+        Returns:
+            相似文档列表
+        """
         if not self.pool:
             raise Exception("Connection pool not initialized")
         
@@ -252,9 +237,9 @@ class PostgresVectorDBService(IVectorDBService):
             async with self.pool.acquire() as conn:
                 rows = await conn.fetch(
                     """
-                    SELECT * FROM search_similar_documents($1, $2, $3, $4)
+                    SELECT * FROM search_similar_documents($1, $2, $3)
                     """,
-                    workspace_id, query_embedding, top_k, similarity_threshold
+                    workspace_id, query_embedding, top_k
                 )
                 
                 results = [
@@ -277,64 +262,19 @@ class PostgresVectorDBService(IVectorDBService):
             logger.error(f"Vector search failed: {str(e)}")
             raise
     
-    async def hybrid_search(
+    async def delete_documents(
         self,
-        workspace_id: str,
-        query_embedding: List[float],
-        keyword_filters: Optional[Dict[str, bool]] = None,
-        top_k: int = 5
-    ) -> List[VectorSearchResult]:
-        """混合搜索（向量 + 关键词）"""
-        if not self.pool:
-            raise Exception("Connection pool not initialized")
+        document_ids: List[str]
+    ) -> int:
+        """
+        删除文档
         
-        try:
-            import json
-            async with self.pool.acquire() as conn:
-                rows = await conn.fetch(
-                    """
-                    SELECT * FROM hybrid_search_documents($1, $2, $3::jsonb, $4)
-                    """,
-                    workspace_id, query_embedding, 
-                    json.dumps(keyword_filters or {}), top_k
-                )
-                
-                results = []
-                for row in rows:
-                    # 从数据库获取完整的文档信息
-                    doc_row = await conn.fetchrow(
-                        """
-                        SELECT has_deprecated, has_fixme, has_todo, has_security, metadata
-                        FROM code_documents
-                        WHERE id = $1
-                        """,
-                        row['id']
-                    )
-                    
-                    results.append(VectorSearchResult(
-                        id=str(row['id']),
-                        file_path=row['file_path'],
-                        content=row['content'],
-                        similarity=row['similarity'],
-                        has_deprecated=doc_row['has_deprecated'] if doc_row else False,
-                        has_fixme=doc_row['has_fixme'] if doc_row else False,
-                        has_todo=doc_row['has_todo'] if doc_row else False,
-                        has_security=doc_row['has_security'] if doc_row else False,
-                        metadata=doc_row['metadata'] if doc_row else {}
-                    ))
-                
-                logger.info(f"Hybrid search returned {len(results)} results")
-                return results
-        except Exception as e:
-            logger.error(f"Hybrid search failed: {str(e)}")
-            raise
-    
-    async def delete_document(
-        self,
-        workspace_id: str,
-        file_path: str
-    ) -> bool:
-        """删除文档"""
+        Args:
+            document_ids: 要删除的文档 ID 列表
+            
+        Returns:
+            删除的文档数量
+        """
         if not self.pool:
             raise Exception("Connection pool not initialized")
         
@@ -343,16 +283,77 @@ class PostgresVectorDBService(IVectorDBService):
                 result = await conn.execute(
                     """
                     DELETE FROM code_documents
-                    WHERE workspace_id = $1 AND file_path = $2
+                    WHERE id = ANY($1)
                     """,
-                    workspace_id, file_path
+                    document_ids
                 )
-                deleted = result.split()[-1] == '1'
-                if deleted:
-                    logger.info(f"Deleted document: {file_path}")
+                deleted = int(result.split()[-1])
+                logger.info(f"Deleted {deleted} documents")
                 return deleted
         except Exception as e:
-            logger.error(f"Failed to delete document {file_path}: {str(e)}")
+            logger.error(f"Failed to delete documents: {str(e)}")
+            raise
+    
+    async def delete_workspace(
+        self,
+        workspace_id: str
+    ) -> int:
+        """
+        删除工作空间的所有文档
+        
+        Args:
+            workspace_id: 工作空间 ID
+            
+        Returns:
+            删除的文档数量
+        """
+        if not self.pool:
+            raise Exception("Connection pool not initialized")
+        
+        try:
+            async with self.pool.acquire() as conn:
+                result = await conn.execute(
+                    """
+                    DELETE FROM code_documents
+                    WHERE workspace_id = $1
+                    """,
+                    workspace_id
+                )
+                deleted = int(result.split()[-1])
+                logger.info(f"Deleted {deleted} documents for workspace {workspace_id}")
+                return deleted
+        except Exception as e:
+            logger.error(f"Failed to delete workspace: {str(e)}")
+            raise
+    
+    async def get_document_count(
+        self,
+        workspace_id: str
+    ) -> int:
+        """
+        获取工作空间的文档数量
+        
+        Args:
+            workspace_id: 工作空间 ID
+            
+        Returns:
+            文档数量
+        """
+        if not self.pool:
+            raise Exception("Connection pool not initialized")
+        
+        try:
+            async with self.pool.acquire() as conn:
+                count = await conn.fetchval(
+                    """
+                    SELECT COUNT(*) FROM code_documents
+                    WHERE workspace_id = $1
+                    """,
+                    workspace_id
+                )
+                return count or 0
+        except Exception as e:
+            logger.error(f"Failed to get document count: {str(e)}")
             raise
     
     async def close(self):

@@ -1,7 +1,6 @@
-"""Skill Configuration Loader
+"""技能配置加载器
 
-This module provides functionality to load skills from YAML configuration files,
-validate them, and support hot-reloading.
+本模块提供从 YAML 配置文件加载技能、验证配置和支持热重载的功能。
 """
 
 import logging
@@ -19,11 +18,11 @@ logger = logging.getLogger(__name__)
 
 
 class PromptConfig(BaseModel):
-    """Prompt configuration for a skill"""
-    system_prompt: str = Field(..., description="System prompt template")
-    user_template: str = Field(..., description="User prompt template with placeholders")
+    """技能的提示词配置"""
+    system_prompt: str = Field(..., description="系统提示词模板")
+    user_template: str = Field(..., description="带占位符的用户提示词模板")
     temperature: float = Field(default=0.7, ge=0.0, le=1.0, description="LLM temperature")
-    max_tokens: int = Field(default=2000, gt=0, description="Maximum tokens to generate")
+    max_tokens: int = Field(default=2000, gt=0, description="生成的最大 token 数")
     
     @field_validator('system_prompt', 'user_template')
     @classmethod
@@ -44,9 +43,9 @@ class SkillConfigYAML(BaseModel):
 
 
 class SkillsConfigFile(BaseModel):
-    """Complete skills configuration file model"""
-    version: str = Field(..., description="Configuration version")
-    skills: Dict[str, SkillConfigYAML] = Field(..., description="Skills dictionary")
+    """完整的技能配置文件模型"""
+    version: str = Field(..., description="配置版本")
+    skills: Dict[str, SkillConfigYAML] = Field(..., description="技能字典")
     
     @field_validator('version')
     @classmethod
@@ -58,21 +57,21 @@ class SkillsConfigFile(BaseModel):
 
 class SkillConfigLoader:
     """
-    Skill configuration loader
+    技能配置加载器
     
-    Features:
-    - Load skills from YAML files
-    - Validate configuration
-    - Convert to SkillConfig objects
-    - Support hot-reloading
+    功能：
+    - 从 YAML 文件加载技能
+    - 验证配置
+    - 转换为 SkillConfig 对象
+    - 支持热重载
     """
     
     def __init__(self, config_path: Optional[str] = None):
         """
-        Initialize skill config loader
+        初始化技能配置加载器
         
         Args:
-            config_path: Path to skills configuration file
+            config_path: 技能配置文件的路径
         """
         self.config_path = Path(config_path) if config_path else Path("config/skills.yaml")
         self.observer: Optional[Observer] = None
@@ -82,17 +81,17 @@ class SkillConfigLoader:
     
     def load_from_yaml(self, path: Optional[Path] = None) -> Dict[str, SkillConfig]:
         """
-        Load skills from YAML file
+        从 YAML 文件加载技能
         
         Args:
-            path: Path to YAML file (uses default if not provided)
+            path: YAML 文件路径（如果未提供则使用默认路径）
             
         Returns:
-            Dictionary of skill name to SkillConfig
+            技能名称到 SkillConfig 的字典
             
         Raises:
-            FileNotFoundError: If config file doesn't exist
-            ValueError: If config is invalid
+            FileNotFoundError: 如果配置文件不存在
+            ValueError: 如果配置无效
         """
         config_file = path or self.config_path
         
@@ -136,13 +135,13 @@ class SkillConfigLoader:
     
     def load_prompt_configs(self, path: Optional[Path] = None) -> Dict[str, PromptConfig]:
         """
-        Load prompt configurations from YAML file
+        从 YAML 文件加载提示词配置
         
         Args:
-            path: Path to YAML file (uses default if not provided)
+            path: YAML 文件路径（如果未提供则使用默认路径）
             
         Returns:
-            Dictionary of skill name to PromptConfig
+            技能名称到 PromptConfig 的字典
         """
         config_file = path or self.config_path
         
@@ -172,13 +171,13 @@ class SkillConfigLoader:
     
     def validate_config(self, config_dict: dict) -> bool:
         """
-        Validate skills configuration
+        验证技能配置
         
         Args:
-            config_dict: Raw configuration dictionary
+            config_dict: 原始配置字典
             
         Returns:
-            True if valid, False otherwise
+            有效返回 True，无效返回 False
         """
         try:
             # Validate structure
@@ -251,10 +250,10 @@ class SkillConfigLoader:
     
     def register_reload_callback(self, callback: Callable):
         """
-        Register a callback to be called when configuration is reloaded
+        注册在配置重新加载时调用的回调函数
         
         Args:
-            callback: Callback function to register
+            callback: 要注册的回调函数
         """
         self.reload_callbacks.append(callback)
         logger.info(f"Registered reload callback: {callback.__name__}")
@@ -290,7 +289,7 @@ class SkillConfigLoader:
     
     def _trigger_reload(self):
         """
-        Trigger reload callbacks
+        触发重新加载回调
         """
         logger.info("Configuration file changed, triggering reload callbacks")
         
@@ -331,10 +330,10 @@ class SkillConfigFileHandler(FileSystemEventHandler):
 
 def create_default_config(output_path: Path):
     """
-    Create a default skills configuration file
+    创建默认技能配置文件
     
     Args:
-        output_path: Path where to create the config file
+        output_path: 创建配置文件的路径
     """
     from .skills import SKILLS
     

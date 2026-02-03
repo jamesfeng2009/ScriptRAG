@@ -1,9 +1,9 @@
-"""Summarization Service - File size check and LLM-based summarization
+"""摘要服务 - 文件大小检查和基于 LLM 的摘要
 
-This service implements:
-1. Token counting for documents
-2. LLM-based summarization for large files
-3. Key metadata and code snippet preservation
+本服务实现：
+1. 文档 token 计数
+2. 为大文件生成基于 LLM 的摘要
+3. 关键元数据和代码片段保留
 """
 
 import logging

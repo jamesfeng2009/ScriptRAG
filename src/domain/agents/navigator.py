@@ -1,11 +1,11 @@
-"""Navigator Agent - Performs RAG retrieval
+"""导航器智能体 - 执行 RAG 检索
 
-The Navigator agent is responsible for:
-1. Hybrid retrieval (vector + keyword search)
-2. Metadata extraction from code
-3. File size checking and summarization
-4. Source provenance tracking with confidence scores
-5. Graceful handling of empty retrievals
+本模块实现导航器智能体，负责：
+1. 混合检索（向量 + 关键词搜索）
+2. 从代码中提取元数据
+3. 文件大小检查和摘要
+4. 带置信度分数的来源溯源跟踪
+5. 优雅处理空检索结果
 """
 
 import logging

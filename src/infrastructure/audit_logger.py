@@ -1,10 +1,10 @@
-"""Audit Logger - Comprehensive audit logging for compliance
+"""审计日志记录器 - 合规性综合审计日志
 
-This module provides audit logging functionality:
-1. Record all user operations
-2. Persist audit logs to database
-3. Query and search audit logs
-4. Compliance and security tracking
+本模块提供审计日志功能：
+1. 记录所有用户操作
+2. 将审计日志持久化到数据库
+3. 查询和搜索审计日志
+4. 合规性和安全跟踪
 """
 
 import logging
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 
 
 class AuditAction(str, Enum):
-    """Audit action types"""
+    """审计操作类型"""
     # Authentication actions
     LOGIN = "login"
     LOGOUT = "logout"
@@ -81,7 +81,7 @@ class ResourceType(str, Enum):
 
 
 class AuditLogEntry(BaseModel):
-    """Audit log entry model"""
+    """审计日志条目模型"""
     id: Optional[str] = None
     tenant_id: str
     user_id: Optional[str] = None
@@ -100,14 +100,14 @@ class AuditLogEntry(BaseModel):
 
 
 class AuditLogger:
-    """Service for audit logging"""
+    """审计日志服务"""
     
     def __init__(self, db_pool: asyncpg.Pool):
         """
-        Initialize audit logger
+        初始化审计日志记录器
         
         Args:
-            db_pool: AsyncPG connection pool
+            db_pool: AsyncPG 连接池
         """
         self.db_pool = db_pool
     
@@ -123,20 +123,20 @@ class AuditLogger:
         user_agent: Optional[str] = None
     ) -> Optional[str]:
         """
-        Log an audit event
+        记录审计事件
         
         Args:
-            tenant_id: Tenant ID
-            action: Action performed
-            resource_type: Type of resource
-            user_id: User ID (optional)
-            resource_id: Resource ID (optional)
-            details: Additional details (optional)
-            ip_address: IP address (optional)
-            user_agent: User agent string (optional)
+            tenant_id: 租户 ID
+            action: 执行的操作
+            resource_type: 资源类型
+            user_id: 用户 ID（可选）
+            resource_id: 资源 ID（可选）
+            details: 附加详情（可选）
+            ip_address: IP 地址（可选）
+            user_agent: 用户代理字符串（可选）
             
         Returns:
-            Audit log ID if successful, None otherwise
+            成功返回审计日志 ID，否则返回 None
         """
         try:
             async with self.db_pool.acquire() as conn:
@@ -178,19 +178,19 @@ class AuditLogger:
         details: Optional[Dict[str, Any]] = None
     ) -> Optional[str]:
         """
-        Log authentication event
+        记录认证事件
         
         Args:
-            tenant_id: Tenant ID
-            user_id: User ID
-            action: Authentication action
-            success: Whether authentication succeeded
-            ip_address: IP address
-            user_agent: User agent string
-            details: Additional details
+            tenant_id: 租户 ID
+            user_id: 用户 ID
+            action: 认证操作
+            success: 认证是否成功
+            ip_address: IP 地址
+            user_agent: 用户代理字符串
+            details: 附加详情
             
         Returns:
-            Audit log ID if successful, None otherwise
+            成功返回审计日志 ID，否则返回 None
         """
         audit_details = details or {}
         audit_details['success'] = success
@@ -218,20 +218,20 @@ class AuditLogger:
         user_agent: Optional[str] = None
     ) -> Optional[str]:
         """
-        Log API call
+        记录 API 调用
         
         Args:
-            tenant_id: Tenant ID
-            user_id: User ID (optional)
-            endpoint: API endpoint
-            method: HTTP method
-            status_code: Response status code
-            response_time_ms: Response time in milliseconds
-            ip_address: IP address
-            user_agent: User agent string
+            tenant_id: 租户 ID
+            user_id: 用户 ID（可选）
+            endpoint: API 端点
+            method: HTTP 方法
+            status_code: 响应状态码
+            response_time_ms: 响应时间（毫秒）
+            ip_address: IP 地址
+            user_agent: 用户代理字符串
             
         Returns:
-            Audit log ID if successful, None otherwise
+            成功返回审计日志 ID，否则返回 None
         """
         return await self.log(
             tenant_id=tenant_id,
@@ -261,21 +261,21 @@ class AuditLogger:
         offset: int = 0
     ) -> List[AuditLogEntry]:
         """
-        Query audit logs with filters
+        使用过滤器查询审计日志
         
         Args:
-            tenant_id: Filter by tenant ID
-            user_id: Filter by user ID
-            action: Filter by action
-            resource_type: Filter by resource type
-            resource_id: Filter by resource ID
-            start_time: Start time filter
-            end_time: End time filter
-            limit: Maximum number of results
-            offset: Offset for pagination
+            tenant_id: 按租户 ID 过滤
+            user_id: 按用户 ID 过滤
+            action: 按操作过滤
+            resource_type: 按资源类型过滤
+            resource_id: 按资源 ID 过滤
+            start_time: 开始时间过滤器
+            end_time: 结束时间过滤器
+            limit: 最大结果数量
+            offset: 分页偏移量
             
         Returns:
-            List of AuditLogEntry objects
+            AuditLogEntry 对象列表
         """
         try:
             query = """
@@ -385,16 +385,16 @@ class AuditLogger:
         limit: int = 100
     ) -> List[AuditLogEntry]:
         """
-        Get audit history for a specific resource
+        获取特定资源的审计历史
         
         Args:
-            tenant_id: Tenant ID
-            resource_type: Resource type
-            resource_id: Resource ID
-            limit: Maximum number of results
+            tenant_id: 租户 ID
+            resource_type: 资源类型
+            resource_id: 资源 ID
+            limit: 最大结果数量
             
         Returns:
-            List of AuditLogEntry objects
+            AuditLogEntry 对象列表
         """
         return await self.query_logs(
             tenant_id=tenant_id,
@@ -411,16 +411,16 @@ class AuditLogger:
         limit: int = 100
     ) -> List[AuditLogEntry]:
         """
-        Get security-related audit events
+        获取与安全相关的审计事件
         
         Args:
-            tenant_id: Tenant ID
-            start_time: Start time filter
-            end_time: End time filter
-            limit: Maximum number of results
+            tenant_id: 租户 ID
+            start_time: 开始时间过滤器
+            end_time: 结束时间过滤器
+            limit: 最大结果数量
             
         Returns:
-            List of AuditLogEntry objects
+            AuditLogEntry 对象列表
         """
         security_actions = [
             AuditAction.LOGIN,
@@ -485,15 +485,15 @@ class AuditLogger:
         end_time: Optional[datetime] = None
     ) -> Dict[str, Any]:
         """
-        Get audit log statistics
+        获取审计日志统计信息
         
         Args:
-            tenant_id: Tenant ID
-            start_time: Start time filter
-            end_time: End time filter
+            tenant_id: 租户 ID
+            start_time: 开始时间过滤器
+            end_time: 结束时间过滤器
             
         Returns:
-            Dictionary with statistics
+            包含统计信息的字典
         """
         try:
             query = """
@@ -539,16 +539,16 @@ class AuditLogger:
         format: str = "json"
     ) -> Optional[str]:
         """
-        Export audit logs for compliance
+        导出审计日志用于合规性检查
         
         Args:
-            tenant_id: Tenant ID
-            start_time: Start time
-            end_time: End time
-            format: Export format (json, csv)
+            tenant_id: 租户 ID
+            start_time: 开始时间
+            end_time: 结束时间
+            format: 导出格式（json, csv）
             
         Returns:
-            Export data as string, None if failed
+            成功返回导出数据字符串，失败返回 None
         """
         try:
             logs = await self.query_logs(

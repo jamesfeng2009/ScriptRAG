@@ -1,9 +1,9 @@
-"""Retrieval Cache - Cache expensive operations for better performance
+"""检索缓存 - 为提高性能缓存昂贵操作
 
-This module implements intelligent caching for:
-1. Query expansions (LLM-generated)
-2. Text embeddings (LLM-generated)
-3. Retrieval results (full pipeline)
+本模块实现智能缓存功能：
+1. 查询扩展缓存（LLM 生成）
+2. 文本嵌入缓存（LLM 生成）
+3. 检索结果缓存（完整流程）
 """
 
 import hashlib
@@ -18,108 +18,108 @@ logger = logging.getLogger(__name__)
 
 
 class CacheConfig(BaseModel):
-    """Cache configuration"""
+    """缓存配置"""
     enabled: bool = True
     
-    # Query expansion cache
+    # 查询扩展缓存
     query_expansion_enabled: bool = True
-    query_expansion_ttl: int = 3600  # 1 hour
+    query_expansion_ttl: int = 3600  # 1 小时
     query_expansion_max_size: int = 1000
     
-    # Embedding cache
+    # 嵌入缓存
     embedding_enabled: bool = True
-    embedding_ttl: int = 86400  # 24 hours
+    embedding_ttl: int = 86400  # 24 小时
     embedding_max_size: int = 10000
     
-    # Result cache
+    # 结果缓存
     result_enabled: bool = True
-    result_ttl: int = 300  # 5 minutes
+    result_ttl: int = 300  # 5 分钟
     result_max_size: int = 500
 
 
 class LRUCache:
     """
-    LRU (Least Recently Used) Cache with TTL support
+    LRU（最近最少使用）缓存，支持 TTL
     
-    Features:
-    - Automatic eviction of least recently used items
-    - Time-to-live (TTL) expiration
-    - Thread-safe operations
-    - Memory-efficient
+    功能：
+    - 自动淘汰最近最少使用的项
+    - TTL（生存时间）过期
+    - 线程安全操作
+    - 内存高效
     """
     
     def __init__(self, max_size: int, ttl: int):
         """
-        Initialize LRU cache
+        初始化 LRU 缓存
         
         Args:
-            max_size: Maximum number of items
-            ttl: Time-to-live in seconds
+            max_size: 最大项数
+            ttl: 生存时间（秒）
         """
         self.max_size = max_size
         self.ttl = ttl
         self.cache: OrderedDict = OrderedDict()
         self.timestamps: Dict[str, float] = {}
         
-        # Statistics
+        # 统计信息
         self.hits = 0
         self.misses = 0
         self.evictions = 0
     
     def get(self, key: str) -> Optional[Any]:
         """
-        Get value from cache
+        从缓存获取值
         
         Args:
-            key: Cache key
+            key: 缓存键
             
         Returns:
-            Cached value or None if not found/expired
+            缓存的值，未找到或已过期返回 None
         """
         if key not in self.cache:
             self.misses += 1
             return None
         
-        # Check TTL
+        # 检查 TTL
         if self._is_expired(key):
             self._remove(key)
             self.misses += 1
             return None
         
-        # Move to end (most recently used)
+        # 移到末尾（最近使用）
         self.cache.move_to_end(key)
         self.hits += 1
         return self.cache[key]
     
     def set(self, key: str, value: Any) -> None:
         """
-        Set value in cache
+        设置缓存值
         
         Args:
-            key: Cache key
-            value: Value to cache
+            key: 缓存键
+            value: 要缓存的值
         """
-        # Remove if exists (to update timestamp)
+        # 如果存在则移除（更新时间戳）
         if key in self.cache:
             self._remove(key)
         
-        # Evict if at capacity
+        # 如果达到容量则淘汰
         if len(self.cache) >= self.max_size:
             self._evict_oldest()
         
-        # Add new entry
+        # 添加新条目
         self.cache[key] = value
         self.timestamps[key] = time.time()
     
     def invalidate(self, key: str) -> bool:
         """
-        Invalidate a cache entry
+        使缓存条目失效
         
         Args:
-            key: Cache key
+            key: 缓存键
             
         Returns:
-            True if key was found and removed
+            如果找到并删除返回 True
         """
         if key in self.cache:
             self._remove(key)
@@ -127,17 +127,17 @@ class LRUCache:
         return False
     
     def clear(self) -> None:
-        """Clear all cache entries"""
+        """清除所有缓存条目"""
         self.cache.clear()
         self.timestamps.clear()
         logger.info("Cache cleared")
     
     def get_stats(self) -> Dict[str, Any]:
         """
-        Get cache statistics
+        获取缓存统计信息
         
         Returns:
-            Dictionary with cache stats
+            包含缓存统计信息的字典
         """
         total_requests = self.hits + self.misses
         hit_rate = self.hits / total_requests if total_requests > 0 else 0.0
@@ -153,7 +153,7 @@ class LRUCache:
         }
     
     def _is_expired(self, key: str) -> bool:
-        """Check if cache entry is expired"""
+        """检查缓存条目是否过期"""
         if key not in self.timestamps:
             return True
         
@@ -161,14 +161,14 @@ class LRUCache:
         return age > self.ttl
     
     def _remove(self, key: str) -> None:
-        """Remove entry from cache"""
+        """从缓存中移除条目"""
         if key in self.cache:
             del self.cache[key]
         if key in self.timestamps:
             del self.timestamps[key]
     
     def _evict_oldest(self) -> None:
-        """Evict least recently used entry"""
+        """淘汰最近最少使用的条目"""
         if self.cache:
             oldest_key = next(iter(self.cache))
             self._remove(oldest_key)
@@ -178,24 +178,24 @@ class LRUCache:
 
 class RetrievalCache:
     """
-    Retrieval cache manager
+    检索缓存管理器
     
-    Manages multiple caches for different retrieval operations:
-    - Query expansion cache
-    - Embedding cache
-    - Result cache
+    管理多个不同检索操作的缓存：
+    - 查询扩展缓存
+    - 嵌入缓存
+    - 结果缓存
     """
     
     def __init__(self, config: Optional[CacheConfig] = None):
         """
-        Initialize retrieval cache
+        初始化检索缓存
         
         Args:
-            config: Cache configuration
+            config: 缓存配置
         """
         self.config = config or CacheConfig()
         
-        # Initialize caches
+        # 初始化缓存
         self.query_expansion_cache = LRUCache(
             max_size=self.config.query_expansion_max_size,
             ttl=self.config.query_expansion_ttl
@@ -213,17 +213,17 @@ class RetrievalCache:
         
         logger.info("RetrievalCache initialized")
     
-    # Query Expansion Cache
+    # 查询扩展缓存
     
     def get_expanded_query(self, query: str) -> Optional[List[str]]:
         """
-        Get cached query expansions
+        获取缓存的查询扩展
         
         Args:
-            query: Original query
+            query: 原始查询
             
         Returns:
-            List of expanded queries or None if not cached
+            扩展查询列表，未缓存返回 None
         """
         if not self.config.enabled or not self.query_expansion_cache:
             return None
@@ -238,11 +238,11 @@ class RetrievalCache:
     
     def set_expanded_query(self, query: str, expansions: List[str]) -> None:
         """
-        Cache query expansions
+        缓存查询扩展
         
         Args:
-            query: Original query
-            expansions: List of expanded queries
+            query: 原始查询
+            expansions: 扩展查询列表
         """
         if not self.config.enabled or not self.query_expansion_cache:
             return
@@ -251,17 +251,17 @@ class RetrievalCache:
         self.query_expansion_cache.set(cache_key, expansions)
         logger.debug(f"Cached query expansion: {query[:50]}...")
     
-    # Embedding Cache
+    # 嵌入缓存
     
     def get_embedding(self, text: str) -> Optional[List[float]]:
         """
-        Get cached text embedding
+        获取缓存的文本嵌入
         
         Args:
-            text: Text to get embedding for
+            text: 要获取嵌入的文本
             
         Returns:
-            Embedding vector or None if not cached
+            嵌入向量，未缓存返回 None
         """
         if not self.config.enabled or not self.embedding_cache:
             return None
@@ -276,11 +276,11 @@ class RetrievalCache:
     
     def set_embedding(self, text: str, embedding: List[float]) -> None:
         """
-        Cache text embedding
+        缓存文本嵌入
         
         Args:
-            text: Text
-            embedding: Embedding vector
+            text: 文本
+            embedding: 嵌入向量
         """
         if not self.config.enabled or not self.embedding_cache:
             return
@@ -291,13 +291,13 @@ class RetrievalCache:
     
     def get_embeddings_batch(self, texts: List[str]) -> Tuple[List[Optional[List[float]]], List[int]]:
         """
-        Get cached embeddings for multiple texts
+        获取多个文本的缓存嵌入
         
         Args:
-            texts: List of texts
+            texts: 文本列表
             
         Returns:
-            Tuple of (embeddings list with None for cache misses, indices of cache misses)
+            元组（嵌入列表，未命中的为 None，未命中的索引）
         """
         embeddings = []
         miss_indices = []
@@ -312,28 +312,28 @@ class RetrievalCache:
     
     def set_embeddings_batch(self, texts: List[str], embeddings: List[List[float]]) -> None:
         """
-        Cache embeddings for multiple texts
+        缓存多个文本的嵌入
         
         Args:
-            texts: List of texts
-            embeddings: List of embedding vectors
+            texts: 文本列表
+            embeddings: 嵌入向量列表
         """
         for text, embedding in zip(texts, embeddings):
             self.set_embedding(text, embedding)
     
-    # Result Cache
+    # 结果缓存
     
     def get_results(self, workspace_id: str, query: str, config_hash: str) -> Optional[List[Any]]:
         """
-        Get cached retrieval results
+        获取缓存的检索结果
         
         Args:
-            workspace_id: Workspace ID
-            query: Query text
-            config_hash: Hash of retrieval configuration
+            workspace_id: 工作空间 ID
+            query: 查询文本
+            config_hash: 检索配置的哈希值
             
         Returns:
-            Cached results or None if not cached
+            缓存结果，未缓存返回 None
         """
         if not self.config.enabled or not self.result_cache:
             return None
@@ -354,13 +354,13 @@ class RetrievalCache:
         results: List[Any]
     ) -> None:
         """
-        Cache retrieval results
+        缓存检索结果
         
         Args:
-            workspace_id: Workspace ID
-            query: Query text
-            config_hash: Hash of retrieval configuration
-            results: Retrieval results
+            workspace_id: 工作空间 ID
+            query: 查询文本
+            config_hash: 检索配置的哈希值
+            results: 检索结果
         """
         if not self.config.enabled or not self.result_cache:
             return
@@ -369,22 +369,22 @@ class RetrievalCache:
         self.result_cache.set(cache_key, results)
         logger.debug(f"Cached results: {query[:50]}...")
     
-    # Cache Management
+    # 缓存管理
     
     def invalidate_workspace(self, workspace_id: str) -> int:
         """
-        Invalidate all cache entries for a workspace
+        使工作空间的所有缓存条目失效
         
         Args:
-            workspace_id: Workspace ID
+            workspace_id: 工作空间 ID
             
         Returns:
-            Number of entries invalidated
+            失效的条目数量
         """
         if not self.config.enabled or not self.result_cache:
             return 0
         
-        # Find and remove all entries with this workspace_id
+        # 查找并移除所有带有此 workspace_id 的条目
         count = 0
         keys_to_remove = []
         
@@ -400,7 +400,7 @@ class RetrievalCache:
         return count
     
     def clear_all(self) -> None:
-        """Clear all caches"""
+        """清除所有缓存"""
         if self.query_expansion_cache:
             self.query_expansion_cache.clear()
         if self.embedding_cache:
@@ -412,10 +412,10 @@ class RetrievalCache:
     
     def get_stats(self) -> Dict[str, Any]:
         """
-        Get statistics for all caches
+        获取所有缓存的统计信息
         
         Returns:
-            Dictionary with cache statistics
+            包含缓存统计信息的字典
         """
         stats = {
             'enabled': self.config.enabled,
@@ -435,28 +435,28 @@ class RetrievalCache:
         
         return stats
     
-    # Helper Methods
+    # 辅助方法
     
     def _hash_text(self, text: str) -> str:
-        """Generate hash for text"""
+        """生成文本的哈希值"""
         return hashlib.md5(text.encode('utf-8')).hexdigest()
     
     def _generate_result_key(self, workspace_id: str, query: str, config_hash: str) -> str:
-        """Generate cache key for results"""
+        """生成结果的缓存键"""
         query_hash = self._hash_text(query)
         return f"{workspace_id}:{query_hash}:{config_hash}"
     
     @staticmethod
     def generate_config_hash(config: Dict[str, Any]) -> str:
         """
-        Generate hash for configuration
+        生成配置的哈希值
         
         Args:
-            config: Configuration dictionary
+            config: 配置字典
             
         Returns:
-            Configuration hash
+            配置哈希值
         """
-        # Sort keys for consistent hashing
+        # 对键排序以确保哈希一致
         config_str = str(sorted(config.items()))
         return hashlib.md5(config_str.encode('utf-8')).hexdigest()[:8]

@@ -1,10 +1,10 @@
-"""Retrieval Monitor - Track performance and quality metrics
+"""检索监控器 - 跟踪性能和质量问题指标
 
-This module implements comprehensive monitoring for the retrieval system:
-1. Performance metrics (latency, throughput)
-2. Quality metrics (similarity, diversity)
-3. Cache metrics (hit rates, efficiency)
-4. Error tracking and alerting
+本模块为检索系统实现全面的监控：
+1. 性能指标（延迟、吞吐量）
+2. 质量指标（相似度、多样性）
+3. 缓存指标（命中率、效率）
+4. 错误跟踪和告警
 """
 
 import logging
@@ -20,98 +20,98 @@ logger = logging.getLogger(__name__)
 
 
 class MonitoringConfig(BaseModel):
-    """Monitoring configuration"""
+    """监控配置"""
     enabled: bool = True
     
-    # Metrics collection
+    # 指标收集
     metrics_enabled: bool = True
-    collection_interval: int = 60  # seconds
+    collection_interval: int = 60  # 秒
     retention_days: int = 30
-    max_samples: int = 10000  # Maximum samples to keep in memory
+    max_samples: int = 10000  # 内存中保留的最大样本数
     
-    # Quality tracking
+    # 质量跟踪
     quality_tracking_enabled: bool = True
     min_samples_for_alert: int = 10
     quality_alert_threshold: float = 0.7
     
-    # Alerts
+    # 告警
     alerts_enabled: bool = True
-    quality_degradation_threshold: float = 0.15  # 15% drop
-    error_rate_threshold: float = 0.05  # 5% errors
-    latency_p95_threshold: float = 1000  # 1 second
+    quality_degradation_threshold: float = 0.15  # 15% 下降
+    error_rate_threshold: float = 0.05  # 5% 错误
+    latency_p95_threshold: float = 1000  # 1 秒
 
 
 class MetricsCollector:
     """
-    Collects and aggregates performance metrics
+    收集和聚合性能指标
     
-    Tracks:
-    - Query latency (p50, p95, p99)
-    - Cache hit rates
-    - Error rates
-    - Throughput
+    跟踪：
+    - 查询延迟（p50, p95, p99）
+    - 缓存命中率
+    - 错误率
+    - 吞吐量
     """
     
     def __init__(self, max_samples: int = 10000):
         """
-        Initialize metrics collector
+        初始化指标收集器
         
         Args:
-            max_samples: Maximum number of samples to keep
+            max_samples: 要保留的最大样本数
         """
         self.max_samples = max_samples
         
-        # Time-series data (using deque for efficient FIFO)
+        # 时间序列数据（使用 deque 实现高效的 FIFO）
         self.query_latencies: deque = deque(maxlen=max_samples)
         self.query_timestamps: deque = deque(maxlen=max_samples)
         
-        # Cache metrics
+        # 缓存指标
         self.cache_hits = defaultdict(int)
         self.cache_misses = defaultdict(int)
         
-        # Error tracking
+        # 错误跟踪
         self.errors: deque = deque(maxlen=1000)
         self.error_counts = defaultdict(int)
         
-        # LLM call tracking
+        # LLM 调用跟踪
         self.llm_calls = 0
         self.llm_call_latencies: deque = deque(maxlen=max_samples)
     
     def record_query(self, latency: float) -> None:
         """
-        Record query execution
+        记录查询执行
         
         Args:
-            latency: Query latency in milliseconds
+            latency: 查询延迟（毫秒）
         """
         self.query_latencies.append(latency)
         self.query_timestamps.append(time.time())
     
     def record_cache_hit(self, cache_type: str) -> None:
         """
-        Record cache hit
+        记录缓存命中
         
         Args:
-            cache_type: Type of cache (query_expansion, embedding, result)
+            cache_type: 缓存类型（query_expansion, embedding, result）
         """
         self.cache_hits[cache_type] += 1
     
     def record_cache_miss(self, cache_type: str) -> None:
         """
-        Record cache miss
+        记录缓存未命中
         
         Args:
-            cache_type: Type of cache
+            cache_type: 缓存类型
         """
         self.cache_misses[cache_type] += 1
     
     def record_error(self, error_type: str, details: Dict[str, Any]) -> None:
         """
-        Record error occurrence
+        记录错误发生
         
         Args:
-            error_type: Type of error
-            details: Error details
+            error_type: 错误类型
+            details: 错误详情
         """
         self.errors.append({
             'type': error_type,
@@ -122,23 +122,23 @@ class MetricsCollector:
     
     def record_llm_call(self, latency: float) -> None:
         """
-        Record LLM API call
+        记录 LLM API 调用
         
         Args:
-            latency: Call latency in milliseconds
+            latency: 调用延迟（毫秒）
         """
         self.llm_calls += 1
         self.llm_call_latencies.append(latency)
     
     def get_latency_percentiles(self, time_window: Optional[int] = None) -> Dict[str, float]:
         """
-        Calculate latency percentiles
+        计算延迟百分位
         
         Args:
-            time_window: Time window in seconds (None for all data)
+            time_window: 时间窗口（秒）（None 表示所有数据）
             
         Returns:
-            Dictionary with p50, p95, p99 latencies
+            包含 p50, p95, p99 延迟的字典
         """
         latencies = self._get_recent_latencies(time_window)
         
@@ -154,10 +154,10 @@ class MetricsCollector:
     
     def get_cache_stats(self) -> Dict[str, Dict[str, Any]]:
         """
-        Get cache statistics
+        获取缓存统计
         
         Returns:
-            Dictionary with cache stats by type
+            按类型分类的缓存统计字典
         """
         stats = {}
         
@@ -178,13 +178,13 @@ class MetricsCollector:
     
     def get_error_stats(self, time_window: Optional[int] = None) -> Dict[str, Any]:
         """
-        Get error statistics
+        获取错误统计
         
         Args:
-            time_window: Time window in seconds
+            time_window: 时间窗口（秒）
             
         Returns:
-            Dictionary with error stats
+            包含错误统计的字典
         """
         recent_errors = self._get_recent_errors(time_window)
         
@@ -203,19 +203,19 @@ class MetricsCollector:
     
     def get_throughput(self, time_window: int = 60) -> float:
         """
-        Calculate queries per second
+        计算每秒查询数
         
         Args:
-            time_window: Time window in seconds
+            time_window: 时间窗口（秒）
             
         Returns:
-            Queries per second
+            每秒查询数
         """
         recent_queries = len(self._get_recent_latencies(time_window))
         return recent_queries / time_window if time_window > 0 else 0.0
     
     def _get_recent_latencies(self, time_window: Optional[int] = None) -> List[float]:
-        """Get latencies within time window"""
+        """获取时间窗口内的延迟"""
         if time_window is None:
             return list(self.query_latencies)
         
@@ -229,7 +229,7 @@ class MetricsCollector:
         return recent
     
     def _get_recent_errors(self, time_window: Optional[int] = None) -> List[Dict]:
-        """Get errors within time window"""
+        """获取时间窗口内的错误"""
         if time_window is None:
             return list(self.errors)
         
@@ -239,60 +239,60 @@ class MetricsCollector:
 
 class QualityTracker:
     """
-    Tracks retrieval quality metrics over time
+    跟踪检索质量指标随时间变化
     
-    Monitors:
-    - Average similarity scores
-    - Result diversity
-    - Marker distribution (deprecated, security, etc.)
+    监控：
+    - 平均相似度分数
+    - 结果多样性
+    - 标记分布（废弃、安全等）
     """
     
     def __init__(self, max_samples: int = 10000):
         """
-        Initialize quality tracker
+        初始化质量跟踪器
         
         Args:
-            max_samples: Maximum number of samples to keep
+            max_samples: 要保留的最大样本数
         """
         self.max_samples = max_samples
         
-        # Quality metrics
+        # 质量指标
         self.similarity_scores: deque = deque(maxlen=max_samples)
         self.diversity_scores: deque = deque(maxlen=max_samples)
         self.result_counts: deque = deque(maxlen=max_samples)
         
-        # Marker tracking
+        # 标记跟踪
         self.marker_counts = defaultdict(int)
         
-        # Timestamps
+        # 时间戳
         self.timestamps: deque = deque(maxlen=max_samples)
     
     def record_results(self, results: List[Any]) -> None:
         """
-        Record retrieval results for quality tracking
+        记录检索结果用于质量跟踪
         
         Args:
-            results: List of retrieval results
+            results: 检索结果列表
         """
         if not results:
             return
         
-        # Calculate average similarity
+        # 计算平均相似度
         similarities = [r.similarity for r in results if hasattr(r, 'similarity')]
         if similarities:
             avg_similarity = np.mean(similarities)
             self.similarity_scores.append(avg_similarity)
         
-        # Calculate diversity (simplified: unique file paths / total results)
+        # 计算多样性（简化：唯一文件路径 / 总结果数）
         file_paths = [r.file_path for r in results if hasattr(r, 'file_path')]
         if file_paths:
             diversity = len(set(file_paths)) / len(file_paths)
             self.diversity_scores.append(diversity)
         
-        # Track result count
+        # 跟踪结果数量
         self.result_counts.append(len(results))
         
-        # Track markers
+        # 跟踪标记
         for result in results:
             if hasattr(result, 'has_deprecated') and result.has_deprecated:
                 self.marker_counts['deprecated'] += 1
@@ -307,13 +307,13 @@ class QualityTracker:
     
     def get_quality_metrics(self, time_window: Optional[int] = None) -> Dict[str, Any]:
         """
-        Get quality metrics
+        获取质量指标
         
         Args:
-            time_window: Time window in seconds
+            time_window: 时间窗口（秒）
             
         Returns:
-            Dictionary with quality metrics
+            包含质量指标的字典
         """
         recent_similarities = self._get_recent_values(self.similarity_scores, time_window)
         recent_diversities = self._get_recent_values(self.diversity_scores, time_window)
@@ -331,26 +331,26 @@ class QualityTracker:
     
     def detect_quality_degradation(
         self,
-        baseline_window: int = 3600,  # 1 hour
-        current_window: int = 300,     # 5 minutes
-        threshold: float = 0.15        # 15% drop
+        baseline_window: int = 3600,  # 1 小时
+        current_window: int = 300,     # 5 分钟
+        threshold: float = 0.15        # 15% 下降
     ) -> Optional[Dict[str, Any]]:
         """
-        Detect quality degradation
+        检测质量下降
         
         Args:
-            baseline_window: Baseline time window in seconds
-            current_window: Current time window in seconds
-            threshold: Degradation threshold (0.15 = 15% drop)
+            baseline_window: 基线时间窗口（秒）
+            current_window: 当前时间窗口（秒）
+            threshold: 下降阈值（0.15 = 15% 下降）
             
         Returns:
-            Alert dictionary if degradation detected, None otherwise
+            如果检测到下降则返回告警字典，否则返回 None
         """
         baseline_metrics = self.get_quality_metrics(baseline_window)
         current_metrics = self.get_quality_metrics(current_window)
         
         if baseline_metrics['sample_count'] < 10 or current_metrics['sample_count'] < 5:
-            return None  # Not enough data
+            return None  # 数据不足
         
         baseline_similarity = baseline_metrics['avg_similarity']
         current_similarity = current_metrics['avg_similarity']
@@ -374,7 +374,7 @@ class QualityTracker:
         return None
     
     def _get_recent_values(self, values: deque, time_window: Optional[int] = None) -> List[float]:
-        """Get values within time window"""
+        """获取时间窗口内的值"""
         if time_window is None:
             return list(values)
         
@@ -390,21 +390,21 @@ class QualityTracker:
 
 class RetrievalMonitor:
     """
-    Main monitoring interface for retrieval system
+    检索系统的主要监控接口
     
-    Combines metrics collection, quality tracking, and alerting
+    整合指标收集、质量跟踪和告警
     """
     
     def __init__(self, config: Optional[MonitoringConfig] = None):
         """
-        Initialize retrieval monitor
+        初始化检索监控器
         
         Args:
-            config: Monitoring configuration
+            config: 监控配置
         """
         self.config = config or MonitoringConfig()
         
-        # Initialize components
+        # 初始化组件
         self.metrics_collector = MetricsCollector(
             max_samples=self.config.max_samples
         ) if self.config.metrics_enabled else None
@@ -413,7 +413,7 @@ class RetrievalMonitor:
             max_samples=self.config.max_samples
         ) if self.config.quality_tracking_enabled else None
         
-        # Alert history
+        # 告警历史
         self.alerts: deque = deque(maxlen=1000)
         
         logger.info("RetrievalMonitor initialized")
@@ -426,22 +426,22 @@ class RetrievalMonitor:
         cache_hits: Dict[str, bool] = None
     ) -> None:
         """
-        Record query execution
+        记录查询执行
         
         Args:
-            query: Query text
-            latency: Total latency in milliseconds
-            results: Retrieval results
-            cache_hits: Dictionary of cache hit/miss by type
+            query: 查询文本
+            latency: 总延迟（毫秒）
+            results: 检索结果
+            cache_hits: 按类型分类的缓存命中/未命中字典
         """
         if not self.config.enabled:
             return
         
-        # Record metrics
+        # 记录指标
         if self.metrics_collector:
             self.metrics_collector.record_query(latency)
             
-            # Record cache hits/misses
+            # 记录缓存命中/未命中
             if cache_hits:
                 for cache_type, hit in cache_hits.items():
                     if hit:
@@ -449,21 +449,21 @@ class RetrievalMonitor:
                     else:
                         self.metrics_collector.record_cache_miss(cache_type)
         
-        # Record quality
+        # 记录质量
         if self.quality_tracker:
             self.quality_tracker.record_results(results)
         
-        # Check for alerts
+        # 检查告警
         if self.config.alerts_enabled:
             self._check_alerts()
     
     def record_error(self, error_type: str, details: Dict[str, Any]) -> None:
         """
-        Record error occurrence
+        记录错误发生
         
         Args:
-            error_type: Type of error
-            details: Error details
+            error_type: 错误类型
+            details: 错误详情
         """
         if not self.config.enabled or not self.metrics_collector:
             return
@@ -473,10 +473,10 @@ class RetrievalMonitor:
     
     def record_llm_call(self, latency: float) -> None:
         """
-        Record LLM API call
+        记录 LLM API 调用
         
         Args:
-            latency: Call latency in milliseconds
+            latency: 调用延迟（毫秒）
         """
         if not self.config.enabled or not self.metrics_collector:
             return
@@ -485,13 +485,13 @@ class RetrievalMonitor:
     
     def get_metrics(self, time_window: Optional[int] = None) -> Dict[str, Any]:
         """
-        Get comprehensive metrics
+        获取综合指标
         
         Args:
-            time_window: Time window in seconds (None for all data)
+            time_window: 时间窗口（秒）（None 表示所有数据）
             
         Returns:
-            Dictionary with all metrics
+            包含所有指标的字典
         """
         metrics = {
             'enabled': self.config.enabled,
@@ -515,10 +515,10 @@ class RetrievalMonitor:
     
     def get_summary(self) -> Dict[str, Any]:
         """
-        Get monitoring summary
+        获取监控摘要
         
         Returns:
-            Summary dictionary
+            摘要字典
         """
         return {
             'status': 'healthy',
@@ -528,11 +528,11 @@ class RetrievalMonitor:
         }
     
     def _check_alerts(self) -> None:
-        """Check for alert conditions"""
+        """检查告警条件"""
         if not self.config.alerts_enabled:
             return
         
-        # Check quality degradation
+        # 检查质量下降
         if self.quality_tracker:
             alert = self.quality_tracker.detect_quality_degradation(
                 threshold=self.config.quality_degradation_threshold
@@ -540,9 +540,9 @@ class RetrievalMonitor:
             if alert:
                 self._trigger_alert(alert)
         
-        # Check error rate
+        # 检查错误率
         if self.metrics_collector:
-            error_stats = self.metrics_collector.get_error_stats(300)  # Last 5 minutes
+            error_stats = self.metrics_collector.get_error_stats(300)  # 最近 5 分钟
             if error_stats['error_rate'] > self.config.error_rate_threshold:
                 self._trigger_alert({
                     'type': 'high_error_rate',
@@ -552,9 +552,9 @@ class RetrievalMonitor:
                     'timestamp': datetime.now().isoformat()
                 })
         
-        # Check latency
+        # 检查延迟
         if self.metrics_collector:
-            latency = self.metrics_collector.get_latency_percentiles(300)  # Last 5 minutes
+            latency = self.metrics_collector.get_latency_percentiles(300)  # 最近 5 分钟
             if latency['p95'] > self.config.latency_p95_threshold:
                 self._trigger_alert({
                     'type': 'high_latency',
@@ -566,10 +566,10 @@ class RetrievalMonitor:
     
     def _trigger_alert(self, alert: Dict[str, Any]) -> None:
         """
-        Trigger an alert
+        触发告警
         
         Args:
-            alert: Alert dictionary
+            alert: 告警字典
         """
         self.alerts.append(alert)
         logger.warning(f"Alert triggered: {alert['type']} - {alert}")

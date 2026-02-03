@@ -1,1 +1,1 @@
-"""Domain Layer - Agents, Skill managers"""
+"""领域层 - 智能体、技能管理器"""

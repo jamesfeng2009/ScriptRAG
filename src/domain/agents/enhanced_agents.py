@@ -1,19 +1,18 @@
-"""Enhanced Multi-Agent System for RAG-Based Screenplay Generation
+"""增强型多智能体系统 - 基于 RAG 的剧本生成动态调整
 
-This module implements an advanced multi-agent system that can dynamically adjust
-screenplay direction based on RAG content analysis and skill content matching.
+本模块实现先进的多智能体系统，可根据 RAG 内容分析和技能内容匹配动态调整剧本方向。
 
-Architecture:
-    1. RAGContentAnalyzer - Analyzes retrieved content semantically
-    2. DynamicDirector - Makes direction adjustment decisions
-    3. SkillRecommender - Recommends skills based on content analysis
-    4. StructuredScreenplayWriter - Generates structured screenplay format
+架构：
+    1. RAGContentAnalyzer - 语义分析检索到的内容
+    2. DynamicDirector - 做出方向调整决策
+    3. SkillRecommender - 根据内容分析推荐技能
+    4. StructuredScreenplayWriter - 生成结构化剧本格式
 
-Key Features:
-    - Semantic analysis of RAG content for direction detection
-    - Dynamic skill switching based on content characteristics
-    - Structured screenplay output (scenes, characters, dialogue)
-    - Real-time direction adjustment during generation
+核心功能：
+    - RAG 内容的语义分析，用于方向检测
+    - 根据内容特征动态切换技能
+    - 结构化剧本输出（场景、人物、对话）
+    - 生成过程中的实时方向调整
 """
 
 import logging

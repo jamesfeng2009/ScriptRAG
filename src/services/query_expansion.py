@@ -1,7 +1,6 @@
-"""Query Expansion - Expand queries to improve recall
+"""查询扩展 - 扩展查询以提高召回率
 
-This module implements query expansion strategies to improve retrieval recall
-by generating related queries and extracting key terms.
+本模块实现查询扩展策略，通过生成相关查询和提取关键术语来提高检索召回率。
 """
 
 import logging

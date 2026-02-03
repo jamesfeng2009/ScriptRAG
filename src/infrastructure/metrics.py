@@ -1,6 +1,6 @@
-"""Prometheus Metrics Exporter
+"""Prometheus 指标导出器
 
-This module implements Prometheus metrics for monitoring the system.
+本模块实现系统监控的 Prometheus 指标。
 """
 
 import logging
@@ -12,115 +12,115 @@ from fastapi import Response
 logger = logging.getLogger(__name__)
 
 
-# ==================== Metrics ====================
+# ==================== 指标定义 ====================
 
-# Agent execution metrics
+# 智能体执行指标
 agent_executions_total = Counter(
     'agent_executions_total',
-    'Total number of agent executions',
+    '智能体执行总次数',
     ['agent_name', 'status']
 )
 
 agent_execution_duration_seconds = Histogram(
     'agent_execution_duration_seconds',
-    'Agent execution duration in seconds',
+    '智能体执行时长（秒）',
     ['agent_name'],
     buckets=[0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0]
 )
 
-# LLM call metrics
+# LLM 调用指标
 llm_calls_total = Counter(
     'llm_calls_total',
-    'Total number of LLM calls',
+    'LLM 调用总次数',
     ['provider', 'model', 'task_type', 'status']
 )
 
 llm_call_duration_seconds = Histogram(
     'llm_call_duration_seconds',
-    'LLM call duration in seconds',
+    'LLM 调用时长（秒）',
     ['provider', 'model'],
     buckets=[0.1, 0.5, 1.0, 2.0, 5.0, 10.0, 30.0]
 )
 
 llm_tokens_total = Counter(
     'llm_tokens_total',
-    'Total number of tokens used',
+    'Token 使用总量',
     ['provider', 'model', 'token_type']
 )
 
-# Retrieval metrics
+# 检索指标
 retrieval_operations_total = Counter(
     'retrieval_operations_total',
-    'Total number of retrieval operations',
+    '检索操作总次数',
     ['operation_type', 'status']
 )
 
 retrieval_duration_seconds = Histogram(
     'retrieval_duration_seconds',
-    'Retrieval operation duration in seconds',
+    '检索操作时长（秒）',
     ['operation_type'],
     buckets=[0.1, 0.5, 1.0, 2.0, 5.0, 10.0]
 )
 
 documents_retrieved_total = Counter(
     'documents_retrieved_total',
-    'Total number of documents retrieved',
+    '检索文档总数',
     ['workspace_id']
 )
 
-# Workflow metrics
+# 工作流指标
 workflow_executions_total = Counter(
     'workflow_executions_total',
-    'Total number of workflow executions',
+    '工作流执行总次数',
     ['status']
 )
 
 workflow_duration_seconds = Histogram(
     'workflow_duration_seconds',
-    'Workflow execution duration in seconds',
+    '工作流执行时长（秒）',
     buckets=[10.0, 30.0, 60.0, 120.0, 300.0, 600.0]
 )
 
 workflow_steps_total = Histogram(
     'workflow_steps_total',
-    'Total number of steps in workflow',
+    '工作流步骤总数',
     buckets=[1, 3, 5, 7, 10, 15, 20]
 )
 
 workflow_pivots_total = Counter(
     'workflow_pivots_total',
-    'Total number of pivots triggered',
+    '转向触发总次数',
     ['pivot_reason']
 )
 
 workflow_retries_total = Counter(
     'workflow_retries_total',
-    'Total number of retries',
+    '重试总次数',
     ['step_id']
 )
 
-# Error metrics
+# 错误指标
 errors_total = Counter(
     'errors_total',
-    'Total number of errors',
+    '错误总次数',
     ['component', 'error_type']
 )
 
-# System metrics
+# 系统指标
 active_tasks = Gauge(
     'active_tasks',
-    'Number of active tasks'
+    '当前活跃任务数'
 )
 
 task_queue_size = Gauge(
     'task_queue_size',
-    'Size of task queue'
+    '任务队列大小'
 )
 
-# System info
+# 系统信息
 system_info = Info(
     'system',
-    'System information'
+    '系统信息'
 )
 
 

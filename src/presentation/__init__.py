@@ -1,1 +1,1 @@
-"""Presentation Layer - CLI, API interfaces"""
+"""Presentation Layer - API interfaces"""

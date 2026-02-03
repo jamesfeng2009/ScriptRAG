@@ -1,7 +1,6 @@
-"""Prompt Manager - Manages prompt configurations for skills
+"""提示词管理器 - 管理技能的提示词配置
 
-This module provides a centralized interface for managing prompt configurations
-loaded from the skills configuration file.
+本模块提供集中式接口，用于管理从技能配置文件加载的提示词配置。
 """
 
 import logging
@@ -16,13 +15,13 @@ logger = logging.getLogger(__name__)
 
 class PromptManager:
     """
-    Prompt Manager
+    提示词管理器
     
-    Manages prompt configurations for all skills, providing:
-    - Loading prompts from configuration
-    - Formatting prompts with context
-    - Hot-reload support
-    - Fallback to default prompts
+    管理所有技能的提示词配置，提供：
+    - 从配置加载提示词
+    - 使用上下文格式化提示词
+    - 热重载支持
+    - 回退到默认提示词
     """
     
     def __init__(
@@ -31,11 +30,11 @@ class PromptManager:
         enable_hot_reload: bool = False
     ):
         """
-        Initialize Prompt Manager
+        初始化提示词管理器
         
         Args:
-            config_path: Path to skills configuration file
-            enable_hot_reload: Whether to enable hot-reloading
+            config_path: 技能配置文件的路径
+            enable_hot_reload: 是否启用热重载
         """
         self.config_path = config_path or "config/skills.yaml"
         self._prompt_configs: Dict[str, PromptConfig] = {}
@@ -50,7 +49,7 @@ class PromptManager:
             self.enable_hot_reload()
     
     def _load_prompts(self):
-        """Load prompt configurations from file"""
+        """从文件加载提示词配置"""
         try:
             if not Path(self.config_path).exists():
                 logger.warning(f"Config file not found: {self.config_path}, using defaults")
@@ -67,13 +66,13 @@ class PromptManager:
     
     def get_prompt_config(self, skill_name: str) -> Optional[PromptConfig]:
         """
-        Get prompt configuration for a skill
+        获取技能的提示词配置
         
         Args:
-            skill_name: Name of the skill
+            skill_name: 技能名称
             
         Returns:
-            PromptConfig if found, None otherwise
+            找到返回 PromptConfig，否则返回 None
         """
         return self._prompt_configs.get(skill_name)
     
@@ -121,26 +120,26 @@ class PromptManager:
     
     def get_temperature(self, skill_name: str) -> float:
         """
-        Get temperature setting for a skill
+        获取技能的 temperature 设置
         
         Args:
-            skill_name: Name of the skill
+            skill_name: 技能名称
             
         Returns:
-            Temperature value (default: 0.7)
+            Temperature 值（默认：0.7）
         """
         prompt_config = self.get_prompt_config(skill_name)
         return prompt_config.temperature if prompt_config else 0.7
     
     def get_max_tokens(self, skill_name: str) -> int:
         """
-        Get max_tokens setting for a skill
+        获取技能的 max_tokens 设置
         
         Args:
-            skill_name: Name of the skill
+            skill_name: 技能名称
             
         Returns:
-            Max tokens value (default: 2000)
+            Max tokens 值（默认：2000）
         """
         prompt_config = self.get_prompt_config(skill_name)
         return prompt_config.max_tokens if prompt_config else 2000
@@ -179,7 +178,7 @@ class PromptManager:
         self._load_prompts()
     
     def enable_hot_reload(self):
-        """Enable hot-reloading of prompt configurations"""
+        """启用提示词配置的热重载"""
         if self._hot_reload_enabled:
             logger.warning("Hot-reload already enabled")
             return
@@ -196,7 +195,7 @@ class PromptManager:
             logger.error(f"Failed to enable hot-reload: {str(e)}")
     
     def disable_hot_reload(self):
-        """Disable hot-reloading of prompt configurations"""
+        """禁用提示词配置的热重载"""
         if self._loader is not None:
             self._loader.stop_watching()
             self._loader = None
@@ -215,13 +214,13 @@ class PromptManager:
         self._load_prompts()
     
     def is_hot_reload_enabled(self) -> bool:
-        """Check if hot-reload is enabled"""
+        """检查是否启用了热重载"""
         return self._hot_reload_enabled
     
     def list_available_skills(self) -> list:
-        """Get list of skills with prompt configurations"""
+        """获取有提示词配置的技能列表"""
         return list(self._prompt_configs.keys())
 
 
-# Create default prompt manager instance
+# 创建默认提示词管理器实例
 default_prompt_manager = PromptManager()

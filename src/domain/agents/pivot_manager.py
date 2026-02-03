@@ -1,10 +1,10 @@
-"""Pivot Manager Agent - Corrects outline when conflicts occur
+"""转向管理器智能体 - 在发生冲突时修正大纲
 
-This module implements the PivotManager agent, which is responsible for:
-1. Handling pivot triggers from the Director
-2. Modifying outline steps based on pivot reasons
-3. Applying skill switches with compatibility constraints
-4. Updating retry counters and step status
+本模块实现转向管理器智能体，负责：
+1. 处理来自导演的转向触发
+2. 根据转向原因修改大纲步骤
+3. 在兼容性约束下应用技能切换
+4. 更新重试计数器和步骤状态
 """
 
 from typing import Optional, List
@@ -22,24 +22,23 @@ def constrain_skill_switch(
     desired_skill: str,
     global_tone: Optional[str] = None
 ) -> str:
-    """Constrain skill switch based on compatibility rules
+    """基于兼容性规则约束技能切换
     
-    This function ensures that skill switches respect compatibility constraints.
-    If the desired skill is not directly compatible with the current skill,
-    it finds the closest compatible skill based on global tone preference.
+    本函数确保技能切换遵守兼容性约束。
+    如果所需技能与当前技能不直接兼容，
+    它会根据全局语气偏好找到最接近的兼容技能。
     
     Args:
-        current_skill: Current active skill name
-        desired_skill: Desired target skill name
-        global_tone: Optional global tone preference for selection
+        current_skill: 当前活动技能名称
+        desired_skill: 期望的目标技能名称
+        global_tone: 可选的全局语气偏好用于选择
         
     Returns:
-        Name of the skill to switch to (may be different from desired_skill)
+        要切换到的技能名称（可能与 desired_skill 不同）
         
     Raises:
-        ValueError: If skill names are invalid
-        
-    验证需求: 11.2, 11.4
+        ValueError: 技能名称无效
+    
     """
     if current_skill not in SKILLS:
         raise ValueError(f"Invalid current skill: {current_skill}")
@@ -77,23 +76,23 @@ def constrain_skill_switch(
 
 
 def handle_pivot(state: SharedState) -> SharedState:
-    """Handle pivot trigger and modify outline accordingly
+    """处理转向触发并相应修改大纲
     
-    This function is called when the Director triggers a pivot. It:
-    1. Analyzes the pivot reason
-    2. Modifies the current and subsequent outline steps
-    3. Applies skill switches with compatibility constraints
-    4. Updates retry counters and step status
-    5. Clears retrieved documents to trigger re-retrieval
+    本函数在导演触发转向时调用。它：
+    1. 分析转向原因
+    2. 修改当前和后续的大纲步骤
+    3. 在兼容性约束下应用技能切换
+    4. 更新重试计数器和步骤状态
+    5. 清除检索到的文档以触发重新检索
     
     Args:
-        state: Current shared state with pivot_triggered=True
+        state: 当前共享状态，pivot_triggered=True
         
     Returns:
-        Updated shared state with modified outline
+        更新后的大纲已修改的共享状态
         
     Raises:
-        ValueError: If pivot is triggered without a reason
+        ValueError: 如果触发转向但没有原因
     """
     if not state.pivot_triggered:
         logger.warning("handle_pivot called but pivot_triggered is False")
@@ -244,18 +243,18 @@ def _handle_complexity_pivot(
     state: SharedState,
     current_step: OutlineStep
 ) -> SharedState:
-    """Handle pivot triggered by complexity
+    """处理由复杂度触发的转向
     
-    When content is too complex:
-    1. Switch to visualization_analogy skill (with compatibility constraints)
-    2. Modify current step to emphasize simplification
+    当内容过于复杂时：
+    1. 切换到 visualization_analogy 技能（带兼容性约束）
+    2. 修改当前步骤以强调简化
     
     Args:
-        state: Current shared state
-        current_step: Current outline step
+        state: 当前共享状态
+        current_step: 当前大纲步骤
         
     Returns:
-        Updated shared state
+        更新后的共享状态
     """
     logger.info(f"Handling complexity trigger for step {current_step.step_id}")
     
@@ -331,18 +330,18 @@ def _handle_missing_info_pivot(
     state: SharedState,
     current_step: OutlineStep
 ) -> SharedState:
-    """Handle pivot triggered by missing information
+    """处理由信息缺失触发的转向
     
-    When information is insufficient:
-    1. Switch to research_mode skill (with compatibility constraints)
-    2. Modify current step to acknowledge information gap
+    当信息不足时：
+    1. 切换到 research_mode 技能（带兼容性约束）
+    2. 修改当前步骤以承认信息缺口
     
     Args:
-        state: Current shared state
-        current_step: Current outline step
+        state: 当前共享状态
+        current_step: 当前大纲步骤
         
     Returns:
-        Updated shared state
+        更新后的共享状态
     """
     logger.info(f"Handling missing information for step {current_step.step_id}")
     

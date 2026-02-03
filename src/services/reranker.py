@@ -1,7 +1,6 @@
-"""Reranker - Rerank retrieval results for better precision
+"""重排序器 - 重排序检索结果以提高精确度
 
-This module implements various reranking strategies to improve the quality
-of top-K retrieval results.
+本模块实现各种重排序策略，以提高 top-K 检索结果的质量。
 """
 
 import logging

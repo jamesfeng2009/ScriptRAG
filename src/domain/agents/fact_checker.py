@@ -1,11 +1,11 @@
-"""Fact Checker Agent - Verifies generated content against retrieved sources
+"""事实检查智能体 - 根据检索到的来源验证生成的内容
 
-The Fact Checker agent is responsible for:
-1. Verifying screenplay fragments against retrieved documents
-2. Detecting hallucinations (non-existent code, functions, parameters)
-3. Validating that all statements are grounded in sources
-4. Triggering regeneration when hallucinations are detected
-5. Logging verification results
+本模块实现事实检查智能体，负责：
+1. 根据检索到的文档验证剧本片段
+2. 检测幻觉（不存在的代码、函数、参数）
+3. 验证所有陈述是否基于来源
+4. 检测到幻觉时触发重新生成
+5. 记录验证结果
 """
 
 import logging

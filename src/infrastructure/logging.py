@@ -10,7 +10,7 @@ from datetime import datetime
 
 
 class StructuredFormatter(logging.Formatter):
-    """JSON formatter for structured logging"""
+    """用于结构化日志的 JSON 格式化器"""
     
     def format(self, record: logging.LogRecord) -> str:
         """Format log record as JSON"""
@@ -41,16 +41,16 @@ class StructuredFormatter(logging.Formatter):
 
 class AgentLogger:
     """
-    Enhanced logger for agent operations with structured logging support.
+    支持结构化日志的增强型智能体操作日志记录器。
     
-    Provides methods for logging:
-    - Agent transitions
-    - Pivot triggers
-    - RAG retrieval results
-    - Skill switches
-    - Fact checker results
-    - Retry attempts
-    - Errors with stack traces
+    提供以下日志记录方法：
+    - 智能体转换
+    - 转向触发
+    - RAG 检索结果
+    - 技能切换
+    - 事实检查结果
+    - 重试尝试
+    - 带堆栈跟踪的错误
     """
     
     def __init__(self, logger: logging.Logger):
@@ -226,20 +226,20 @@ class AgentLogger:
         )
 
 
-def setup_logging(
-    level: str = "INFO",
+def configure_logging(
+    level: int = logging.INFO,
     log_file: Optional[str] = None,
     format_string: Optional[str] = None,
     use_json: bool = False
-) -> None:
+):
     """
-    Configure structured logging for the application.
+    配置应用程序的结构化日志。
     
     Args:
-        level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
-        log_file: Optional file path for log output
-        format_string: Optional custom format string
-        use_json: Use JSON structured logging format
+        level: 日志级别（DEBUG, INFO, WARNING, ERROR, CRITICAL）
+        log_file: 日志输出的可选文件路径
+        format_string: 可选的自定义格式字符串
+        use_json: 使用 JSON 结构化日志格式
     """
     if format_string is None:
         format_string = (
@@ -280,27 +280,14 @@ def setup_logging(
     logging.getLogger("asyncpg").setLevel(logging.WARNING)
 
 
-def get_logger(name: str) -> logging.Logger:
-    """
-    Get a logger instance for a specific module.
-    
-    Args:
-        name: Logger name (typically __name__)
-    
-    Returns:
-        Logger instance
-    """
-    return logging.getLogger(name)
-
-
 def get_agent_logger(name: str) -> AgentLogger:
     """
-    Get an enhanced agent logger instance.
+    获取增强型智能体日志记录器实例
     
     Args:
-        name: Logger name (typically __name__)
+        name: 日志记录器名称（通常使用 __name__）
     
     Returns:
-        AgentLogger instance
+        AgentLogger 实例
     """
     return AgentLogger(logging.getLogger(name))

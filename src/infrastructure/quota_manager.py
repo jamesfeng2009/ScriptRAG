@@ -1,10 +1,10 @@
-"""Quota Management - Resource quota control and enforcement
+"""配额管理 - 资源配额控制与执行
 
-This module provides quota management functionality:
-1. API call rate limiting
-2. Resource quota tracking
-3. Quota enforcement
-4. Quota alerts and notifications
+本模块提供配额管理功能：
+1. API 调用速率限制
+2. 资源配额跟踪
+3. 配额执行
+4. 配额警告和通知
 """
 
 import logging
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 class ResourceType(str, Enum):
-    """Resource types for quota tracking"""
+    """配额跟踪的资源类型"""
     API_CALL = "api_call"
     LLM_CALL = "llm_call"
     EMBEDDING_GENERATION = "embedding_generation"
@@ -28,14 +28,14 @@ class ResourceType(str, Enum):
 
 
 class QuotaPeriod(str, Enum):
-    """Quota period types"""
+    """配额周期类型"""
     HOURLY = "hourly"
     DAILY = "daily"
     MONTHLY = "monthly"
 
 
 class QuotaLimit:
-    """Quota limit configuration"""
+    """配额限制配置"""
     
     def __init__(
         self,
@@ -88,38 +88,38 @@ DEFAULT_QUOTA_LIMITS = {
 
 
 class QuotaExceededException(Exception):
-    """Exception raised when quota is exceeded"""
+    """超出配额异常"""
     
     def __init__(self, resource_type: ResourceType, current: int, limit: int):
         self.resource_type = resource_type
         self.current = current
         self.limit = limit
         super().__init__(
-            f"Quota exceeded for {resource_type}: {current}/{limit}"
+            f"配额超出 {resource_type}: {current}/{limit}"
         )
 
 
 class QuotaManager:
-    """Service for quota management and enforcement"""
+    """配额管理和执行服务"""
     
     def __init__(self, db_pool: asyncpg.Pool):
         """
-        Initialize quota manager
+        初始化配额管理器
         
         Args:
-            db_pool: AsyncPG connection pool
+            db_pool: AsyncPG 连接池
         """
         self.db_pool = db_pool
     
     def _get_period_start(self, period: QuotaPeriod) -> datetime:
         """
-        Get the start time for the current period
+        获取当前周期的开始时间
         
         Args:
-            period: Quota period
+            period: 配额周期
             
         Returns:
-            Start datetime for the period
+            周期的开始时间
         """
         now = datetime.utcnow()
         
@@ -134,14 +134,14 @@ class QuotaManager:
     
     async def get_quota_limits(self, tenant_id: str, plan: str) -> Dict[ResourceType, QuotaLimit]:
         """
-        Get quota limits for a tenant
+        获取租户的配额限制
         
         Args:
-            tenant_id: Tenant ID
-            plan: Subscription plan
+            tenant_id: 租户 ID
+            plan: 订阅计划
             
         Returns:
-            Dictionary of resource type to quota limit
+            资源类型到配额限制的字典
         """
         # Get default limits for plan
         limits = DEFAULT_QUOTA_LIMITS.get(plan, DEFAULT_QUOTA_LIMITS["free"]).copy()
@@ -183,15 +183,15 @@ class QuotaManager:
         period: QuotaPeriod
     ) -> int:
         """
-        Get current usage for a resource type
+        获取资源类型的当前使用量
         
         Args:
-            tenant_id: Tenant ID
-            resource_type: Resource type
-            period: Quota period
+            tenant_id: 租户 ID
+            resource_type: 资源类型
+            period: 配额周期
             
         Returns:
-            Current usage count
+            当前使用量
         """
         try:
             period_start = self._get_period_start(period)
@@ -212,7 +212,7 @@ class QuotaManager:
                 
                 return int(row['total_usage']) if row else 0
         except Exception as e:
-            logger.error(f"Failed to get current usage: {str(e)}")
+            logger.error(f"获取当前使用量失败: {str(e)}")
             return 0
     
     async def increment_usage(
@@ -222,12 +222,12 @@ class QuotaManager:
         count: int = 1
     ) -> None:
         """
-        Increment usage for a resource type
+        增加资源类型的使用量
         
         Args:
-            tenant_id: Tenant ID
-            resource_type: Resource type
-            count: Usage count to increment
+            tenant_id: 租户 ID
+            resource_type: 资源类型
+            count: 要增加的使用量
         """
         try:
             now = datetime.utcnow()
@@ -256,38 +256,38 @@ class QuotaManager:
         count: int = 1
     ) -> bool:
         """
-        Check if quota allows the requested usage
+        检查配额是否允许请求的使用量
         
         Args:
-            tenant_id: Tenant ID
-            resource_type: Resource type
-            plan: Subscription plan
-            count: Requested usage count
+            tenant_id: 租户 ID
+            resource_type: 资源类型
+            plan: 订阅计划
+            count: 请求的使用量
             
         Returns:
-            True if quota allows, False otherwise
+            配额允许返回 True，否则返回 False
             
         Raises:
-            QuotaExceededException: If quota is exceeded
+            QuotaExceededException: 配额超出时抛出
         """
         try:
-            # Get quota limits
+            # 获取配额限制
             limits = await self.get_quota_limits(tenant_id, plan)
             
             if resource_type not in limits:
-                # No limit defined, allow
+                # 未定义限制，允许
                 return True
             
             quota_limit = limits[resource_type]
             
-            # Get current usage
+            # 获取当前使用量
             current_usage = await self.get_current_usage(
                 tenant_id,
                 resource_type,
                 quota_limit.period
             )
             
-            # Check if adding count would exceed limit
+            # 检查增加使用量是否会超出限制
             if current_usage + count > quota_limit.limit:
                 raise QuotaExceededException(
                     resource_type,
@@ -295,7 +295,7 @@ class QuotaManager:
                     quota_limit.limit
                 )
             
-            # Check if approaching alert threshold
+            # 检查是否接近警告阈值
             usage_percentage = (current_usage + count) / quota_limit.limit
             if usage_percentage >= quota_limit.alert_threshold:
                 await self._send_quota_alert(
@@ -310,8 +310,8 @@ class QuotaManager:
         except QuotaExceededException:
             raise
         except Exception as e:
-            logger.error(f"Failed to check quota: {str(e)}")
-            # On error, allow the operation (fail open)
+            logger.error(f"检查配额失败: {str(e)}")
+            # 出错时允许操作（故障开放）
             return True
     
     async def enforce_quota(
@@ -322,21 +322,21 @@ class QuotaManager:
         count: int = 1
     ) -> None:
         """
-        Enforce quota and increment usage if allowed
+        执行配额检查并在允许时增加使用量
         
         Args:
-            tenant_id: Tenant ID
-            resource_type: Resource type
-            plan: Subscription plan
-            count: Usage count
+            tenant_id: 租户 ID
+            resource_type: 资源类型
+            plan: 订阅计划
+            count: 使用量
             
         Raises:
-            QuotaExceededException: If quota is exceeded
+            QuotaExceededException: 配额超出时抛出
         """
-        # Check quota
+        # 检查配额
         await self.check_quota(tenant_id, resource_type, plan, count)
         
-        # Increment usage
+        # 增加使用量
         await self.increment_usage(tenant_id, resource_type, count)
     
     async def _send_quota_alert(
@@ -348,27 +348,27 @@ class QuotaManager:
         usage_percentage: float
     ) -> None:
         """
-        Send quota alert when threshold is reached
+        在达到阈值时发送配额警告
         
         Args:
-            tenant_id: Tenant ID
-            resource_type: Resource type
-            current_usage: Current usage
-            limit: Quota limit
-            usage_percentage: Usage percentage
+            tenant_id: 租户 ID
+            resource_type: 资源类型
+            current_usage: 当前使用量
+            limit: 配额限制
+            usage_percentage: 使用百分比
         """
         try:
             logger.warning(
-                f"Quota alert for tenant {tenant_id}: "
-                f"{resource_type} usage at {usage_percentage:.1%} "
+                f"租户 {tenant_id} 配额警告: "
+                f"{resource_type} 使用量达到 {usage_percentage:.1%} "
                 f"({current_usage}/{limit})"
             )
             
-            # TODO: Implement actual alert mechanism (email, webhook, etc.)
-            # For now, just log the alert
+            # TODO: 实现实际的警告机制（邮件、webhook 等）
+            # 目前仅记录警告
             
         except Exception as e:
-            logger.error(f"Failed to send quota alert: {str(e)}")
+            logger.error(f"发送配额警告失败: {str(e)}")
     
     async def get_usage_stats(
         self,
@@ -377,15 +377,15 @@ class QuotaManager:
         end_time: Optional[datetime] = None
     ) -> Dict[str, Any]:
         """
-        Get usage statistics for a tenant
+        获取租户的使用统计
         
         Args:
-            tenant_id: Tenant ID
-            start_time: Start time filter
-            end_time: End time filter
+            tenant_id: 租户 ID
+            start_time: 开始时间过滤
+            end_time: 结束时间过滤
             
         Returns:
-            Dictionary with usage statistics
+            包含使用统计的字典
         """
         try:
             query = """

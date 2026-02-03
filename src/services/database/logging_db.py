@@ -1,9 +1,9 @@
-"""Database Logging Service - Persists logs to PostgreSQL
+"""数据库日志服务 - 将日志持久化到 PostgreSQL
 
-This module provides functionality to persist logs to the database:
-1. LLM call logs (llm_call_logs table)
-2. Execution logs (execution_logs table)
-3. Audit logs (audit_logs table)
+本模块提供将日志持久化到数据库的功能：
+1. LLM 调用日志（llm_call_logs 表）
+2. 执行日志（execution_logs 表）
+3. 审计日志（audit_logs 表）
 """
 
 import logging
@@ -16,14 +16,14 @@ logger = logging.getLogger(__name__)
 
 
 class LoggingDBService:
-    """Service for persisting logs to PostgreSQL"""
+    """用于将日志持久化到 PostgreSQL 的服务"""
     
     def __init__(self, db_pool: asyncpg.Pool):
         """
-        Initialize logging database service
+        初始化日志数据库服务
         
         Args:
-            db_pool: AsyncPG connection pool
+            db_pool: AsyncPG 连接池
         """
         self.db_pool = db_pool
     
@@ -39,17 +39,17 @@ class LoggingDBService:
         error_message: Optional[str] = None
     ) -> None:
         """
-        Persist LLM call log to database
+        将 LLM 调用日志持久化到数据库
         
         Args:
-            session_id: Session ID (optional)
-            provider: LLM provider name
-            model: Model name
-            task_type: Task type (high_performance/lightweight/embedding)
-            status: Call status (success/failed)
-            response_time_ms: Response time in milliseconds
-            token_count: Number of tokens used
-            error_message: Error message if failed
+            session_id: 会话 ID（可选）
+            provider: LLM 提供商名称
+            model: 模型名称
+            task_type: 任务类型（high_performance/lightweight/embedding）
+            status: 调用状态（success/failed）
+            response_time_ms: 响应时间（毫秒）
+            token_count: 使用的 token 数量
+            error_message: 错误消息（如果失败）
         """
         try:
             async with self.db_pool.acquire() as conn:
@@ -72,7 +72,7 @@ class LoggingDBService:
                 )
         except Exception as e:
             logger.error(f"Failed to persist LLM call log: {str(e)}")
-            # Don't raise - logging failures shouldn't break the application
+            # 不要抛出异常 - 日志失败不应中断应用程序
     
     async def log_execution(
         self,
@@ -82,13 +82,13 @@ class LoggingDBService:
         details: Optional[Dict[str, Any]] = None
     ) -> None:
         """
-        Persist execution log to database
+        将执行日志持久化到数据库
         
         Args:
-            session_id: Session ID
-            agent_name: Name of the agent
-            action: Action performed
-            details: Additional details (JSON)
+            session_id: 会话 ID
+            agent_name: 智能体名称
+            action: 执行的操作
+            details: 附加详情（JSON）
         """
         try:
             async with self.db_pool.acquire() as conn:
@@ -119,17 +119,17 @@ class LoggingDBService:
         user_agent: Optional[str] = None
     ) -> None:
         """
-        Persist audit log to database
+        将审计日志持久化到数据库
         
         Args:
-            tenant_id: Tenant ID
-            user_id: User ID (optional)
-            action: Action performed
-            resource_type: Type of resource
-            resource_id: Resource ID (optional)
-            details: Additional details (JSON)
-            ip_address: IP address
-            user_agent: User agent string
+            tenant_id: 租户 ID
+            user_id: 用户 ID（可选）
+            action: 执行的操作
+            resource_type: 资源类型
+            resource_id: 资源 ID（可选）
+            details: 附加详情（JSON）
+            ip_address: IP 地址
+            user_agent: 用户代理字符串
         """
         try:
             async with self.db_pool.acquire() as conn:
@@ -161,16 +161,16 @@ class LoggingDBService:
         end_time: Optional[datetime] = None
     ) -> Dict[str, Any]:
         """
-        Get LLM call statistics
+        获取 LLM 调用统计
         
         Args:
-            session_id: Filter by session ID
-            provider: Filter by provider
-            start_time: Start time filter
-            end_time: End time filter
+            session_id: 按会话 ID 过滤
+            provider: 按提供商过滤
+            start_time: 开始时间过滤
+            end_time: 结束时间过滤
             
         Returns:
-            Dictionary with statistics
+            包含统计信息的字典
         """
         try:
             async with self.db_pool.acquire() as conn:

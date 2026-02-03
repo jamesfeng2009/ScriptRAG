@@ -1,14 +1,14 @@
-"""Service Layer - LLM adapters, database services, parsing services
+"""服务层 - LLM 适配器、数据库服务、解析服务
 
-Retrieval Enhancement Modules:
-- query_rewriter: Query intent disambiguation and complex query decomposition
-- query_expansion: Query expansion using LLM
-- hybrid_search: Hybrid retrieval with vector and BM25
-- cross_encoder_reranker: Cross-Encoder and MMR reranking
-- adaptive_threshold: Adaptive threshold and cliff edge cutoff
-- enhanced_parent_retriever: Small-to-Big retrieval with context merging
-- graprag_engine: GraphRAG multi-hop retrieval engine
-- retrieval_enhancement: Unified enhancement pipeline
+检索增强模块：
+- query_rewriter: 查询意图消歧和复杂查询分解
+- query_expansion: 使用 LLM 进行查询扩展
+- hybrid_search: 混合检索（向量 + BM25）
+- cross_encoder_reranker: Cross-Encoder 和 MMR 重排序
+- adaptive_threshold: 自适应阈值和悬崖边缘截止
+- enhanced_parent_retriever: 小到大的检索与上下文合并
+- graprag_engine: GraphRAG 多跳检索引擎
+- retrieval_enhancement: 统一的增强流水线
 """
 
 from .llm.service import LLMService
@@ -81,7 +81,7 @@ __all__ = [
     # LLM
     "LLMService",
     
-    # Query Processing
+    # 查询处理
     "QueryRewriter",
     "QueryContext",
     "RewriteResult",
@@ -89,27 +89,27 @@ __all__ = [
     "QueryExpansion",
     "QueryOptimizer",
     
-    # Hybrid Search
+    # 混合搜索
     "HybridSearchService",
     "HybridSearchConfig",
     "RRFEngine",
     "BM25KeywordSearch",
     "FusionResult",
     
-    # Reranking
+    # 重排序
     "CrossEncoderReranker",
     "MMMReranker",
     "RerankingPipeline",
     "RerankConfig",
     "RerankResult",
     
-    # Adaptive Threshold
+    # 自适应阈值
     "AdaptiveThresholdStrategy",
     "AdaptiveThresholdConfig",
     "ThresholdAnalysisResult",
     "CliffEdgeCutoff",
     
-    # Parent Retrieval
+    # 父文档检索
     "EnhancedParentDocumentRetriever",
     "SmallToBigRetrievalPipeline",
     "MergedContext",
@@ -125,16 +125,16 @@ __all__ = [
     "NodeType",
     "RelationType",
     
-    # Enhancement Pipeline
+    # 增强流水线
     "RetrievalEnhancementPipeline",
     "RetrievalPipelineBuilder",
     "EnhancementConfig",
     "EnhancementResult",
     
-    # Main Service
+    # 主服务
     "RetrievalService",
     
-    # Common Types
+    # 通用类型
     "RetrievalResult",
     "RetrievalStrategy",
     "ResultMerger",

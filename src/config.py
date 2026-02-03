@@ -78,6 +78,34 @@ class AppConfig:
         )
 
 
+@dataclass
+class RedisConfig:
+    """Redis 缓存配置"""
+    host: str
+    port: int
+    password: Optional[str]
+    db: int
+    max_connections: int = 50
+    
+    @classmethod
+    def from_env(cls) -> "RedisConfig":
+        """从环境变量加载 Redis 配置"""
+        return cls(
+            host=os.getenv('REDIS_HOST', 'localhost'),
+            port=int(os.getenv('REDIS_PORT', 6379)),
+            password=os.getenv('REDIS_PASSWORD') or None,
+            db=int(os.getenv('REDIS_DB', 0)),
+            max_connections=int(os.getenv('REDIS_MAX_CONNECTIONS', 50))
+        )
+    
+    @property
+    def url(self) -> str:
+        """生成 Redis 连接 URL"""
+        if self.password:
+            return f"redis://:{self.password}@{self.host}:{self.port}/{self.db}"
+        return f"redis://{self.host}:{self.port}/{self.db}"
+
+
 def get_database_config() -> DatabaseConfig:
     """获取数据库配置（每次都从环境变量读取）"""
     return DatabaseConfig.from_env()
@@ -93,10 +121,16 @@ def get_app_config() -> AppConfig:
     return AppConfig.from_env()
 
 
-def get_config() -> tuple[DatabaseConfig, LLMConfig, AppConfig]:
+def get_redis_config() -> RedisConfig:
+    """获取 Redis 配置（每次都从环境变量读取）"""
+    return RedisConfig.from_env()
+
+
+def get_config() -> tuple[DatabaseConfig, LLMConfig, AppConfig, RedisConfig]:
     """获取所有配置"""
     return (
         get_database_config(),
         get_llm_config(),
-        get_app_config()
+        get_app_config(),
+        get_redis_config()
     )

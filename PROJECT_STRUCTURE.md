@@ -20,7 +20,6 @@ rag-screenplay-multi-agent/
 │   │
 │   ├── presentation/              # Presentation Layer
 │   │   ├── __init__.py
-│   │   ├── cli.py                # Command-line interface
 │   │   └── api.py                # REST API interface
 │   │
 │   ├── application/               # Application Layer

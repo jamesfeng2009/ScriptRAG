@@ -1,7 +1,7 @@
-"""Skill Manager - Manages generation style modes
+"""技能管理器 - 管理生成风格模式
 
-This module defines the Skills system for the RAG screenplay generation system.
-Skills are generation style modes that adjust how screenplay fragments are generated.
+本模块定义 RAG 剧本生成系统的技能系统。
+技能是生成风格模式，用于调整剧本片段的生成方式。
 """
 
 import logging
@@ -14,41 +14,41 @@ logger = logging.getLogger(__name__)
 
 
 class SkillConfig(BaseModel):
-    """Configuration for a single Skill mode"""
-    description: str = Field(..., description="Description of the skill's purpose")
-    tone: str = Field(..., description="Tone/style of the skill")
-    compatible_with: List[str] = Field(default_factory=list, description="List of compatible skill names")
+    """单个技能模式的配置"""
+    description: str = Field(..., description="技能用途的描述")
+    tone: str = Field(..., description="技能的语气/风格")
+    compatible_with: List[str] = Field(default_factory=list, description="兼容的技能名称列表")
 
 
 class RetrievalConfig(BaseModel):
-    """Configuration for RAG retrieval strategies"""
+    """RAG 检索策略配置"""
     
     class VectorSearchConfig(BaseModel):
-        """Vector search configuration"""
-        top_k: int = Field(default=5, description="Number of top results to return")
-        similarity_threshold: float = Field(default=0.7, description="Minimum similarity score")
-        embedding_model: str = Field(default="text-embedding-3-large", description="Embedding model to use")
+        """向量搜索配置"""
+        top_k: int = Field(default=5, description="返回的顶部结果数量")
+        similarity_threshold: float = Field(default=0.7, description="最小相似度分数")
+        embedding_model: str = Field(default="text-embedding-3-large", description="使用的嵌入模型")
     
     class KeywordSearchConfig(BaseModel):
-        """Keyword search configuration"""
+        """关键词搜索配置"""
         markers: List[str] = Field(
             default_factory=lambda: ["@deprecated", "FIXME", "TODO", "Security", "WARNING", "HACK"],
-            description="Sensitive markers to search for"
+            description="要搜索的敏感标记"
         )
-        boost_factor: float = Field(default=1.5, description="Boost factor for keyword matches")
+        boost_factor: float = Field(default=1.5, description="关键词匹配的增强因子")
     
     class HybridMergeConfig(BaseModel):
-        """Hybrid search merge configuration"""
-        vector_weight: float = Field(default=0.6, description="Weight for vector search results")
-        keyword_weight: float = Field(default=0.4, description="Weight for keyword search results")
-        keyword_boost_factor: float = Field(default=1.5, description="Boost factor for sensitive marker hits")
-        dedup_threshold: float = Field(default=0.9, description="Deduplication similarity threshold")
+        """混合搜索合并配置"""
+        vector_weight: float = Field(default=0.6, description="向量搜索结果的权重")
+        keyword_weight: float = Field(default=0.4, description="关键词搜索结果的权重")
+        keyword_boost_factor: float = Field(default=1.5, description="敏感标记命中的增强因子")
+        dedup_threshold: float = Field(default=0.9, description="去重相似度阈值")
     
     class SummarizationConfig(BaseModel):
-        """Summarization configuration"""
-        max_tokens: int = Field(default=10000, description="Maximum tokens before summarization")
-        chunk_size: int = Field(default=2000, description="Chunk size for processing")
-        overlap: int = Field(default=200, description="Overlap between chunks")
+        """摘要配置"""
+        max_tokens: int = Field(default=10000, description="摘要前的最大 token 数")
+        chunk_size: int = Field(default=2000, description="处理的分块大小")
+        overlap: int = Field(default=200, description="分块之间的重叠量")
     
     vector_search: VectorSearchConfig = Field(default_factory=VectorSearchConfig)
     keyword_search: KeywordSearchConfig = Field(default_factory=KeywordSearchConfig)
@@ -56,7 +56,7 @@ class RetrievalConfig(BaseModel):
     summarization: SummarizationConfig = Field(default_factory=SummarizationConfig)
 
 
-# Skills configuration dictionary
+# 技能配置字典
 SKILLS: Dict[str, SkillConfig] = {
     "standard_tutorial": SkillConfig(
         description="清晰、结构化的教程格式",
@@ -175,17 +175,17 @@ def find_skill_path(
 
 
 def check_skill_compatibility(current_skill: str, target_skill: str) -> bool:
-    """Check if two skills are compatible for switching
+    """检查两个技能是否兼容切换
     
     Args:
-        current_skill: Current active skill name
-        target_skill: Target skill to switch to
+        current_skill: 当前活动技能名称
+        target_skill: 要切换到的目标技能
         
     Returns:
-        True if skills are compatible, False otherwise
+        技能兼容返回 True，否则返回 False
         
     Raises:
-        ValueError: If skill names are invalid
+        ValueError: 如果技能名称无效
     """
     if current_skill not in SKILLS:
         raise ValueError(f"Invalid current skill: {current_skill}")
@@ -201,16 +201,16 @@ def check_skill_compatibility(current_skill: str, target_skill: str) -> bool:
 
 
 def get_compatible_skills(skill_name: str) -> List[str]:
-    """Get list of skills compatible with the given skill
+    """获取与给定技能兼容的技能列表
     
     Args:
-        skill_name: Name of the skill
+        skill_name: 技能名称
         
     Returns:
-        List of compatible skill names
+        兼容技能名称列表
         
     Raises:
-        ValueError: If skill name is invalid
+        ValueError: 如果技能名称无效
     """
     if skill_name not in SKILLS:
         raise ValueError(f"Invalid skill: {skill_name}")
@@ -224,19 +224,19 @@ def find_closest_compatible_skill(
     global_tone: Optional[str] = None,
     allow_multi_hop: bool = True
 ) -> str:
-    """Find the closest compatible skill when direct switch is not possible
+    """当无法直接切换时，找到最接近的兼容技能
     
     Args:
-        current_skill: Current active skill
-        desired_skill: Desired target skill
-        global_tone: Optional global tone preference
-        allow_multi_hop: Whether to allow multi-hop paths
+        current_skill: 当前活动技能
+        desired_skill: 期望的目标技能
+        global_tone: 可选的全局语气偏好
+        allow_multi_hop: 是否允许多跳路径
         
     Returns:
-        Name of the closest compatible skill
+        最接近的兼容技能名称
         
     Raises:
-        ValueError: If skill names are invalid
+        ValueError: 如果技能名称无效
     """
     if current_skill not in SKILLS:
         raise ValueError(f"Invalid current skill: {current_skill}")
@@ -279,16 +279,15 @@ def find_closest_compatible_skill(
 
 
 class SkillManager:
-    """Manager for dynamic skill loading and extension
+    """用于动态技能加载和扩展的管理器
     
-    This class provides a centralized interface for managing skills,
-    checking compatibility, and supporting dynamic skill registration.
+    本类提供管理技能、检查兼容性和支持动态技能注册的集中式接口。
     
-    Features:
-    - Load skills from configuration files
-    - Hot-reload configuration changes
-    - Dynamic skill registration
-    - Compatibility validation
+    功能：
+    - 从配置文件加载技能
+    - 热重载配置更改
+    - 动态技能注册
+    - 兼容性验证
     """
     
     def __init__(
@@ -297,12 +296,12 @@ class SkillManager:
         config_path: Optional[str] = None,
         enable_hot_reload: bool = False
     ):
-        """Initialize the Skill Manager
+        """初始化技能管理器
         
         Args:
-            custom_skills: Optional dictionary of custom skills to register
-            config_path: Optional path to skills configuration file
-            enable_hot_reload: Whether to enable hot-reloading of configuration
+            custom_skills: 可选的要注册的自定义技能字典
+            config_path: 可选的技能配置文件路径
+            enable_hot_reload: 是否启用配置热重载
         """
         self._skills: Dict[str, SkillConfig] = SKILLS.copy()
         self._config_path = config_path
@@ -341,25 +340,25 @@ class SkillManager:
         self._skills[name] = config
     
     def register_skills(self, skills: Dict[str, SkillConfig]) -> None:
-        """Register multiple skills at once
+        """一次性注册多个技能
         
         Args:
-            skills: Dictionary of skill names to configurations
+            skills: 技能名称到配置的字典
         """
         for name, config in skills.items():
             self.register_skill(name, config)
     
     def get_skill(self, name: str) -> SkillConfig:
-        """Get skill configuration by name
+        """根据名称获取技能配置
         
         Args:
-            name: Name of the skill
+            name: 技能名称
             
         Returns:
-            Skill configuration
+            技能配置
             
         Raises:
-            ValueError: If skill not found
+            ValueError: 如果技能未找到
         """
         if name not in self._skills:
             raise ValueError(f"Skill not found: {name}")
@@ -374,14 +373,14 @@ class SkillManager:
         return list(self._skills.keys())
     
     def check_compatibility(self, current_skill: str, target_skill: str) -> bool:
-        """Check if two skills are compatible
+        """检查两个技能是否兼容
         
         Args:
-            current_skill: Current active skill
-            target_skill: Target skill to switch to
+            current_skill: 当前活动技能
+            target_skill: 要切换到的目标技能
             
         Returns:
-            True if compatible, False otherwise
+            兼容返回 True，否则返回 False
         """
         if current_skill not in self._skills:
             raise ValueError(f"Invalid current skill: {current_skill}")
@@ -394,13 +393,13 @@ class SkillManager:
         return target_skill in self._skills[current_skill].compatible_with
     
     def get_compatible_skills(self, skill_name: str) -> List[str]:
-        """Get list of compatible skills
+        """获取兼容技能列表
         
         Args:
-            skill_name: Name of the skill
+            skill_name: 技能名称
             
         Returns:
-            List of compatible skill names
+            兼容技能名称列表
         """
         if skill_name not in self._skills:
             raise ValueError(f"Invalid skill: {skill_name}")
@@ -414,16 +413,16 @@ class SkillManager:
         global_tone: Optional[str] = None,
         allow_multi_hop: bool = True
     ) -> str:
-        """Find closest compatible skill for switching
+        """找到切换时最接近的兼容技能
         
         Args:
-            current_skill: Current active skill
-            desired_skill: Desired target skill
-            global_tone: Optional global tone preference
-            allow_multi_hop: Whether to allow multi-hop paths
+            current_skill: 当前活动技能
+            desired_skill: 期望的目标技能
+            global_tone: 可选的全局语气偏好
+            allow_multi_hop: 是否允许多跳路径
             
         Returns:
-            Name of the closest compatible skill
+            最接近的兼容技能名称
         """
         if current_skill not in self._skills:
             raise ValueError(f"Invalid current skill: {current_skill}")
@@ -478,10 +477,10 @@ class SkillManager:
         ]
     
     def validate_skill_graph(self) -> bool:
-        """Validate that the skill compatibility graph is well-formed
+        """验证技能兼容性图是否格式正确
         
         Returns:
-            True if valid, False otherwise
+            有效返回 True，否则返回 False
         """
         for skill_name, config in self._skills.items():
             for compatible_skill in config.compatible_with:
@@ -530,7 +529,7 @@ class SkillManager:
             logger.warning("Hot-reload already enabled")
     
     def disable_hot_reload(self):
-        """Disable hot-reloading of configuration file"""
+        """禁用配置文件的热重载"""
         if self._loader is not None:
             self._loader.stop_watching()
             self._loader = None
@@ -547,10 +546,10 @@ class SkillManager:
         self._skills = new_skills
     
     def export_to_config(self, output_path: str):
-        """Export current skills to configuration file
+        """将当前技能导出到配置文件
         
         Args:
-            output_path: Path where to save the configuration
+            output_path: 保存配置的路径
         """
         from .skill_loader import SkillConfigLoader
         from pathlib import Path

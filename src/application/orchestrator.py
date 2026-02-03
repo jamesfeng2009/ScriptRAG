@@ -2,10 +2,15 @@
 
 This module implements the LangGraph state machine that orchestrates
 the multi-agent screenplay generation workflow.
+
+Enhanced Features (when enable_dynamic_adjustment=True):
+1. RAGContentAnalyzer integration for semantic content analysis
+2. DynamicDirector for real-time direction adjustment
+3. SkillRecommender for intelligent skill selection
 """
 
 import logging
-from typing import Literal, Dict, Any
+from typing import List, Literal, Dict, Any, Optional
 from langgraph.graph import StateGraph, END
 
 from ..domain.models import SharedState
@@ -17,6 +22,15 @@ from ..domain.agents.writer import generate_fragment
 from ..domain.agents.fact_checker import verify_fragment_node
 from ..domain.agents.compiler import compile_screenplay
 from ..domain.agents.retry_protection import check_retry_limit
+from ..domain.agents.enhanced_agents import (
+    RAGContentAnalyzer,
+    DynamicDirector,
+    SkillRecommender,
+    StructuredScreenplayWriter,
+    ContentAnalysis,
+    DirectionAdjustment,
+    DirectionAdjustmentType
+)
 from ..services.llm.service import LLMService
 from ..services.retrieval_service import RetrievalService
 from ..services.parser.tree_sitter_parser import IParserService
@@ -35,6 +49,10 @@ class WorkflowOrchestrator:
     """
     工作流编排器 - 管理 LangGraph 状态机
     
+    支持两种模式：
+    - 基础模式（enable_dynamic_adjustment=False）：标准工作流
+    - 增强模式（enable_dynamic_adjustment=True）：支持 RAG 内容分析和动态方向调整
+    
     职责：
     1. 构建和编译 LangGraph 状态图
     2. 定义智能体节点和边
@@ -50,7 +68,8 @@ class WorkflowOrchestrator:
         retrieval_service: RetrievalService,
         parser_service: IParserService,
         summarization_service: SummarizationService,
-        workspace_id: str
+        workspace_id: str,
+        enable_dynamic_adjustment: bool = False
     ):
         """
         初始化工作流编排器
@@ -61,35 +80,40 @@ class WorkflowOrchestrator:
             parser_service: 解析服务实例
             summarization_service: 摘要服务实例
             workspace_id: 工作空间 ID
+            enable_dynamic_adjustment: 是否启用动态方向调整（默认关闭以保持兼容性）
         """
         self.llm_service = llm_service
         self.retrieval_service = retrieval_service
         self.parser_service = parser_service
         self.summarization_service = summarization_service
         self.workspace_id = workspace_id
+        self.enable_dynamic_adjustment = enable_dynamic_adjustment
         
-        # 构建状态图
+        if enable_dynamic_adjustment:
+            self.rag_analyzer = RAGContentAnalyzer(llm_service)
+            self.dynamic_director = DynamicDirector(llm_service)
+            self.skill_recommender = SkillRecommender(llm_service)
+            self.screenplay_writer = StructuredScreenplayWriter(llm_service)
+        
         self.graph = self._build_graph()
         
-        logger.info("WorkflowOrchestrator initialized")
+        logger.info(f"WorkflowOrchestrator initialized (dynamic_adjustment={enable_dynamic_adjustment})")
     
     def _build_graph(self) -> StateGraph:
         """
         构建 LangGraph 状态图
         
-        定义所有智能体节点、边和路由逻辑。
+        根据 enable_dynamic_adjustment 参数决定是否启用增强功能。
         
         Returns:
             编译后的状态图
             
         验证需求: 14.2, 14.3, 14.4, 14.5
         """
-        logger.info("Building LangGraph state machine")
+        logger.info(f"Building LangGraph state machine (dynamic_adjustment={self.enable_dynamic_adjustment})")
         
-        # 创建状态图
         workflow = StateGraph(SharedState)
         
-        # 添加节点（需求 14.2）
         workflow.add_node("planner", self._planner_node)
         workflow.add_node("navigator", self._navigator_node)
         workflow.add_node("director", self._director_node)
@@ -97,70 +121,236 @@ class WorkflowOrchestrator:
         workflow.add_node("retry_protection", self._retry_protection_node)
         workflow.add_node("writer", self._writer_node)
         workflow.add_node("fact_checker", self._fact_checker_node)
-        workflow.add_node("step_advancer", self._step_advancer_node)  # NEW: Advances to next step
+        workflow.add_node("step_advancer", self._step_advancer_node)
         workflow.add_node("compiler", self._compiler_node)
         
-        # 设置入口点（需求 14.3）
+        if self.enable_dynamic_adjustment:
+            workflow.add_node("rag_analyzer", self._rag_analyzer_node)
+            workflow.add_node("dynamic_director", self._dynamic_director_node)
+            workflow.add_node("skill_recommender", self._skill_recommender_node)
+        
         workflow.set_entry_point("planner")
         
-        # 添加边（需求 14.3, 14.4）
-        # 规划器 -> 导航器
         workflow.add_edge("planner", "navigator")
         
-        # 导航器 -> 导演
-        workflow.add_edge("navigator", "director")
+        if self.enable_dynamic_adjustment:
+            workflow.add_edge("navigator", "rag_analyzer")
+            workflow.add_edge("rag_analyzer", "dynamic_director")
+            
+            workflow.add_conditional_edges(
+                "dynamic_director",
+                self._route_dynamic_director_decision,
+                {
+                    "pivot": "pivot_manager",
+                    "skill_switch": "skill_recommender",
+                    "continue": "retry_protection"
+                }
+            )
+            
+            workflow.add_edge("skill_recommender", "retry_protection")
+        else:
+            workflow.add_edge("navigator", "director")
+            
+            workflow.add_conditional_edges(
+                "director",
+                self._route_director_decision,
+                {"pivot": "pivot_manager", "write": "retry_protection"}
+            )
         
-        # 导演决策逻辑（条件边）（需求 14.5）
-        workflow.add_conditional_edges(
-            "director",
-            self._route_director_decision,
-            {
-                "pivot": "pivot_manager",
-                "write": "retry_protection"
-            }
-        )
-        
-        # 转向管理器 -> 导航器（转向循环）（需求 14.4）
         workflow.add_edge("pivot_manager", "navigator")
-        
-        # 重试保护 -> 编剧
         workflow.add_edge("retry_protection", "writer")
-        
-        # 编剧 -> 事实检查器
         workflow.add_edge("writer", "fact_checker")
         
-        # 事实检查器决策逻辑（条件边）（需求 14.5）
-        # 完成检查集成在这里（需求 14.4, 14.5）
         workflow.add_conditional_edges(
             "fact_checker",
             self._route_fact_check,
-            {
-                "invalid": "retry_protection",
-                "valid": "step_advancer"
-            }
+            {"invalid": "retry_protection", "valid": "step_advancer"}
         )
         
-        # 步骤推进器决策逻辑（条件边）
         workflow.add_conditional_edges(
             "step_advancer",
             self._route_completion,
-            {
-                "continue": "navigator",
-                "done": "compiler"
-            }
+            {"continue": "navigator", "done": "compiler"}
         )
         
-        # 编译器 -> 结束
         workflow.add_edge("compiler", END)
         
-        # 编译图（需求 14.6）
         compiled_graph = workflow.compile()
         
         logger.info("LangGraph state machine built and compiled successfully")
         
         return compiled_graph
     
-    # Node wrapper functions
+    async def _rag_analyzer_node(self, state: SharedState) -> SharedState:
+        """RAG内容分析器节点"""
+        if not hasattr(self, 'rag_analyzer'):
+            return state
+            
+        logger.info("Executing RAG analyzer node")
+        try:
+            current_step = state.get_current_step()
+            if not current_step or not state.retrieved_docs:
+                logger.warning("No content to analyze")
+                return state
+            
+            query = current_step.description
+            analysis = await self.rag_analyzer.analyze(
+                query=query,
+                retrieved_docs=state.retrieved_docs
+            )
+            
+            state.rag_analysis = {
+                "content_types": [ct.value for ct in analysis.content_types],
+                "main_topic": analysis.main_topic,
+                "sub_topics": analysis.sub_topics,
+                "difficulty_level": analysis.difficulty_level,
+                "tone_style": analysis.tone_style.value if analysis.tone_style else None,
+                "key_concepts": analysis.key_concepts,
+                "warnings": analysis.warnings,
+                "prerequisites": analysis.prerequisites,
+                "suggested_skill": analysis.suggested_skill,
+                "confidence": analysis.confidence
+            }
+            
+            state.add_log_entry(
+                agent_name="rag_analyzer",
+                action="analyze_content",
+                details={
+                    "step_id": current_step.step_id,
+                    "content_types": analysis.content_types,
+                    "difficulty": analysis.difficulty_level,
+                    "suggested_skill": analysis.suggested_skill
+                }
+            )
+            
+            logger.info(f"RAG analysis completed: types={analysis.content_types}, difficulty={analysis.difficulty_level}")
+            
+            return state
+            
+        except Exception as e:
+            logger.error(f"RAG analyzer failed: {str(e)}")
+            state.add_log_entry(
+                agent_name="rag_analyzer",
+                action="analysis_failed",
+                details={"error": str(e)}
+            )
+            return state
+    
+    async def _dynamic_director_node(self, state: SharedState) -> SharedState:
+        """动态导演节点 - 基于RAG分析做出方向调整决策"""
+        if not hasattr(self, 'dynamic_director'):
+            return state
+            
+        logger.info("Executing dynamic director node")
+        try:
+            if not state.rag_analysis:
+                logger.warning("No RAG analysis available")
+                return state
+            
+            analysis = ContentAnalysis(
+                content_types=[],
+                main_topic=state.rag_analysis.get("main_topic", ""),
+                sub_topics=state.rag_analysis.get("sub_topics", []),
+                difficulty_level=state.rag_analysis.get("difficulty_level", 0.5),
+                tone_style=None,
+                key_concepts=state.rag_analysis.get("key_concepts", []),
+                warnings=state.rag_analysis.get("warnings", []),
+                prerequisites=state.rag_analysis.get("prerequisites", []),
+                suggested_skill=state.rag_analysis.get("suggested_skill"),
+                confidence=state.rag_analysis.get("confidence", 0.5)
+            )
+            
+            state, adjustment = await self.dynamic_director.evaluate_and_adjust(
+                state=state,
+                content_analysis=analysis
+            )
+            
+            state.add_log_entry(
+                agent_name="dynamic_director",
+                action="direction_adjustment",
+                details={
+                    "adjustment_type": adjustment.adjustment_type.value if adjustment else "no_change",
+                    "reason": adjustment.reason if adjustment else "",
+                    "confidence": adjustment.confidence if adjustment else 0
+                }
+            )
+            
+            logger.info(f"Dynamic director decision: {adjustment.adjustment_type.value if adjustment else 'no_change'}")
+            
+            return state
+            
+        except Exception as e:
+            logger.error(f"Dynamic director failed: {str(e)}")
+            state.add_log_entry(
+                agent_name="dynamic_director",
+                action="decision_failed",
+                details={"error": str(e)}
+            )
+            return state
+    
+    async def _skill_recommender_node(self, state: SharedState) -> SharedState:
+        """技能推荐器节点 - 根据内容分析推荐并切换技能"""
+        if not hasattr(self, 'skill_recommender'):
+            return state
+            
+        logger.info("Executing skill recommender node")
+        try:
+            current_step = state.get_current_step()
+            if not current_step:
+                return state
+            
+            rag_analysis = getattr(state, 'rag_analysis', None)
+            
+            recommendation = await self.skill_recommender.recommend(
+                topic=state.user_topic,
+                context=state.project_context,
+                content_analysis=rag_analysis
+            )
+            
+            recommended_skill = recommendation.get("recommended_skill")
+            confidence = recommendation.get("confidence", 0)
+            reasoning = recommendation.get("reasoning", "")
+            
+            if recommended_skill and confidence > 0.7 and recommended_skill != state.current_skill:
+                old_skill = state.current_skill
+                state.current_skill = recommended_skill
+                
+                if not hasattr(state, 'skill_history') or state.skill_history is None:
+                    state.skill_history = []
+                
+                state.skill_history.append({
+                    "step_id": current_step.step_id,
+                    "reason": f"Auto-switch: {reasoning}",
+                    "from_skill": old_skill,
+                    "to_skill": recommended_skill,
+                    "triggered_by": "skill_recommender",
+                    "confidence": confidence
+                })
+                
+                logger.info(f"Skill auto-switched: {old_skill} -> {recommended_skill} (confidence: {confidence})")
+            
+            state.add_log_entry(
+                agent_name="skill_recommender",
+                action="recommend_skill",
+                details={
+                    "step_id": current_step.step_id,
+                    "recommended_skill": recommended_skill,
+                    "confidence": confidence,
+                    "reasoning": reasoning,
+                    "current_skill": state.current_skill
+                }
+            )
+            
+            return state
+            
+        except Exception as e:
+            logger.error(f"Skill recommender failed: {str(e)}")
+            state.add_log_entry(
+                agent_name="skill_recommender",
+                action="recommendation_failed",
+                details={"error": str(e)}
+            )
+            return state
     
     async def _planner_node(self, state: SharedState) -> SharedState:
         """规划器节点包装函数（带超时保护）"""
@@ -174,7 +364,6 @@ class WorkflowOrchestrator:
             )
         except CustomTimeoutError as e:
             logger.error(f"Planner node timed out: {str(e)}")
-            # 超时时跳过步骤
             state.add_log_entry(
                 agent_name="planner",
                 action="timeout",
@@ -197,7 +386,6 @@ class WorkflowOrchestrator:
             )
         except CustomTimeoutError as e:
             logger.error(f"Navigator node timed out: {str(e)}")
-            # 超时时跳过步骤，返回空检索结果
             state.retrieved_docs = []
             state.add_log_entry(
                 agent_name="navigator",
@@ -218,7 +406,6 @@ class WorkflowOrchestrator:
             )
         except CustomTimeoutError as e:
             logger.error(f"Director node timed out: {str(e)}")
-            # 超时时假设批准继续
             state.pivot_triggered = False
             state.add_log_entry(
                 agent_name="director",
@@ -227,15 +414,13 @@ class WorkflowOrchestrator:
             )
             return state
     
-    async def _pivot_manager_node(self, state: SharedState) -> SharedState:
+    def _pivot_manager_node(self, state: SharedState) -> SharedState:
         """转向管理器节点包装函数（带超时保护）"""
         logger.info("Executing pivot_manager node")
         try:
-            # handle_pivot is synchronous, call it directly
             return handle_pivot(state)
         except Exception as e:
             logger.error(f"Pivot manager node failed: {str(e)}")
-            # 失败时跳过转向
             state.pivot_triggered = False
             state.add_log_entry(
                 agent_name="pivot_manager",
@@ -244,15 +429,13 @@ class WorkflowOrchestrator:
             )
             return state
     
-    async def _retry_protection_node(self, state: SharedState) -> SharedState:
+    def _retry_protection_node(self, state: SharedState) -> SharedState:
         """重试保护节点包装函数（带超时保护）"""
         logger.info("Executing retry_protection node")
         try:
-            # check_retry_limit is synchronous, call it directly
             return check_retry_limit(state)
         except Exception as e:
             logger.error(f"Retry protection node failed: {str(e)}")
-            # 失败时强制降级
             current_step = state.get_current_step()
             if current_step:
                 current_step.status = "skipped"
@@ -275,7 +458,6 @@ class WorkflowOrchestrator:
             )
         except CustomTimeoutError as e:
             logger.error(f"Writer node timed out: {str(e)}")
-            # 超时时跳过步骤
             current_step = state.get_current_step()
             if current_step:
                 current_step.status = "skipped"
@@ -298,7 +480,6 @@ class WorkflowOrchestrator:
             )
         except CustomTimeoutError as e:
             logger.error(f"Fact checker node timed out: {str(e)}")
-            # 超时时假设片段有效
             state.fact_check_passed = True
             state.add_log_entry(
                 agent_name="fact_checker",
@@ -307,12 +488,15 @@ class WorkflowOrchestrator:
             )
             return state
     
+    def _step_advancer_node(self, state: SharedState) -> SharedState:
+        """步骤推进器节点 - 将 current_step_index 推进到下一步"""
+        old_index = state.current_step_index
+        state.current_step_index += 1
+        logger.info(f"Advancing from step {old_index} to {state.current_step_index}")
+        return state
+    
     async def _compiler_node(self, state: SharedState) -> SharedState:
-        """编译器节点包装函数（带超时保护）
-        
-        Compiles the final screenplay and stores it in state.
-        Returns the state object (not the screenplay string).
-        """
+        """编译器节点包装函数（带超时保护）"""
         logger.info("Executing compiler node")
         try:
             final_screenplay = await ErrorHandler.with_timeout(
@@ -322,16 +506,12 @@ class WorkflowOrchestrator:
                 self.llm_service
             )
             
-            # Store the final screenplay in the state
-            # We'll add a new field to store this
             state.add_log_entry(
                 agent_name="compiler",
                 action="screenplay_compiled",
                 details={"screenplay_length": len(final_screenplay)}
             )
             
-            # Store screenplay in execution log for retrieval
-            # (Since SharedState doesn't have a final_screenplay field)
             state.execution_log.append({
                 "agent_name": "compiler",
                 "action": "final_screenplay",
@@ -343,13 +523,11 @@ class WorkflowOrchestrator:
             
         except CustomTimeoutError as e:
             logger.error(f"Compiler node timed out: {str(e)}")
-            # 超时时返回简单的编译结果
             state.add_log_entry(
                 agent_name="compiler",
                 action="timeout",
                 details={"error": str(e)}
             )
-            # 返回简单的片段拼接
             fallback_screenplay = "\n\n".join([f.content for f in state.fragments])
             state.execution_log.append({
                 "agent_name": "compiler",
@@ -359,75 +537,52 @@ class WorkflowOrchestrator:
             })
             return state
     
-    def _step_advancer_node(self, state: SharedState) -> SharedState:
-        """步骤推进器节点 - 将 current_step_index 推进到下一步
-        
-        This node increments current_step_index to move to the next step.
-        It's safe to increment here because the routing function will check
-        if we've reached the end.
-        """
-        old_index = state.current_step_index
-        
-        # Increment to next step
-        # Note: We allow incrementing to len(outline) to indicate completion
-        # The validator will be temporarily disabled during this transition
-        state.current_step_index += 1
-        
-        logger.info(f"Advancing from step {old_index} to {state.current_step_index}")
-        
-        return state
-    
-    # Routing functions (需求 14.5)
-    
     def _route_director_decision(
         self,
         state: SharedState
     ) -> Literal["pivot", "write"]:
-        """
-        导演决策路由函数
-        
-        根据导演的评估结果决定下一步动作：
-        - pivot: 检测到冲突或触发条件，需要转向
-        - write: 批准内容，继续生成
-        
-        Args:
-            state: 共享状态
-            
-        Returns:
-            路由目标节点名称
-            
-        验证需求: 14.5
-        """
-        # 检查是否触发转向
+        """导演决策路由函数（基础模式）"""
         if state.pivot_triggered:
-            logger.info("Director decision: pivot (conflict or trigger detected)")
+            logger.info("Director decision: pivot")
+            return "pivot"
+        logger.info("Director decision: write")
+        return "write"
+    
+    def _route_dynamic_director_decision(
+        self,
+        state: SharedState
+    ) -> Literal["pivot", "skill_switch", "continue"]:
+        """
+        动态导演决策路由函数（增强模式）
+        
+        根据动态导演的方向调整决策决定下一步动作：
+        - pivot: 检测到冲突或触发条件，需要转向
+        - skill_switch: 建议切换技能
+        - continue: 正常继续
+        """
+        if state.pivot_triggered:
+            logger.info("Dynamic director decision: pivot")
             return "pivot"
         
-        # 默认：批准继续
-        logger.info("Director decision: write (approved)")
-        return "write"
+        rag_analysis = getattr(state, 'rag_analysis', None)
+        if rag_analysis and rag_analysis.get('suggested_skill'):
+            if rag_analysis['suggested_skill'] != state.current_skill:
+                confidence = rag_analysis.get('confidence', 0)
+                if confidence > 0.7:
+                    logger.info(f"Dynamic director decision: skill_switch to {rag_analysis['suggested_skill']}")
+                    return "skill_switch"
+        
+        logger.info("Dynamic director decision: continue")
+        return "continue"
     
     def _route_fact_check(
         self,
         state: SharedState
     ) -> Literal["invalid", "valid"]:
-        """
-        事实检查器路由函数
-        
-        根据事实检查结果决定下一步动作：
-        - invalid: 片段包含幻觉，需要重新生成
-        - valid: 片段有效，推进到下一步
-        
-        Args:
-            state: 共享状态
-            
-        Returns:
-            路由目标节点名称
-        """
+        """事实检查器路由函数"""
         if not state.fact_check_passed:
-            logger.info("Fact check decision: invalid (regeneration needed)")
+            logger.info("Fact check decision: invalid")
             return "invalid"
-        
         logger.info("Fact check decision: valid")
         return "valid"
     
@@ -435,32 +590,11 @@ class WorkflowOrchestrator:
         self,
         state: SharedState
     ) -> Literal["continue", "done"]:
-        """
-        完成检查路由函数
-        
-        检查是否还有更多步骤需要处理：
-        - continue: 还有步骤需要处理，继续循环
-        - done: 所有步骤完成，进入编译阶段
-        
-        NOTE: This is called AFTER step_advancer has incremented current_step_index
-        
-        Args:
-            state: 共享状态
-            
-        Returns:
-            路由目标节点名称
-        """
-        # Check if we've processed all steps
-        # After step_advancer increments, current_step_index will be equal to len(outline)
-        # when all steps are done
+        """完成检查路由函数"""
         if state.current_step_index < len(state.outline):
-            logger.info(
-                f"Completion check: continue (step {state.current_step_index}/{len(state.outline)})"
-            )
+            logger.info(f"Completion check: continue (step {state.current_step_index}/{len(state.outline)})")
             return "continue"
-        
-        # All steps completed
-        logger.info("Completion check: done (all steps completed)")
+        logger.info("Completion check: done")
         return "done"
     
     async def execute(
@@ -480,12 +614,9 @@ class WorkflowOrchestrator:
             
         验证需求: 14.6, 3.1, 3.2, 3.3, 3.5
         """
-        logger.info(
-            f"Starting screenplay generation workflow with recursion_limit={recursion_limit}"
-        )
+        logger.info(f"Starting screenplay generation workflow (dynamic_adjustment={self.enable_dynamic_adjustment})")
         
         try:
-            # 执行状态图，传递 recursion_limit 配置（需求 3.2）
             result_state_dict = await self.graph.ainvoke(
                 state,
                 config={"recursion_limit": recursion_limit}
@@ -493,11 +624,8 @@ class WorkflowOrchestrator:
             
             logger.info("Screenplay generation workflow completed successfully")
             
-            # LangGraph returns the final state as a dict
-            # We need to reconstruct the SharedState object from it
             final_state = SharedState(**result_state_dict)
             
-            # Extract final screenplay from execution log
             final_screenplay = None
             for log_entry in reversed(final_state.execution_log):
                 if (log_entry.get("agent_name") == "compiler" and 
@@ -513,7 +641,6 @@ class WorkflowOrchestrator:
             }
         
         except RecursionError as e:
-            # 处理递归限制错误（需求 3.5）
             error_msg = f"Workflow exceeded recursion limit of {recursion_limit}"
             logger.error(f"{error_msg}: {str(e)}")
             
@@ -533,3 +660,6 @@ class WorkflowOrchestrator:
                 "state": state,
                 "execution_log": state.execution_log
             }
+
+
+EnhancedWorkflowOrchestrator = WorkflowOrchestrator

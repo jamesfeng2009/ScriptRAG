@@ -1,10 +1,10 @@
-"""Retry Protection - Prevents infinite loops and enforces retry limits
+"""重试保护机制 - 防止无限循环并强制执行重试限制
 
-This module implements retry limit checking and loop protection mechanisms:
-1. Check if current step exceeds max_retries
-2. Force degradation by skipping steps or marking as failed
-3. Add placeholder fragments for skipped steps
-4. Prevent infinite pivot loops
+本模块实现重试限制检查和循环保护机制：
+1. 检查当前步骤是否超过最大重试次数
+2. 通过跳过步骤或标记为失败来强制降级
+3. 为跳过的步骤添加占位符片段
+4. 防止无限转向循环
 """
 
 import logging
@@ -17,19 +17,19 @@ agent_logger = get_agent_logger(__name__)
 
 
 def check_retry_limit(state: SharedState) -> SharedState:
-    """Check retry limit and force degradation if exceeded
+    """检查重试限制，超出则强制降级
     
-    This function implements loop protection by:
-    1. Checking if current step's retry_count exceeds max_retries
-    2. Forcing degradation by skipping the step
-    3. Adding a placeholder fragment explaining the skip
-    4. Advancing to the next step
+    本函数实现循环保护机制：
+    1. 检查当前步骤的重试次数是否超过 max_retries
+    2. 强制降级：跳过该步骤
+    3. 添加占位符片段解释跳过原因
+    4. 推进到下一个步骤
     
     Args:
-        state: Current shared state
+        state: 共享状态对象
         
     Returns:
-        Updated shared state with step potentially skipped
+        更新后的共享状态，步骤可能被跳过
     """
     # Get current step
     current_step = state.get_current_step()
@@ -107,17 +107,17 @@ def check_retry_limit(state: SharedState) -> SharedState:
 
 
 def is_in_infinite_loop(state: SharedState, window_size: int = 10) -> bool:
-    """Detect if the system is stuck in an infinite loop
+    """检测系统是否陷入无限循环
     
-    This function analyzes recent execution logs to detect patterns
-    that indicate an infinite loop (e.g., same step being retried repeatedly).
+    本函数分析最近的执行日志，检测表示无限循环的模式
+    （例如：同一步骤被反复重试）。
     
     Args:
-        state: Current shared state
-        window_size: Number of recent log entries to analyze
+        state: 共享状态对象
+        window_size: 要分析的最新日志条目数量
         
     Returns:
-        True if infinite loop detected, False otherwise
+        检测到无限循环返回 True，否则返回 False
     """
     if len(state.execution_log) < window_size:
         return False
@@ -158,17 +158,16 @@ def is_in_infinite_loop(state: SharedState, window_size: int = 10) -> bool:
 
 
 def reset_retry_counter(state: SharedState, step_id: int) -> SharedState:
-    """Reset retry counter for a specific step
+    """重置特定步骤的重试计数器
     
-    This is useful when a step successfully completes or when
-    manual intervention resolves an issue.
+    当步骤成功完成或手动干预解决问题时，此功能很有用。
     
     Args:
-        state: Current shared state
-        step_id: ID of the step to reset
+        state: 共享状态对象
+        step_id: 要重置的步骤 ID
         
     Returns:
-        Updated shared state
+        更新后的共享状态
     """
     for step in state.outline:
         if step.step_id == step_id:

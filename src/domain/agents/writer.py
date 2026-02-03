@@ -1,11 +1,11 @@
-"""Writer Agent - Generates screenplay fragments
+"""编剧智能体 - 生成剧本片段
 
-The Writer agent is responsible for:
-1. Applying skill-specific generation strategies
-2. Generating screenplay fragments based on retrieved content
-3. Grounding all statements in retrieved sources
-4. Handling empty retrievals with research mode
-5. Creating fragments with source attribution
+本模块实现编剧智能体，负责：
+1. 应用特定技能的生成策略
+2. 根据检索到的内容生成剧本片段
+3. 确保所有陈述都基于检索的来源
+4. 处理空检索的研究模式
+5. 创建带有来源属性的片段
 """
 
 import logging

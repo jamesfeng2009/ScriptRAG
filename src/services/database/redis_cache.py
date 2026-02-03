@@ -1,24 +1,29 @@
-"""Redis Cache Service - Caching layer implementation
+"""Redis 缓存服务 - 缓存层实现
 
-This module provides Redis caching functionality:
-1. LLM response caching (24 hour TTL)
-2. Embedding vector caching (7 day TTL)
-3. Retrieval result caching (1 hour TTL)
-4. Session state caching (30 minute TTL)
+本模块提供 Redis 缓存功能：
+1. LLM 响应缓存（24 小时 TTL）
+2. 嵌入向量缓存（7 天 TTL）
+3. 检索结果缓存（1 小时 TTL）
+4. 会话状态缓存（30 分钟 TTL）
 """
 
 import logging
 import json
 import hashlib
+import sys
+from pathlib import Path
 from typing import Optional, Any, Dict, List
 from datetime import timedelta
 import redis.asyncio as redis
+
+sys.path.insert(0, str(Path(__file__).parent.parent.parent))
+from config import get_redis_config, RedisConfig
 
 
 logger = logging.getLogger(__name__)
 
 
-# Cache key prefixes
+# 缓存键前缀
 CACHE_PREFIX = {
     "llm_response": "llm",
     "embedding": "emb",
@@ -28,51 +33,64 @@ CACHE_PREFIX = {
     "config": "cfg"
 }
 
-# Cache TTL in seconds
+# 缓存 TTL（秒）
 CACHE_TTL = {
-    "llm_response": 86400,      # 24 hours
-    "embedding": 604800,         # 7 days
-    "retrieval": 3600,           # 1 hour
-    "session": 1800,             # 30 minutes
-    "quota": 300,                # 5 minutes
-    "config": 3600               # 1 hour
+    "llm_response": 86400,      # 24 小时
+    "embedding": 604800,        # 7 天
+    "retrieval": 3600,          # 1 小时
+    "session": 1800,            # 30 分钟
+    "quota": 300,               # 5 分钟
+    "config": 3600              # 1 小时
 }
 
 
 class RedisCacheService:
-    """Service for Redis caching operations"""
+    """Redis 缓存操作服务"""
     
     def __init__(
         self,
-        host: str = "localhost",
-        port: int = 6379,
-        db: int = 0,
+        config: Optional[RedisConfig] = None,
+        host: Optional[str] = None,
+        port: Optional[int] = None,
+        db: Optional[int] = None,
         password: Optional[str] = None,
-        max_connections: int = 50
+        max_connections: Optional[int] = None
     ):
         """
-        Initialize Redis cache service
+        初始化 Redis 缓存服务
         
         Args:
-            host: Redis host
-            port: Redis port
-            db: Redis database number
-            password: Redis password (optional)
-            max_connections: Maximum connection pool size
+            config: Redis 配置对象（优先使用）
+            host: Redis 主机（当 config 为空时使用）
+            port: Redis 端口（当 config 为空时使用）
+            db: Redis 数据库编号（当 config 为空时使用）
+            password: Redis 密码（当 config 为空时使用）
+            max_connections: 最大连接池大小（当 config 为空时使用）
         """
-        self.redis_url = f"redis://{host}:{port}/{db}"
-        if password:
-            self.redis_url = f"redis://:{password}@{host}:{port}/{db}"
+        if config is not None:
+            self.redis_url = config.url
+            self.max_connections = config.max_connections
+        else:
+            redis_host = host or "localhost"
+            redis_port = port or 6379
+            redis_db = db or 0
+            redis_password = password
+            
+            if redis_password:
+                self.redis_url = f"redis://:{redis_password}@{redis_host}:{redis_port}/{redis_db}"
+            else:
+                self.redis_url = f"redis://{redis_host}:{redis_port}/{redis_db}"
+            self.max_connections = max_connections or 50
         
         self.pool = redis.ConnectionPool.from_url(
             self.redis_url,
-            max_connections=max_connections,
+            max_connections=self.max_connections,
             decode_responses=True
         )
         self.client: Optional[redis.Redis] = None
     
     async def connect(self):
-        """Establish Redis connection"""
+        """建立 Redis 连接"""
         try:
             self.client = redis.Redis(connection_pool=self.pool)
             await self.client.ping()
@@ -82,7 +100,7 @@ class RedisCacheService:
             raise
     
     async def disconnect(self):
-        """Close Redis connection"""
+        """关闭 Redis 连接"""
         if self.client:
             await self.client.close()
             await self.pool.disconnect()
@@ -90,39 +108,39 @@ class RedisCacheService:
     
     def _generate_key(self, prefix: str, *args) -> str:
         """
-        Generate cache key
+        生成缓存键
         
         Args:
-            prefix: Key prefix
-            *args: Key components
+            prefix: 键前缀
+            *args: 键组件
             
         Returns:
-            Cache key string
+            缓存键字符串
         """
         key_parts = [prefix] + [str(arg) for arg in args]
         return ":".join(key_parts)
     
     def _hash_content(self, content: str) -> str:
         """
-        Generate hash for content
+        生成内容的哈希值
         
         Args:
-            content: Content to hash
+            content: 要哈希的内容
             
         Returns:
-            Hash string
+            哈希字符串
         """
         return hashlib.sha256(content.encode()).hexdigest()[:16]
     
     async def get(self, key: str) -> Optional[Any]:
         """
-        Get value from cache
+        从缓存获取值
         
         Args:
-            key: Cache key
+            key: 缓存键
             
         Returns:
-            Cached value or None if not found
+            缓存的值，未找到返回 None
         """
         try:
             if not self.client:
@@ -146,15 +164,15 @@ class RedisCacheService:
         ttl: Optional[int] = None
     ) -> bool:
         """
-        Set value in cache
+        设置缓存值
         
         Args:
-            key: Cache key
-            value: Value to cache
-            ttl: Time to live in seconds (optional)
+            key: 缓存键
+            value: 要缓存的值
+            ttl: 生存时间（秒）（可选）
             
         Returns:
-            True if successful, False otherwise
+            成功返回 True，否则返回 False
         """
         try:
             if not self.client:
@@ -175,13 +193,13 @@ class RedisCacheService:
     
     async def delete(self, key: str) -> bool:
         """
-        Delete value from cache
+        从缓存删除值
         
         Args:
-            key: Cache key
+            key: 缓存键
             
         Returns:
-            True if successful, False otherwise
+            成功返回 True，否则返回 False
         """
         try:
             if not self.client:
@@ -196,13 +214,13 @@ class RedisCacheService:
     
     async def exists(self, key: str) -> bool:
         """
-        Check if key exists in cache
+        检查键是否存在于缓存中
         
         Args:
-            key: Cache key
+            key: 缓存键
             
         Returns:
-            True if exists, False otherwise
+            存在返回 True，否则返回 False
         """
         try:
             if not self.client:
@@ -215,13 +233,13 @@ class RedisCacheService:
     
     async def clear_pattern(self, pattern: str) -> int:
         """
-        Clear all keys matching pattern
+        清除所有匹配模式的键
         
         Args:
-            pattern: Key pattern (e.g., "llm:*")
+            pattern: 键模式（例如："llm:*"）
             
         Returns:
-            Number of keys deleted
+            删除的键数量
         """
         try:
             if not self.client:
@@ -241,7 +259,7 @@ class RedisCacheService:
             logger.error(f"Failed to clear cache pattern: {str(e)}")
             return 0
     
-    # LLM Response Caching
+    # LLM 响应缓存
     
     async def cache_llm_response(
         self,
@@ -252,20 +270,20 @@ class RedisCacheService:
         temperature: float = 0.7
     ) -> bool:
         """
-        Cache LLM response
+        缓存 LLM 响应
         
         Args:
-            provider: LLM provider
-            model: Model name
-            messages: Input messages
-            response: LLM response
-            temperature: Temperature parameter
+            provider: LLM 提供商
+            model: 模型名称
+            messages: 输入消息
+            response: LLM 响应
+            temperature: 温度参数
             
         Returns:
-            True if successful, False otherwise
+            成功返回 True，否则返回 False
         """
         try:
-            # Generate hash from messages
+            # 从消息生成哈希
             messages_str = json.dumps(messages, sort_keys=True)
             content_hash = self._hash_content(messages_str + str(temperature))
             
@@ -293,16 +311,16 @@ class RedisCacheService:
         temperature: float = 0.7
     ) -> Optional[str]:
         """
-        Get cached LLM response
+        获取缓存的 LLM 响应
         
         Args:
-            provider: LLM provider
-            model: Model name
-            messages: Input messages
-            temperature: Temperature parameter
+            provider: LLM 提供商
+            model: 模型名称
+            messages: 输入消息
+            temperature: 温度参数
             
         Returns:
-            Cached response or None if not found
+            缓存的响应，未找到返回 None
         """
         try:
             messages_str = json.dumps(messages, sort_keys=True)
@@ -324,7 +342,7 @@ class RedisCacheService:
             logger.error(f"Failed to get cached LLM response: {str(e)}")
             return None
     
-    # Embedding Caching
+    # 嵌入缓存
     
     async def cache_embedding(
         self,
@@ -334,16 +352,16 @@ class RedisCacheService:
         embedding: List[float]
     ) -> bool:
         """
-        Cache embedding vector
+        缓存嵌入向量
         
         Args:
-            provider: Embedding provider
-            model: Model name
-            text: Input text
-            embedding: Embedding vector
+            provider: 嵌入提供商
+            model: 模型名称
+            text: 输入文本
+            embedding: 嵌入向量
             
         Returns:
-            True if successful, False otherwise
+            成功返回 True，否则返回 False
         """
         try:
             text_hash = self._hash_content(text)
@@ -371,15 +389,15 @@ class RedisCacheService:
         text: str
     ) -> Optional[List[float]]:
         """
-        Get cached embedding vector
+        获取缓存的嵌入向量
         
         Args:
-            provider: Embedding provider
-            model: Model name
-            text: Input text
+            provider: 嵌入提供商
+            model: 模型名称
+            text: 输入文本
             
         Returns:
-            Cached embedding or None if not found
+            缓存的嵌入，未找到返回 None
         """
         try:
             text_hash = self._hash_content(text)
@@ -400,7 +418,7 @@ class RedisCacheService:
             logger.error(f"Failed to get cached embedding: {str(e)}")
             return None
     
-    # Retrieval Result Caching
+    # 检索结果缓存
     
     async def cache_retrieval_result(
         self,
@@ -409,15 +427,15 @@ class RedisCacheService:
         results: List[Dict[str, Any]]
     ) -> bool:
         """
-        Cache retrieval results
+        缓存检索结果
         
         Args:
-            workspace_id: Workspace ID
-            query: Search query
-            results: Retrieval results
+            workspace_id: 工作空间 ID
+            query: 搜索查询
+            results: 检索结果
             
         Returns:
-            True if successful, False otherwise
+            成功返回 True，否则返回 False
         """
         try:
             query_hash = self._hash_content(query)
@@ -443,14 +461,14 @@ class RedisCacheService:
         query: str
     ) -> Optional[List[Dict[str, Any]]]:
         """
-        Get cached retrieval results
+        获取缓存的检索结果
         
         Args:
-            workspace_id: Workspace ID
-            query: Search query
+            workspace_id: 工作空间 ID
+            query: 搜索查询
             
         Returns:
-            Cached results or None if not found
+            缓存的结果，未找到返回 None
         """
         try:
             query_hash = self._hash_content(query)
@@ -470,7 +488,7 @@ class RedisCacheService:
             logger.error(f"Failed to get cached retrieval result: {str(e)}")
             return None
     
-    # Session State Caching
+    # 会话状态缓存
     
     async def cache_session_state(
         self,
@@ -478,14 +496,14 @@ class RedisCacheService:
         state: Dict[str, Any]
     ) -> bool:
         """
-        Cache session state
+        缓存会话状态
         
         Args:
-            session_id: Session ID
-            state: Session state
+            session_id: 会话 ID
+            state: 会话状态
             
         Returns:
-            True if successful, False otherwise
+            成功返回 True，否则返回 False
         """
         try:
             key = self._generate_key(CACHE_PREFIX["session"], session_id)
@@ -499,13 +517,13 @@ class RedisCacheService:
         session_id: str
     ) -> Optional[Dict[str, Any]]:
         """
-        Get cached session state
+        获取缓存的会话状态
         
         Args:
-            session_id: Session ID
+            session_id: 会话 ID
             
         Returns:
-            Cached state or None if not found
+            缓存的状态，未找到返回 None
         """
         try:
             key = self._generate_key(CACHE_PREFIX["session"], session_id)
@@ -516,13 +534,13 @@ class RedisCacheService:
     
     async def delete_session_state(self, session_id: str) -> bool:
         """
-        Delete cached session state
+        删除缓存的会话状态
         
         Args:
-            session_id: Session ID
+            session_id: 会话 ID
             
         Returns:
-            True if successful, False otherwise
+            成功返回 True，否则返回 False
         """
         try:
             key = self._generate_key(CACHE_PREFIX["session"], session_id)
@@ -531,14 +549,14 @@ class RedisCacheService:
             logger.error(f"Failed to delete session state: {str(e)}")
             return False
     
-    # Statistics
+    # 统计
     
     async def get_cache_stats(self) -> Dict[str, Any]:
         """
-        Get cache statistics
+        获取缓存统计
         
         Returns:
-            Dictionary with cache statistics
+            包含缓存统计信息的字典
         """
         try:
             if not self.client:
@@ -562,7 +580,7 @@ class RedisCacheService:
             return {}
     
     def _calculate_hit_rate(self, hits: int, misses: int) -> float:
-        """Calculate cache hit rate"""
+        """计算缓存命中率"""
         total = hits + misses
         if total == 0:
             return 0.0
@@ -570,10 +588,10 @@ class RedisCacheService:
     
     async def clear_all(self) -> bool:
         """
-        Clear all cache (use with caution)
+        清除所有缓存（谨慎使用）
         
         Returns:
-            True if successful, False otherwise
+            成功返回 True，否则返回 False
         """
         try:
             if not self.client:

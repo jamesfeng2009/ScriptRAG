@@ -1,5 +1,3 @@
-"""PostgreSQL Service - Relational database operations"""
-
 import logging
 from typing import Optional, Dict, Any
 import asyncpg

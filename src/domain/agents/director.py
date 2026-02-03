@@ -1,11 +1,11 @@
-"""Director Agent - Evaluates content and makes decisions
+"""导演智能体 - 评估内容并做出决策
 
-The Director agent is responsible for:
-1. Detecting conflicts (e.g., deprecated features)
-2. Assessing content complexity
-3. Making decisions (approve/pivot)
-4. Recommending skill switches
-5. Triggering pivots when necessary
+本模块实现导演智能体，负责：
+1. 检测冲突（例如：已废弃的功能）
+2. 评估内容复杂度
+3. 做出决策（批准/转向）
+4. 推荐技能切换
+5. 必要时触发转向
 """
 
 import logging
