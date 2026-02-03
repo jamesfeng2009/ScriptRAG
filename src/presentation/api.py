@@ -1844,3 +1844,294 @@ async def query_document(request: QueryRequest):
     except Exception as e:
         logger.error(f"Query failed: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+class OptimizationLevel(str, Enum):
+    NONE = "none"
+    STANDARD = "standard"
+    ADVANCED = "advanced"
+    FULL = "full"
+
+
+class EnhancedIngestRequest(BaseModel):
+    """增强版文档摄入请求"""
+    file_path: str = Field(..., description="文件路径")
+    source_id: Optional[str] = Field(None, description="文档唯一标识")
+    file_name: Optional[str] = Field(None, description="原始文件名")
+    force_reindex: bool = Field(False, description="强制重新索引")
+    optimization_level: OptimizationLevel = Field(OptimizationLevel.FULL, description="优化级别")
+    embedding_model: str = Field("text-embedding-3-large", description="嵌入模型")
+    enable_compression: bool = Field(True, description="是否启用压缩")
+    enable_checkpoint: bool = Field(True, description="是否启用检查点")
+
+
+class EnhancedIngestResponse(BaseModel):
+    """增强版文档摄入响应"""
+    status: str = Field(..., description="状态")
+    source_id: str = Field(..., description="文档ID")
+    chunk_count: int = Field(..., description="总块数")
+    new_chunks: int = Field(0, description="新增块数")
+    updated_chunks: int = Field(0, description="更新块数")
+    deleted_chunks: int = Field(0, description="删除块数")
+    skipped_chunks: int = Field(0, description="跳过块数")
+    compression_ratio: float = Field(1.0, description="压缩比")
+    processing_time_ms: float = Field(0.0, description="处理时间(ms)")
+    error_msg: Optional[str] = Field(None, description="错误信息")
+    checkpoint_id: Optional[str] = Field(None, description="检查点ID")
+    consistency_report: Optional[Dict[str, Any]] = Field(None, description="一致性报告")
+
+
+class ConsistencyCheckRequest(BaseModel):
+    """一致性检查请求"""
+    source_id: str = Field(..., description="文档ID")
+
+
+class ConsistencyCheckResponse(BaseModel):
+    """一致性检查响应"""
+    document_id: str = Field(..., description="文档ID")
+    total_chunks: int = Field(..., description="总块数")
+    valid_embeddings: int = Field(..., description="有效嵌入数")
+    missing_embeddings: int = Field(..., description="缺失嵌入数")
+    orphaned_chunks: int = Field(..., description="孤立块数")
+    issues: List[Dict[str, Any]] = Field(default_factory=list, description="问题列表")
+    recommendation: str = Field(..., description="建议")
+
+
+class RecoveryRequest(BaseModel):
+    """恢复请求"""
+    batch_id: str = Field(..., description="批次ID")
+
+
+class RecoveryResponse(BaseModel):
+    """恢复响应"""
+    status: str = Field(..., description="状态")
+    batch_id: str = Field(..., description="批次ID")
+    start_index: int = Field(..., description="起始索引")
+    remaining_chunks: int = Field(..., description="剩余块数")
+    progress: str = Field(..., description="进度")
+
+
+class OptimizationStatsResponse(BaseModel):
+    """优化统计响应"""
+    optimization_level: str = Field(..., description="优化级别")
+    embedding_model: str = Field(..., description="嵌入模型")
+    compression_enabled: bool = Field(..., description="是否启用压缩")
+    checkpoint_enabled: bool = Field(..., description="是否启用检查点")
+    dimension_manager: Optional[Dict[str, Any]] = Field(None, description="维度管理器统计")
+    storage: Optional[Dict[str, Any]] = Field(None, description="存储优化报告")
+
+
+enhanced_etl_service: Optional[Any] = None
+
+
+@app.post("/ingest/enhanced", response_model=EnhancedIngestResponse)
+async def ingest_document_enhanced(request: EnhancedIngestRequest):
+    """增强版文档摄入 - 支持增量更新和存储优化"""
+    global enhanced_etl_service
+
+    if not enhanced_etl_service:
+        try:
+            from src.services.rag.enhanced_etl_service import (
+                EnhancedETLService,
+                create_enhanced_etl_service,
+                OptimizationLevel as ETLOptimizationLevel
+            )
+
+            level_map = {
+                OptimizationLevel.NONE: ETLOptimizationLevel.NONE,
+                OptimizationLevel.STANDARD: ETLOptimizationLevel.STANDARD,
+                OptimizationLevel.ADVANCED: ETLOptimizationLevel.ADVANCED,
+                OptimizationLevel.FULL: ETLOptimizationLevel.FULL,
+            }
+
+            enhanced_etl_service = await create_enhanced_etl_service(
+                workspace_id=DEFAULT_WORKSPACE,
+                optimization_level=level_map[request.optimization_level],
+                embedding_model=request.embedding_model,
+                enable_compression=request.enable_compression,
+                enable_checkpoint=request.enable_checkpoint
+            )
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"Enhanced ETL service not available: {str(e)}")
+
+    try:
+        result = await enhanced_etl_service.ingest(
+            file_path=request.file_path,
+            source_id=request.source_id,
+            file_name=request.file_name,
+            force_reindex=request.force_reindex
+        )
+
+        return EnhancedIngestResponse(
+            status=result.status,
+            source_id=result.source_id,
+            chunk_count=result.chunk_count,
+            new_chunks=result.new_chunks,
+            updated_chunks=result.updated_chunks,
+            deleted_chunks=result.deleted_chunks,
+            skipped_chunks=result.skipped_chunks,
+            compression_ratio=result.compression_ratio,
+            processing_time_ms=result.processing_time_ms,
+            error_msg=result.error_msg,
+            checkpoint_id=result.checkpoint_id,
+            consistency_report=result.consistency_report
+        )
+    except Exception as e:
+        logger.error(f"Enhanced ingest failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/consistency/check", response_model=ConsistencyCheckResponse)
+async def check_consistency(request: ConsistencyCheckRequest):
+    """检查数据一致性"""
+    global enhanced_etl_service
+
+    if not enhanced_etl_service:
+        raise HTTPException(status_code=503, detail="Enhanced ETL service not initialized")
+
+    try:
+        result = await enhanced_etl_service.check_consistency(request.source_id)
+
+        if result.get("status") == "not_enabled":
+            raise HTTPException(status_code=400, detail=result.get("message"))
+
+        if result.get("status") == "error":
+            raise HTTPException(status_code=404, detail=result.get("message"))
+
+        return ConsistencyCheckResponse(
+            document_id=result["document_id"],
+            total_chunks=result["total_chunks"],
+            valid_embeddings=result["valid_embeddings"],
+            missing_embeddings=result["missing_embeddings"],
+            orphaned_chunks=result["orphaned_chunks"],
+            issues=result["issues"],
+            recommendation=result["recommendation"]
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Consistency check failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/consistency/recover", response_model=RecoveryResponse)
+async def recover_from_checkpoint(request: RecoveryRequest):
+    """从检查点恢复"""
+    global enhanced_etl_service
+
+    if not enhanced_etl_service:
+        raise HTTPException(status_code=503, detail="Enhanced ETL service not initialized")
+
+    try:
+        result = await enhanced_etl_service.recover_from_checkpoint(request.batch_id)
+
+        if result.get("status") == "error":
+            raise HTTPException(status_code=404, detail=result.get("message"))
+
+        return RecoveryResponse(
+            status=result["status"],
+            batch_id=result["batch_id"],
+            start_index=result["start_index"],
+            remaining_chunks=result["remaining_chunks"],
+            progress=result["progress"]
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Recovery failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/optimization/stats", response_model=OptimizationStatsResponse)
+async def get_optimization_stats():
+    """获取优化统计信息"""
+    global enhanced_etl_service
+
+    if not enhanced_etl_service:
+        raise HTTPException(status_code=503, detail="Enhanced ETL service not initialized")
+
+    try:
+        stats = enhanced_etl_service.get_optimization_stats()
+
+        return OptimizationStatsResponse(
+            optimization_level=stats["optimization_level"],
+            embedding_model=stats["embedding_model"],
+            compression_enabled=stats["compression_enabled"],
+            checkpoint_enabled=stats["checkpoint_enabled"],
+            dimension_manager=stats.get("dimension_manager"),
+            storage=stats.get("storage")
+        )
+    except Exception as e:
+        logger.error(f"Get optimization stats failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+class ReconciliationResponse(BaseModel):
+    """对账响应"""
+    scanned_files: int
+    fixed_missing_vectors: int
+    fixed_orphaned_vectors: int
+    fixed_failed_status: int
+    duration_seconds: float
+    errors: List[str] = []
+
+
+class ReconciliationStatus(BaseModel):
+    """对账状态"""
+    status: str
+    last_run: Optional[str] = None
+    next_run: Optional[str] = None
+    total_fixed: int = 0
+
+
+@app.post("/admin/reconciliation/run", response_model=ReconciliationResponse)
+async def run_reconciliation(background_tasks: BackgroundTasks):
+    """手动触发数据对账（Source of Truth 架构）"""
+    async def run_job():
+        import subprocess
+        result = subprocess.run(
+            ['python', '-m', 'src.scripts.reconciliation'],
+            cwd='/Users/fengyu/Downloads/myproject/workspace/agent-skills-demo',
+            capture_output=True,
+            text=True
+        )
+        logger.info(f"Reconciliation output: {result.stdout}")
+        if result.stderr:
+            logger.error(f"Reconciliation error: {result.stderr}")
+
+    background_tasks.add_task(run_job)
+
+    return {
+        "status": "started",
+        "message": "对账任务已在后台启动，请稍后查看日志"
+    }
+
+
+@app.get("/admin/reconciliation/status", response_model=ReconciliationStatus)
+async def get_reconciliation_status():
+    """获取对账状态"""
+    return {
+        "status": "available",
+        "message": "对账脚本已就绪，可通过 POST /admin/reconciliation/run 触发"
+    }
+
+
+@app.post("/admin/reconciliation/cleanup-orphaned")
+async def cleanup_orphaned_vectors():
+    """清理孤立向量"""
+    import subprocess
+
+    result = subprocess.run(
+        ['python', '-m', 'src.scripts.reconciliation', '--cleanup-orphaned'],
+        cwd='/Users/fengyu/Downloads/myproject/workspace/agent-skills-demo',
+        capture_output=True,
+        text=True
+    )
+
+    if result.returncode == 0:
+        return {
+            "status": "success",
+            "message": result.stdout.strip()
+        }
+    else:
+        raise HTTPException(status_code=500, detail=result.stderr)

@@ -273,26 +273,42 @@ class ETLService:
         chunk: Chunk,
         embedding: List[float]
     ) -> None:
-        """写入单个 chunk"""
+        """写入单个 chunk
+
+        Payload 设计（元数据冗余存储）：
+        - 避免检索时回查 SQL，减少一次 DB IO
+        - 前端可直接从向量库获取完整信息
+        """
         file_path = f"{source_id}_{chunk.index}"
+
+        metadata = {
+            'source_id': source_id,
+            'chunk_index': chunk.index,
+            'content_preview': chunk.content[:200] + '...' if len(chunk.content) > 200 else chunk.content,
+            'char_count': len(chunk.content),
+            **chunk.metadata
+        }
 
         await self.vector_store.execute(
             """
             INSERT INTO code_documents (
                 workspace_id, file_path, content, embedding,
-                has_deprecated, has_fixme, has_todo, has_security
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                has_deprecated, has_fixme, has_todo, has_security,
+                doc_metadata
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
             ON CONFLICT (workspace_id, file_path)
             DO UPDATE SET
                 content = EXCLUDED.content,
                 embedding = EXCLUDED.embedding,
+                doc_metadata = EXCLUDED.doc_metadata,
                 updated_at = NOW()
             """,
             self.workspace_id,
             file_path,
             chunk.content,
             embedding,
-            False, False, False, False
+            False, False, False, False,
+            metadata
         )
 
 
