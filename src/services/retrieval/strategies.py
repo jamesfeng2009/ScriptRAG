@@ -1,7 +1,7 @@
-"""Retrieval Strategies - Pluggable retrieval implementations
+"""检索策略 - 可插拔的检索实现
 
-This module provides an extensible architecture for retrieval strategies,
-allowing new retrieval methods to be added without modifying core logic.
+该模块提供可扩展的检索策略架构，
+允许添加新的检索方法而无需修改核心逻辑。
 """
 
 import logging
@@ -145,7 +145,7 @@ class VectorSearchStrategy(RetrievalStrategy):
     ) -> List[RetrievalResult]:
         """执行向量搜索"""
         if not self.validate_query(query):
-            logger.warning(f"Invalid query for vector search: {query}")
+            logger.warning(f"无效的向量搜索查询: {query}")
             return []
 
         try:
@@ -172,11 +172,11 @@ class VectorSearchStrategy(RetrievalStrategy):
                     metadata=db_result.metadata
                 ))
 
-            logger.info(f"Vector search returned {len(results)} results")
+            logger.info(f"向量搜索返回了 {len(results)} 个结果")
             return results
 
         except Exception as e:
-            logger.error(f"Vector search failed: {str(e)}")
+            logger.error(f"向量搜索失败: {str(e)}")
             return []
 
     @property
@@ -241,7 +241,7 @@ class KeywordSearchStrategy(RetrievalStrategy):
     ) -> List[RetrievalResult]:
         """执行关键词搜索"""
         if not self.validate_query(query):
-            logger.warning(f"Invalid query for keyword search: {query}")
+            logger.warning(f"无效的关键词搜索查询: {query}")
             return []
 
         try:
@@ -261,7 +261,7 @@ class KeywordSearchStrategy(RetrievalStrategy):
                     keyword_filters[db_field] = True
 
             if not keyword_filters:
-                logger.warning("No valid keyword filters configured")
+                logger.warning("未配置有效的关键词过滤器")
                 return []
 
             db_results = await self.vector_db.hybrid_search(
@@ -318,11 +318,11 @@ class KeywordSearchStrategy(RetrievalStrategy):
                 ))
 
             results.sort(key=lambda x: x.similarity, reverse=True)
-            logger.info(f"Keyword search returned {len(results)} results")
+            logger.info(f"关键词搜索返回了 {len(results)} 个结果")
             return results
 
         except Exception as e:
-            logger.error(f"Keyword search failed: {str(e)}")
+            logger.error(f"关键词搜索失败: {str(e)}")
             return []
 
     @property
@@ -388,7 +388,7 @@ class HybridSearchStrategy(RetrievalStrategy):
     ) -> List[RetrievalResult]:
         """执行混合搜索"""
         if not self.validate_query(query):
-            logger.warning(f"Invalid query for hybrid search: {query}")
+            logger.warning(f"无效的混合搜索查询: {query}")
             return []
 
         try:
@@ -409,11 +409,11 @@ class HybridSearchStrategy(RetrievalStrategy):
             )
 
             merged_results = self._merge_results(vector_results, keyword_results, top_k)
-            logger.info(f"Hybrid search returned {len(merged_results)} results")
+            logger.info(f"混合搜索返回了 {len(merged_results)} 个结果")
             return merged_results
 
         except Exception as e:
-            logger.error(f"Hybrid search failed: {str(e)}")
+            logger.error(f"混合搜索失败: {str(e)}")
             return []
 
     def _merge_results(
@@ -499,7 +499,7 @@ class StrategyRegistry:
         """创建策略实例"""
         strategy_class = cls.get_strategy_class(name)
         if strategy_class is None:
-            logger.error(f"Unknown strategy: {name}")
+            logger.error(f"未知的策略: {name}")
             return None
 
         try:
@@ -509,7 +509,7 @@ class StrategyRegistry:
                 **(config or {})
             )
         except Exception as e:
-            logger.error(f"Failed to create strategy {name}: {str(e)}")
+            logger.error(f"创建策略 {name} 失败: {str(e)}")
             return None
 
 

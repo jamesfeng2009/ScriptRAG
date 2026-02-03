@@ -1,7 +1,7 @@
-"""Retrieval Configuration
+"""检索配置模块
 
-This module provides configuration models for the retrieval system,
-supporting flexible configuration of strategies, mergers, and markers.
+该模块提供检索系统的配置模型，
+支持灵活的策略、合并器和标记器配置。
 """
 
 from typing import List, Dict, Any, Optional

@@ -1,7 +1,6 @@
-"""LLM Generated Query Strategy - Intelligent query expansion
+"""LLM生成查询策略 - 智能查询扩展
 
-This module provides a retrieval strategy that uses LLM to generate
-multiple query variants for improved recall.
+该模块提供一种使用LLM生成多个查询变体以提高召回率的检索策略。
 """
 
 import logging
@@ -172,21 +171,21 @@ class LLMGeneratedQueryStrategy(RetrievalStrategy):
             合并后的检索结果列表
         """
         if not self._validate_query(query):
-            logger.warning(f"Invalid query for LLM query generation: {query}")
+            logger.warning(f"无效的 LLM 查询生成查询: {query}")
             return []
 
         try:
-            logger.info(f"Generating query variants for: {query}")
+            logger.info(f"正在为查询生成变体: {query}")
 
             variants = await self._generate_query_variants(query)
 
             if not variants:
-                logger.warning("No variants generated, falling back to base strategy")
+                logger.warning("未生成变体，回退到基础策略")
                 return await self._fallback_search(
                     query, query_embedding, workspace_id, top_k
                 )
 
-            logger.info(f"Generated {len(variants)} query variants")
+            logger.info(f"生成了 {len(variants)} 个查询变体")
 
             all_results = await self._search_all_variants(
                 query=query,
@@ -196,7 +195,7 @@ class LLMGeneratedQueryStrategy(RetrievalStrategy):
             )
 
             if not all_results:
-                logger.warning("No results from any variant, falling back")
+                logger.warning("所有变体均无结果，回退到基础策略")
                 return await self._fallback_search(
                     query, query_embedding, workspace_id, top_k
                 )
@@ -204,13 +203,12 @@ class LLMGeneratedQueryStrategy(RetrievalStrategy):
             merged_results = self._merge_results(all_results, top_k)
 
             logger.info(
-                f"LLM query strategy returned {len(merged_results)} results "
-                f"from {len(variants)} variants"
+                f"LLM 查询策略从 {len(variants)} 个变体返回了 {len(merged_results)} 个结果"
             )
             return merged_results
 
         except Exception as e:
-            logger.error(f"LLM query strategy failed: {str(e)}")
+            logger.error(f"LLM 查询策略失败: {str(e)}")
             return await self._fallback_search(
                 query, query_embedding, workspace_id, top_k
             )
@@ -246,18 +244,18 @@ class LLMGeneratedQueryStrategy(RetrievalStrategy):
             variants = self._parse_variants_from_response(response)
 
             if variants:
-                logger.debug(f"Generated {len(variants)} variants from LLM")
+                logger.debug(f"从 LLM 生成了 {len(variants)} 个变体")
                 return variants[:self.max_variants]
             else:
-                logger.warning("Failed to parse variants from LLM response")
+                logger.warning("无法从 LLM 响应解析变体")
                 return self._generate_default_variants(query)
 
         except Exception as e:
-            logger.error(f"Failed to generate query variants: {str(e)}")
+            logger.error(f"生成查询变体失败: {str(e)}")
             return self._generate_default_variants(query)
 
     def _build_variant_prompt(self, query: str) -> str:
-        """构建 LLM prompt"""
+        """构建 LLM 提示词"""
         variant_types = []
         if self.include_synonyms:
             variant_types.append("同义词变体 (semantic_variant)")
@@ -289,7 +287,7 @@ class LLMGeneratedQueryStrategy(RetrievalStrategy):
         try:
             json_match = re.search(r'\[.*\]', response, re.DOTALL)
             if not json_match:
-                logger.warning("No JSON array found in response")
+                logger.warning("响应中未找到 JSON 数组")
                 return []
 
             json_str = json_match.group()
@@ -308,10 +306,10 @@ class LLMGeneratedQueryStrategy(RetrievalStrategy):
             return variants
 
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse JSON: {str(e)}")
+            logger.error(f"解析 JSON 失败: {str(e)}")
             return []
         except Exception as e:
-            logger.error(f"Error parsing variants: {str(e)}")
+            logger.error(f"解析变体出错: {str(e)}")
             return []
 
     def _generate_default_variants(self, query: str) -> List[QueryVariant]:
@@ -351,7 +349,7 @@ class LLMGeneratedQueryStrategy(RetrievalStrategy):
             try:
                 embedding = await self.llm_service.embedding([variant.text])
                 if not embedding:
-                    logger.warning(f"No embedding for variant: {variant.text}")
+                    logger.warning(f"变体无嵌入向量: {variant.text}")
                     continue
 
                 variant_results = await self.base_strategy.search(
@@ -365,10 +363,10 @@ class LLMGeneratedQueryStrategy(RetrievalStrategy):
                     results_by_variant[variant.text] = [
                         self._annotate_result(r, variant) for r in variant_results
                     ]
-                    logger.debug(f"Variant '{variant.text}': {len(variant_results)} results")
+                    logger.debug(f"变体 '{variant.text}': {len(variant_results)} 个结果")
 
             except Exception as e:
-                logger.error(f"Search failed for variant '{variant.text}': {str(e)}")
+                logger.error(f"变体 '{variant.text}' 搜索失败: {str(e)}")
                 continue
 
         return results_by_variant
@@ -447,7 +445,7 @@ class LLMGeneratedQueryStrategy(RetrievalStrategy):
         top_k: int
     ) -> List[RetrievalResult]:
         """回退到基础检索策略"""
-        logger.info(f"Falling back to base strategy for query: {query}")
+        logger.info(f"回退到基础策略进行查询: {query}")
 
         return await self.base_strategy.search(
             query=query,
@@ -551,7 +549,7 @@ class MultiQuerySearchStrategy(RetrievalStrategy):
             return merged
 
         except Exception as e:
-            logger.error(f"Multi-query search failed: {str(e)}")
+            logger.error(f"多查询搜索失败: {str(e)}")
             return await self._fallback_search(query, query_embedding, workspace_id, top_k)
 
     def _validate_query(self, query: str) -> bool:

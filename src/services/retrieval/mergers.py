@@ -1,7 +1,7 @@
-"""Result Mergers - Configurable result merging strategies
+"""结果合并器 - 可配置的结果合并策略
 
-This module provides different strategies for merging retrieval results
-from multiple sources with configurable weights and algorithms.
+该模块提供不同的策略来合并来自多个来源的检索结果，
+支持可配置的权重和算法。
 """
 
 import logging
@@ -124,8 +124,7 @@ class WeightedMerger(ResultMerger):
         final_results = self._apply_diversity_filter(merged, top_k)
 
         logger.info(
-            f"Weighted merge: {len(final_results)} results from "
-            f"{len(results_by_strategy)} strategies"
+            f"加权合并: 从 {len(results_by_strategy)} 个策略返回了 {len(final_results)} 个结果"
         )
         return final_results
 
@@ -238,7 +237,7 @@ class ReciprocalRankMerger(ResultMerger):
             result.metadata["strategy_contributions"] = rank_info[result_id]["strategies"]
             merged.append(result)
 
-        logger.info(f"RRF merge: {len(merged)} results from {len(results_by_strategy)} strategies")
+        logger.info(f"RRF 合并: 从 {len(results_by_strategy)} 个策略返回了 {len(merged)} 个结果")
         return merged
 
 
@@ -291,7 +290,7 @@ class RoundRobinMerger(ResultMerger):
             round_num += 1
 
         merged.sort(key=lambda x: x.confidence, reverse=True)
-        logger.info(f"Round-robin merge: {len(merged)} results")
+        logger.info(f"轮询合并: 返回了 {len(merged)} 个结果")
         return merged
 
 
@@ -383,7 +382,7 @@ class FusionMerger(ResultMerger):
                 source_result.metadata["source"] = "fusion"
                 merged.append(source_result)
 
-        logger.info(f"Fusion merge: {len(merged)} results")
+        logger.info(f"融合合并: 返回了 {len(merged)} 个结果")
         return merged
 
 
@@ -428,13 +427,13 @@ class MergerRegistry:
         """创建合并策略实例"""
         merger_class = cls.get_merger_class(name)
         if merger_class is None:
-            logger.error(f"Unknown merger: {name}")
+            logger.error(f"未知的合并策略: {name}")
             return None
 
         try:
             return merger_class(**(config or {}))
         except Exception as e:
-            logger.error(f"Failed to create merger {name}: {str(e)}")
+            logger.error(f"创建合并策略 {name} 失败: {str(e)}")
             return None
 
 

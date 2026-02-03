@@ -1,10 +1,10 @@
-"""Retrieval Service - Hybrid retrieval with pluggable strategies
+"""检索服务 - 混合检索策略，支持可插拔策略
 
-This service implements the hybrid retrieval strategy using:
-- Multiple retrieval strategies (vector, keyword, hybrid)
-- Configurable result merging algorithms
-- Query expansion and reranking support
-- Advanced enhancement pipeline (Query Rewrite, Cross-Encoder, Adaptive Threshold, GraphRAG)
+该服务实现混合检索策略，包括：
+- 多种检索策略（向量、关键词、混合）
+- 可配置的结果合并算法
+- 查询扩展和重排序支持
+- 高级增强流水线（查询改写、Cross-Encoder、自适应阈值、GraphRAG）
 """
 
 import logging
@@ -671,7 +671,7 @@ class RetrievalService:
             ]
 
         except Exception as e:
-            logger.error(f"Reranking failed: {str(e)}")
+            logger.error(f"重排序失败: {str(e)}")
             return results[:top_k]
 
     def apply_adaptive_threshold(
@@ -713,7 +713,7 @@ class RetrievalService:
             }
 
         except Exception as e:
-            logger.error(f"Adaptive threshold failed: {str(e)}")
+            logger.error(f"自适应阈值截断失败: {str(e)}")
             return results, {"error": str(e)}
 
     def index_for_bm25(self, documents: List[Dict[str, str]]):
@@ -764,5 +764,5 @@ class RetrievalService:
             return [(node, score) for node, score in related]
 
         except Exception as e:
-            logger.error(f"GraphRAG related docs failed: {str(e)}")
+            logger.error(f"GraphRAG 关联文档获取失败: {str(e)}")
             return []
