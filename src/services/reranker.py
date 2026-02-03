@@ -423,7 +423,7 @@ class RetrievalQualityMonitor:
         distribution = {}
         
         for result in results:
-            source = result.source
+            source = result.strategy_name
             distribution[source] = distribution.get(source, 0) + 1
         
         return distribution

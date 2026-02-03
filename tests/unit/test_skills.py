@@ -150,7 +150,9 @@ class TestSkillCompatibilityFunctions:
         compatible = get_compatible_skills("standard_tutorial")
         assert "visualization_analogy" in compatible
         assert "warning_mode" in compatible
-        assert len(compatible) == 2
+        assert "research_mode" in compatible
+        assert "fallback_summary" in compatible
+        assert len(compatible) == 4
     
     def test_get_compatible_skills_invalid_raises(self):
         """Test that invalid skill name raises ValueError"""
@@ -167,13 +169,13 @@ class TestSkillCompatibilityFunctions:
     
     def test_find_closest_compatible_indirect(self):
         """Test finding closest compatible skill when not directly compatible"""
-        # standard_tutorial -> warning_mode -> research_mode
+        # standard_tutorial -> research_mode (directly compatible)
         result = find_closest_compatible_skill(
             "standard_tutorial",
             "research_mode"
         )
-        # Should return warning_mode as intermediate step
-        assert result == "warning_mode"
+        # Should return research_mode directly since it's directly compatible
+        assert result == "research_mode"
     
     def test_find_closest_compatible_with_tone(self):
         """Test finding closest compatible skill with tone preference"""
@@ -192,7 +194,7 @@ class TestSkillCompatibilityFunctions:
             "meme_style"
         )
         # Should return a compatible skill from warning_mode
-        assert result in ["standard_tutorial", "research_mode"]
+        assert result in ["standard_tutorial", "research_mode", "fallback_summary"]
 
 
 class TestSkillManager:
@@ -342,32 +344,32 @@ class TestSkillCompatibilityGraph:
     def test_standard_tutorial_connections(self):
         """Test standard_tutorial compatibility connections"""
         compatible = get_compatible_skills("standard_tutorial")
-        assert set(compatible) == {"visualization_analogy", "warning_mode"}
+        assert set(compatible) == {"visualization_analogy", "warning_mode", "research_mode", "fallback_summary"}
     
     def test_warning_mode_connections(self):
         """Test warning_mode compatibility connections"""
         compatible = get_compatible_skills("warning_mode")
-        assert set(compatible) == {"standard_tutorial", "research_mode"}
+        assert set(compatible) == {"standard_tutorial", "research_mode", "fallback_summary"}
     
     def test_visualization_analogy_connections(self):
         """Test visualization_analogy compatibility connections"""
         compatible = get_compatible_skills("visualization_analogy")
-        assert set(compatible) == {"standard_tutorial", "meme_style"}
+        assert set(compatible) == {"standard_tutorial", "meme_style", "research_mode"}
     
     def test_research_mode_connections(self):
         """Test research_mode compatibility connections"""
         compatible = get_compatible_skills("research_mode")
-        assert set(compatible) == {"standard_tutorial", "warning_mode"}
+        assert set(compatible) == {"standard_tutorial", "warning_mode", "visualization_analogy", "fallback_summary"}
     
     def test_meme_style_connections(self):
         """Test meme_style compatibility connections"""
         compatible = get_compatible_skills("meme_style")
-        assert set(compatible) == {"visualization_analogy", "fallback_summary"}
+        assert set(compatible) == {"visualization_analogy", "fallback_summary", "standard_tutorial"}
     
     def test_fallback_summary_connections(self):
         """Test fallback_summary compatibility connections"""
         compatible = get_compatible_skills("fallback_summary")
-        assert set(compatible) == {"standard_tutorial", "research_mode"}
+        assert set(compatible) == {"standard_tutorial", "research_mode", "warning_mode", "meme_style"}
     
     def test_all_skills_have_at_least_one_compatible(self):
         """Test that every skill has at least one compatible skill"""

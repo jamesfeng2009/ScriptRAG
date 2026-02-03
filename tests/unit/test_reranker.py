@@ -22,6 +22,7 @@ class TestMultiFactorReranker:
                 content="User authentication implementation with OAuth2",
                 similarity=0.85,
                 confidence=0.85,
+                strategy_name="vector_search",
                 has_deprecated=False,
                 has_security=True,
                 metadata={"keyword_count": 1}
@@ -32,6 +33,7 @@ class TestMultiFactorReranker:
                 content="Old authentication system - deprecated",
                 similarity=0.80,
                 confidence=0.80,
+                strategy_name="vector_search",
                 has_deprecated=True,
                 has_security=False,
                 metadata={"keyword_count": 1}
@@ -42,6 +44,7 @@ class TestMultiFactorReranker:
                 content="Helper functions for various tasks",
                 similarity=0.75,
                 confidence=0.75,
+                strategy_name="vector_search",
                 has_deprecated=False,
                 has_security=False,
                 metadata={"keyword_count": 0}
@@ -101,6 +104,7 @@ class TestMultiFactorReranker:
                 content="authentication login system implementation",
                 similarity=0.80,
                 confidence=0.80,
+                strategy_name="vector_search",
                 metadata={}
             ),
             RetrievalResult(
@@ -109,6 +113,7 @@ class TestMultiFactorReranker:
                 content="helper utility functions",
                 similarity=0.85,
                 confidence=0.85,
+                strategy_name="vector_search",
                 metadata={}
             ),
         ]
@@ -179,6 +184,7 @@ class TestDiversityFilter:
                 content="User authentication with OAuth2 implementation",
                 similarity=0.90,
                 confidence=0.90,
+                strategy_name="vector_search",
                 metadata={}
             ),
             RetrievalResult(
@@ -187,6 +193,7 @@ class TestDiversityFilter:
                 content="OAuth2 authentication implementation for users",
                 similarity=0.88,
                 confidence=0.88,
+                strategy_name="vector_search",
                 metadata={}
             ),
             RetrievalResult(
@@ -195,6 +202,7 @@ class TestDiversityFilter:
                 content="Helper functions for database operations",
                 similarity=0.85,
                 confidence=0.85,
+                strategy_name="vector_search",
                 metadata={}
             ),
         ]
@@ -235,6 +243,7 @@ class TestDiversityFilter:
                 content="User authentication implementation",
                 similarity=0.90,
                 confidence=0.90,
+                strategy_name="vector_search",
                 metadata={}
             ),
             RetrievalResult(
@@ -243,6 +252,7 @@ class TestDiversityFilter:
                 content="Database model definitions",
                 similarity=0.85,
                 confidence=0.85,
+                strategy_name="vector_search",
                 metadata={}
             ),
             RetrievalResult(
@@ -251,6 +261,7 @@ class TestDiversityFilter:
                 content="API endpoint routing configuration",
                 similarity=0.80,
                 confidence=0.80,
+                strategy_name="vector_search",
                 metadata={}
             ),
         ]
@@ -317,6 +328,7 @@ class TestRetrievalQualityMonitor:
                 content="User authentication implementation",
                 similarity=0.90,
                 confidence=0.90,
+                strategy_name="vector_search",
                 metadata={}
             ),
             RetrievalResult(
@@ -325,6 +337,7 @@ class TestRetrievalQualityMonitor:
                 content="OAuth2 implementation",
                 similarity=0.85,
                 confidence=0.85,
+                strategy_name="vector_search",
                 metadata={}
             ),
             RetrievalResult(
@@ -333,6 +346,7 @@ class TestRetrievalQualityMonitor:
                 content="Helper functions",
                 similarity=0.75,
                 confidence=0.75,
+                strategy_name="vector_search",
                 metadata={}
             ),
         ]
@@ -386,6 +400,7 @@ class TestRetrievalQualityMonitor:
                 content="Test content",
                 similarity=0.85,
                 confidence=0.85,
+                strategy_name="vector_search",
                 metadata={}
             )
         ]
@@ -409,6 +424,7 @@ class TestRetrievalQualityMonitor:
                 content="authentication implementation",
                 similarity=0.90,
                 confidence=0.90,
+                strategy_name="vector_search",
                 metadata={}
             ),
             RetrievalResult(
@@ -417,6 +433,7 @@ class TestRetrievalQualityMonitor:
                 content="authentication oauth2",
                 similarity=0.85,
                 confidence=0.85,
+                strategy_name="vector_search",
                 metadata={}
             ),
         ]
@@ -444,6 +461,7 @@ def test_reranker_and_diversity_integration():
             content="User authentication with OAuth2",
             similarity=0.85,
             confidence=0.85,
+            strategy_name="vector_search",
             has_security=True,
             metadata={}
         ),
@@ -453,6 +471,7 @@ def test_reranker_and_diversity_integration():
             content="OAuth2 authentication implementation",
             similarity=0.83,
             confidence=0.83,
+            strategy_name="vector_search",
             has_security=True,
             metadata={}
         ),
@@ -462,6 +481,7 @@ def test_reranker_and_diversity_integration():
             content="Helper utility functions",
             similarity=0.80,
             confidence=0.80,
+            strategy_name="vector_search",
             metadata={}
         ),
         RetrievalResult(
@@ -470,6 +490,7 @@ def test_reranker_and_diversity_integration():
             content="Old authentication - deprecated",
             similarity=0.78,
             confidence=0.78,
+            strategy_name="vector_search",
             has_deprecated=True,
             metadata={}
         ),

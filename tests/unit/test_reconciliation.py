@@ -221,11 +221,12 @@ class TestReconciliationJobConfig:
     """配置测试"""
 
     def test_default_config(self):
-        job = ReconciliationJob()
+        with patch.dict(os.environ, {'POSTGRES_PORT': '5432'}, clear=False):
+            job = ReconciliationJob()
 
-        assert 'database' in job.config
-        assert job.config['database']['host'] is not None
-        assert job.config['database']['port'] == 5432
+            assert 'database' in job.config
+            assert job.config['database']['host'] is not None
+            assert job.config['database']['port'] == 5432
 
     def test_workspace_id(self):
         job = ReconciliationJob(workspace_id="test-workspace")

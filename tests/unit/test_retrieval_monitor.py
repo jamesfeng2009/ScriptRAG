@@ -101,6 +101,7 @@ class TestQualityTracker:
                 content="content1",
                 similarity=0.9,
                 confidence=0.9,
+                strategy_name="vector_search",
                 has_security=True,
                 metadata={}
             ),
@@ -110,6 +111,7 @@ class TestQualityTracker:
                 content="content2",
                 similarity=0.8,
                 confidence=0.8,
+                strategy_name="vector_search",
                 has_deprecated=True,
                 metadata={}
             ),
@@ -162,6 +164,7 @@ class TestQualityTracker:
                     content=f"content{i}",
                     similarity=0.9,
                     confidence=0.9,
+                    strategy_name="vector_search",
                     metadata={}
                 )
                 for i in range(5)
@@ -178,6 +181,7 @@ class TestQualityTracker:
                     content=f"content{i}",
                     similarity=0.5,  # Much lower
                     confidence=0.5,
+                    strategy_name="vector_search",
                     metadata={}
                 )
                 for i in range(5)
@@ -221,6 +225,7 @@ class TestRetrievalMonitor:
                 content="content1",
                 similarity=0.9,
                 confidence=0.9,
+                strategy_name="vector_search",
                 metadata={}
             ),
         ]
@@ -317,6 +322,7 @@ def test_monitor_integration():
                 content=f"content{i}",
                 similarity=0.8 + (i * 0.01),
                 confidence=0.8 + (i * 0.01),
+                strategy_name="vector_search",
                 metadata={}
             )
         ]

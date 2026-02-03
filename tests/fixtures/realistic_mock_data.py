@@ -285,12 +285,12 @@ def create_realistic_retrieval_results(
             content=example["content"],
             similarity=0.9 - (i * 0.05),
             confidence=0.9 - (i * 0.05),
+            strategy_name="vector_search",
             has_deprecated=False,
             has_fixme=False,
             has_todo=False,
             has_security=False,
-            metadata={"language": "python"},
-            source="vector"
+            metadata={"language": "python"}
         )
         results.append(result)
     

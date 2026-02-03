@@ -1028,3 +1028,111 @@ class PgVectorDBService(IVectorDBService):
                     if self._query_count > 0 else 0
                 )
             }
+    
+    async def delete_documents(
+        self,
+        document_ids: List[str]
+    ) -> int:
+        """
+        删除文档（按文档 ID 列表）
+        
+        Args:
+            document_ids: 要删除的文档 ID 列表
+            
+        Returns:
+            删除的文档数量
+        """
+        if not self._initialized:
+            raise RuntimeError("Database not initialized")
+        
+        if not document_ids:
+            return 0
+        
+        async with self.async_session() as session:
+            from uuid import UUID
+            uuids = [UUID(doc_id) for doc_id in document_ids]
+            result = await session.execute(
+                delete(DocumentEmbeddingModel).where(
+                    DocumentEmbeddingModel.id.in_(uuids)
+                )
+            )
+            await session.commit()
+            
+            deleted_count = result.rowcount
+            logger.info(f"Deleted {deleted_count} documents by IDs")
+            return deleted_count
+    
+    async def delete_workspace(
+        self,
+        workspace_id: str
+    ) -> int:
+        """
+        删除工作空间的所有文档
+        
+        Args:
+            workspace_id: 工作空间 ID
+            
+        Returns:
+            删除的文档数量
+        """
+        return await self.delete_documents_by_workspace(workspace_id)
+    
+    async def get_document_count(
+        self,
+        workspace_id: str
+    ) -> int:
+        """
+        获取工作空间的文档数量
+        
+        Args:
+            workspace_id: 工作空间 ID
+            
+        Returns:
+            文档数量
+        """
+        if not self._initialized:
+            raise RuntimeError("Database not initialized")
+        
+        async with self.async_session() as session:
+            result = await session.execute(
+                select(func.count(DocumentEmbeddingModel.id)).where(
+                    DocumentEmbeddingModel.workspace_id == workspace_id
+                )
+            )
+            count = result.scalar()
+            return count or 0
+    
+    async def search(
+        self,
+        workspace_id: str,
+        query_embedding: List[float],
+        top_k: int = 5,
+        filters: Optional[Dict[str, Any]] = None
+    ) -> List[VectorSearchResult]:
+        """
+        搜索相似文档（实现 IVectorDBService 接口）
+        
+        Args:
+            workspace_id: 工作空间 ID
+            query_embedding: 查询嵌入向量
+            top_k: 返回结果数量
+            filters: 可选过滤器
+            
+        Returns:
+            相似文档列表
+        """
+        scalar_filters = None
+        if filters:
+            scalar_filters = {
+                "has_deprecated": filters.get("has_deprecated", False),
+                "has_fixme": filters.get("has_fixme", False),
+                "has_todo": filters.get("has_todo", False),
+                "has_security": filters.get("has_security", False)
+            }
+        
+        return await self.hybrid_search(
+            workspace_id=workspace_id,
+            query_embedding=query_embedding,
+            top_k=top_k,
+            filters=scalar_filters
+        )

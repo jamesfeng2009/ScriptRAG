@@ -39,7 +39,12 @@ from .database.vector_db import IVectorDBService
 from .query_rewriter import QueryRewriter, QueryContext
 from .query_expansion import QueryExpansion
 
-from .hybrid_search import HybridSearchService, HybridSearchConfig, RRFEngine, BM25KeywordSearch
+from .hybrid_search import (
+    HybridSearchService,
+    HybridSearchConfig,
+    FusionResult,
+    BM25KeywordSearch
+)
 
 from .cross_encoder_reranker import (
     CrossEncoderReranker,
@@ -131,17 +136,17 @@ class RetrievalEnhancementPipeline:
         self.query_rewriter = QueryRewriter(self.llm_service)
         self.query_expansion = QueryExpansion(self.llm_service)
         
-        # 混合检索
+        # BM25 搜索器
         self.bm25_searcher = BM25KeywordSearch()
+        
+        # 混合检索 - 使用统一的 HybridSearchService
         self.hybrid_service = HybridSearchService(
             config=HybridSearchConfig(
                 vector_weight=self.config.vector_weight,
                 keyword_weight=self.config.keyword_weight
             ),
-            vector_strategy=None,
-            keyword_strategy=None
+            bm25_searcher=self.bm25_searcher
         )
-        self.rrf_engine = RRFEngine(k=60)
         
         # 精排
         self.rerank_config = RerankConfig(
@@ -354,73 +359,56 @@ class RetrievalEnhancementPipeline:
         top_k: int,
         filters: Optional[Dict] = None
     ) -> List[RetrievalResult]:
-        """执行混合检索"""
-        results = []
+        """
+        执行混合检索
         
+        复用 HybridSearchService，避免重复实现
+        """
         try:
-            # 向量检索（从向量数据库）
-            vector_results = await self.vector_db.search(
-                workspace_id=workspace_id,
+            # 使用 HybridSearchService 执行混合检索
+            fusion_results = await self.hybrid_service.hybrid_search(
+                query=query,
                 query_embedding=embedding,
+                workspace_id=workspace_id,
                 top_k=top_k,
                 filters=filters
             )
             
-            # 转换为 RetrievalResult
-            for r in vector_results:
+            # 将 FusionResult 转换为 RetrievalResult
+            results = []
+            for r in fusion_results:
                 results.append(RetrievalResult(
                     id=r.id,
                     file_path=r.file_path,
                     content=r.content,
-                    similarity=r.similarity,
-                    confidence=r.similarity,
-                    strategy_name="vector"
+                    similarity=r.fused_score,
+                    confidence=r.fused_score,
+                    strategy_name="hybrid",
+                    metadata={
+                        "vector_score": r.vector_score,
+                        "keyword_score": r.keyword_score,
+                        "rrf_score": r.rrf_score
+                    }
                 ))
             
-            # BM25 关键词检索
-            if self.bm25_searcher._doc_count > 0:
-                bm25_results = self.bm25_searcher.search(query, top_k=top_k)
-                results.extend(bm25_results)
-            
-            # 使用 RRF 融合
-            vector_only = [r for r in results if r.strategy_name == "vector"]
-            keyword_only = [r for r in results if r.strategy_name == "bm25"]
-            
-            if vector_only and keyword_only:
-                fused = self.rrf_engine.fuse_with_scores(
-                    vector_only,
-                    keyword_only,
-                    self.config.vector_weight,
-                    self.config.keyword_weight
-                )
-                
-                return [
-                    RetrievalResult(
-                        id=r.id,
-                        file_path=r.file_path,
-                        content=r.content,
-                        similarity=r.fused_score,
-                        confidence=r.fused_score,
-                        strategy_name="hybrid",
-                        metadata={
-                            "vector_score": r.vector_score,
-                            "keyword_score": r.keyword_score,
-                            "rrf_score": r.rrf_score
-                        }
-                    )
-                    for r in fused
-                ]
-            
+            logger.debug(f"Hybrid search returned {len(results)} results")
             return results
             
         except Exception as e:
             logger.error(f"Hybrid search failed: {str(e)}")
-            return results
+            return []
     
     async def index_for_bm25(self, documents: List[Dict[str, str]]):
-        """索引文档用于 BM25 检索"""
-        self.bm25_searcher.index_documents(documents)
-        logger.info(f"Indexed {len(documents)} documents for BM25")
+        """
+        索引文档用于 BM25 检索
+        
+        通过 HybridSearchService 中的 bm25_searcher 进行索引
+        """
+        if hasattr(self, 'bm25_searcher') and self.bm25_searcher:
+            self.bm25_searcher.index_documents(documents)
+            logger.info(f"Indexed {len(documents)} documents for BM25")
+        else:
+            logger.warning("BM25 searcher not initialized")
     
     def index_for_graprag(self, content: str, file_path: str, doc_type: str = "code"):
         """索引文档用于 GraphRAG"""
@@ -440,7 +428,11 @@ class RetrievalEnhancementPipeline:
                 "enable_small_to_big": self.config.enable_small_to_big,
                 "enable_graprag": self.config.enable_graprag
             },
-            "bm25_indexed": self.bm25_searcher._doc_count,
+            "hybrid_search_config": {
+                "vector_weight": self.hybrid_service.config.vector_weight,
+                "keyword_weight": self.hybrid_service.config.keyword_weight,
+                "rrf_k": self.hybrid_service.config.rrf_k
+            },
             "graprag_stats": self.graprag_engine.stats() if self.graprag_engine else None
         }
 

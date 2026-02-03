@@ -580,7 +580,7 @@ class RetrievalService:
 
         except Exception as e:
             logger.error(f"Enhanced retrieval failed: {str(e)}")
-            return await self.hybrid_retrieve(workspace_id, query, top_k, **kwargs)
+            raise
 
     async def rewrite_query(self, query: str) -> Dict[str, Any]:
         """

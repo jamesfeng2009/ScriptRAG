@@ -18,6 +18,11 @@ from collections import defaultdict
 import math
 
 from .retrieval.strategies import RetrievalResult, VectorSearchStrategy, KeywordSearchStrategy
+
+try:
+    from .bm25 import BM25KeywordSearch
+except ImportError:
+    BM25KeywordSearch = None
 from .retrieval.mergers import FusionMerger, ReciprocalRankMerger
 
 logger = logging.getLogger(__name__)
@@ -79,11 +84,13 @@ class HybridSearchService:
         self,
         config: Optional[HybridSearchConfig] = None,
         vector_strategy: Optional[VectorSearchStrategy] = None,
-        keyword_strategy: Optional[KeywordSearchStrategy] = None
+        keyword_strategy: Optional[KeywordSearchStrategy] = None,
+        bm25_searcher: Optional['BM25KeywordSearch'] = None
     ):
         self.config = config or HybridSearchConfig()
         self.vector_strategy = vector_strategy
         self.keyword_strategy = keyword_strategy
+        self.bm25_searcher = bm25_searcher
     
     async def hybrid_search(
         self,
@@ -174,20 +181,29 @@ class HybridSearchService:
         filters: Optional[Dict] = None
     ) -> List[RetrievalResult]:
         """关键词检索"""
-        if not self.keyword_strategy:
+        if not self.keyword_strategy and not self.bm25_searcher:
             return []
         
         try:
-            results = await self.keyword_strategy.search(
-                query=query,
-                query_embedding=None,
-                workspace_id=workspace_id,
-                top_k=self.config.top_k_keyword,
-                filters=filters
-            )
+            # 优先使用 KeywordSearchStrategy
+            if self.keyword_strategy:
+                results = await self.keyword_strategy.search(
+                    query=query,
+                    query_embedding=None,
+                    workspace_id=workspace_id,
+                    top_k=self.config.top_k_keyword,
+                    filters=filters
+                )
+                logger.debug(f"Keyword search returned {len(results)} results")
+                return results
             
-            logger.debug(f"Keyword search returned {len(results)} results")
-            return results
+            # 回退到 BM25 搜索
+            if self.bm25_searcher and self.bm25_searcher._doc_count > 0:
+                results = self.bm25_searcher.search(query, top_k=self.config.top_k_keyword)
+                logger.debug(f"BM25 search returned {len(results)} results")
+                return results
+            
+            return []
             
         except Exception as e:
             logger.error(f"Keyword search failed: {str(e)}")
