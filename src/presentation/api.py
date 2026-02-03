@@ -1122,6 +1122,634 @@ async def delete_document(doc_id: str):
         raise HTTPException(status_code=500, detail=f"Failed to delete document: {str(e)}")
 
 
+knowledge_graph_service: Optional[Any] = None
+retrieval_logs_service: Optional[Any] = None
+api_usage_stats_service: Optional[Any] = None
+document_chunks_service: Optional[Any] = None
+
+
+@app.on_event("startup")
+async def init_test_services():
+    """初始化测试服务"""
+    global knowledge_graph_service, retrieval_logs_service, api_usage_stats_service, document_chunks_service
+    
+    try:
+        from ..services.knowledge_graph_service import KnowledgeGraphService
+        knowledge_graph_service = KnowledgeGraphService()
+        await knowledge_graph_service.initialize()
+        logger.info("Knowledge graph service initialized")
+    except Exception as e:
+        logger.error(f"Failed to initialize knowledge graph service: {e}")
+        knowledge_graph_service = None
+    
+    try:
+        from ..services.retrieval_logs_service import RetrievalLogsService
+        retrieval_logs_service = RetrievalLogsService()
+        await retrieval_logs_service.initialize()
+        logger.info("Retrieval logs service initialized")
+    except Exception as e:
+        logger.error(f"Failed to initialize retrieval logs service: {e}")
+        retrieval_logs_service = None
+    
+    try:
+        from ..services.api_usage_stats_service import APIUsageStatsService
+        api_usage_stats_service = APIUsageStatsService()
+        await api_usage_stats_service.initialize()
+        logger.info("API usage stats service initialized")
+    except Exception as e:
+        logger.error(f"Failed to initialize API usage stats service: {e}")
+        api_usage_stats_service = None
+    
+    try:
+        from ..services.document_chunks_service import DocumentChunksService
+        document_chunks_service = DocumentChunksService()
+        await document_chunks_service.initialize()
+        logger.info("Document chunks service initialized")
+    except Exception as e:
+        logger.error(f"Failed to initialize document chunks service: {e}")
+        document_chunks_service = None
+
+
+@app.on_event("shutdown")
+async def close_test_services():
+    """关闭测试服务"""
+    if knowledge_graph_service:
+        await knowledge_graph_service.close()
+    if retrieval_logs_service:
+        await retrieval_logs_service.close()
+    if api_usage_stats_service:
+        await api_usage_stats_service.close()
+    if document_chunks_service:
+        await document_chunks_service.close()
+
+
+class KnowledgeNodeCreate(BaseModel):
+    """创建知识节点请求"""
+    workspace_id: str = Field(default=DEFAULT_WORKSPACE)
+    node_type: str = Field(..., description="节点类型: concept, entity, relation, function, class")
+    name: str = Field(..., min_length=1, description="节点名称")
+    content: Optional[str] = Field(None, description="节点内容")
+    embedding: Optional[List[float]] = Field(None, description="嵌入向量")
+    properties: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    source_file: Optional[str] = Field(None)
+    line_number: Optional[int] = Field(None)
+
+
+class KnowledgeNodeResponse(BaseModel):
+    """知识节点响应"""
+    id: str
+    workspace_id: str
+    node_type: str
+    name: str
+    content: Optional[str]
+    embedding: Optional[str]
+    properties: Dict[str, Any]
+    source_file: Optional[str]
+    line_number: Optional[int]
+    created_at: Optional[str]
+    updated_at: Optional[str]
+
+
+class KnowledgeRelationCreate(BaseModel):
+    """创建知识关系请求"""
+    workspace_id: str = Field(default=DEFAULT_WORKSPACE)
+    source_node_id: str = Field(..., description="源节点 ID")
+    target_node_id: str = Field(..., description="目标节点 ID")
+    relation_type: str = Field(..., description="关系类型: imports, inherits, calls, contains, depends_on")
+    strength: float = Field(1.0, ge=0.0, le=1.0)
+    properties: Optional[Dict[str, Any]] = Field(default_factory=dict)
+
+
+class KnowledgeRelationResponse(BaseModel):
+    """知识关系响应"""
+    id: str
+    workspace_id: str
+    source_node_id: str
+    target_node_id: str
+    relation_type: str
+    strength: float
+    properties: Dict[str, Any]
+    created_at: Optional[str]
+
+
+class KnowledgeGraphStatsResponse(BaseModel):
+    """知识图谱统计响应"""
+    workspace_id: str
+    nodes_by_type: Dict[str, int]
+    relations_by_type: Dict[str, int]
+    total_nodes: int
+    total_relations: int
+
+
+class RetrievalLogResponse(BaseModel):
+    """检索日志响应"""
+    id: str
+    workspace_id: str
+    user_id: Optional[str]
+    query: str
+    top_k: int
+    result_count: int
+    total_score: float
+    search_strategy: str
+    duration_ms: int
+    token_usage: Optional[Dict[str, Any]]
+    cost_usd: float
+    created_at: Optional[str]
+
+
+class PopularQueryResponse(BaseModel):
+    """热门查询响应"""
+    query_preview: str
+    query_count: int
+    avg_results: float
+    total_cost: float
+    avg_duration_ms: float
+
+
+class RetrievalStatsResponse(BaseModel):
+    """检索统计响应"""
+    workspace_id: str
+    period_days: int
+    total_retrievals: int
+    avg_results_per_query: float
+    avg_duration_ms: float
+    total_cost_usd: float
+    by_strategy: List[Dict[str, Any]]
+
+
+class APIUsageStatsResponse(BaseModel):
+    """API 使用统计响应"""
+    period_days: int
+    total_prompt_tokens: int
+    total_completion_tokens: int
+    total_tokens: int
+    total_cost_usd: float
+    total_requests: int
+    active_days: int
+
+
+class DailyCostResponse(BaseModel):
+    """每日成本响应"""
+    date: str
+    daily_cost_usd: float
+    daily_tokens: int
+    daily_requests: int
+
+
+class CleanupResponse(BaseModel):
+    """清理响应"""
+    deleted_count: int
+    message: str
+
+
+@app.post("/knowledge/nodes", response_model=Dict[str, str])
+async def create_knowledge_node(request: KnowledgeNodeCreate):
+    """创建知识节点"""
+    if not knowledge_graph_service:
+        raise HTTPException(status_code=503, detail="Knowledge graph service not available")
+    
+    try:
+        node_id = await knowledge_graph_service.create_node(
+            workspace_id=request.workspace_id,
+            node_type=request.node_type,
+            name=request.name,
+            content=request.content,
+            embedding=request.embedding,
+            properties=request.properties,
+            source_file=request.source_file,
+            line_number=request.line_number
+        )
+        return {"node_id": node_id}
+    except Exception as e:
+        logger.error(f"Failed to create knowledge node: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/knowledge/nodes/{node_id}", response_model=KnowledgeNodeResponse)
+async def get_knowledge_node(node_id: str):
+    """获取知识节点"""
+    if not knowledge_graph_service:
+        raise HTTPException(status_code=503, detail="Knowledge graph service not available")
+    
+    node = await knowledge_graph_service.get_node(node_id)
+    if not node:
+        raise HTTPException(status_code=404, detail="Node not found")
+    
+    return KnowledgeNodeResponse(**node)
+
+
+@app.get("/knowledge/nodes", response_model=List[KnowledgeNodeResponse])
+async def list_knowledge_nodes(
+    workspace_id: str = Query(default=DEFAULT_WORKSPACE),
+    node_type: Optional[str] = Query(None),
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0)
+):
+    """列出知识节点"""
+    if not knowledge_graph_service:
+        raise HTTPException(status_code=503, detail="Knowledge graph service not available")
+    
+    nodes = await knowledge_graph_service.list_nodes(
+        workspace_id=workspace_id,
+        node_type=node_type,
+        limit=limit,
+        offset=offset
+    )
+    return [KnowledgeNodeResponse(**node) for node in nodes]
+
+
+@app.delete("/knowledge/nodes/{node_id}", response_model=Dict[str, str])
+async def delete_knowledge_node(node_id: str):
+    """删除知识节点"""
+    if not knowledge_graph_service:
+        raise HTTPException(status_code=503, detail="Knowledge graph service not available")
+    
+    deleted = await knowledge_graph_service.delete_node(node_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Node not found")
+    
+    return {"deleted": node_id}
+
+
+@app.post("/knowledge/relations", response_model=Dict[str, str])
+async def create_knowledge_relation(request: KnowledgeRelationCreate):
+    """创建知识关系"""
+    if not knowledge_graph_service:
+        raise HTTPException(status_code=503, detail="Knowledge graph service not available")
+    
+    try:
+        relation_id = await knowledge_graph_service.create_relation(
+            workspace_id=request.workspace_id,
+            source_node_id=request.source_node_id,
+            target_node_id=request.target_node_id,
+            relation_type=request.relation_type,
+            strength=request.strength,
+            properties=request.properties
+        )
+        return {"relation_id": relation_id}
+    except Exception as e:
+        logger.error(f"Failed to create knowledge relation: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/knowledge/relations/{relation_id}", response_model=KnowledgeRelationResponse)
+async def get_knowledge_relation(relation_id: str):
+    """获取知识关系"""
+    if not knowledge_graph_service:
+        raise HTTPException(status_code=503, detail="Knowledge graph service not available")
+    
+    relation = await knowledge_graph_service.get_relation(relation_id)
+    if not relation:
+        raise HTTPException(status_code=404, detail="Relation not found")
+    
+    return KnowledgeRelationResponse(**relation)
+
+
+@app.get("/knowledge/relations", response_model=List[KnowledgeRelationResponse])
+async def list_knowledge_relations(
+    workspace_id: str = Query(default=DEFAULT_WORKSPACE),
+    source_node_id: Optional[str] = Query(None),
+    target_node_id: Optional[str] = Query(None),
+    relation_type: Optional[str] = Query(None),
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0)
+):
+    """列出知识关系"""
+    if not knowledge_graph_service:
+        raise HTTPException(status_code=503, detail="Knowledge graph service not available")
+    
+    relations = await knowledge_graph_service.list_relations(
+        workspace_id=workspace_id,
+        source_node_id=source_node_id,
+        target_node_id=target_node_id,
+        relation_type=relation_type,
+        limit=limit,
+        offset=offset
+    )
+    return [KnowledgeRelationResponse(**rel) for rel in relations]
+
+
+@app.delete("/knowledge/relations/{relation_id}", response_model=Dict[str, str])
+async def delete_knowledge_relation(relation_id: str):
+    """删除知识关系"""
+    if not knowledge_graph_service:
+        raise HTTPException(status_code=503, detail="Knowledge graph service not available")
+    
+    deleted = await knowledge_graph_service.delete_relation(relation_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Relation not found")
+    
+    return {"deleted": relation_id}
+
+
+@app.get("/knowledge/stats", response_model=KnowledgeGraphStatsResponse)
+async def get_knowledge_graph_stats(workspace_id: str = Query(default=DEFAULT_WORKSPACE)):
+    """获取知识图谱统计"""
+    if not knowledge_graph_service:
+        raise HTTPException(status_code=503, detail="Knowledge graph service not available")
+    
+    stats = await knowledge_graph_service.get_graph_stats(workspace_id)
+    return KnowledgeGraphStatsResponse(**stats)
+
+
+@app.post("/retrieval-logs", response_model=Dict[str, str])
+async def create_retrieval_log(
+    workspace_id: str = Query(default=DEFAULT_WORKSPACE),
+    query: str = Query(...),
+    top_k: int = Query(5),
+    result_count: int = Query(0),
+    total_score: float = Query(0.0),
+    search_strategy: str = Query("hybrid"),
+    duration_ms: int = Query(0),
+    cost_usd: float = Query(0.0),
+    user_id: Optional[str] = Query(None)
+):
+    """创建检索日志"""
+    if not retrieval_logs_service:
+        raise HTTPException(status_code=503, detail="Retrieval logs service not available")
+    
+    try:
+        log_id = await retrieval_logs_service.log_retrieval(
+            workspace_id=workspace_id,
+            query=query,
+            top_k=top_k,
+            result_count=result_count,
+            total_score=total_score,
+            search_strategy=search_strategy,
+            duration_ms=duration_ms,
+            cost_usd=cost_usd,
+            user_id=user_id
+        )
+        return {"log_id": log_id}
+    except Exception as e:
+        logger.error(f"Failed to create retrieval log: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/retrieval-logs/{log_id}", response_model=RetrievalLogResponse)
+async def get_retrieval_log(log_id: str):
+    """获取检索日志"""
+    if not retrieval_logs_service:
+        raise HTTPException(status_code=503, detail="Retrieval logs service not available")
+    
+    log = await retrieval_logs_service.get_log(log_id)
+    if not log:
+        raise HTTPException(status_code=404, detail="Log not found")
+    
+    return RetrievalLogResponse(**log)
+
+
+@app.get("/retrieval-logs", response_model=List[RetrievalLogResponse])
+async def list_retrieval_logs(
+    workspace_id: str = Query(default=DEFAULT_WORKSPACE),
+    days: int = Query(7, ge=1, le=365),
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0)
+):
+    """列出检索日志"""
+    if not retrieval_logs_service:
+        raise HTTPException(status_code=503, detail="Retrieval logs service not available")
+    
+    logs = await retrieval_logs_service.list_logs(
+        workspace_id=workspace_id,
+        days=days,
+        limit=limit,
+        offset=offset
+    )
+    return [RetrievalLogResponse(**log) for log in logs]
+
+
+@app.get("/retrieval-logs/popular", response_model=List[PopularQueryResponse])
+async def get_popular_queries(
+    workspace_id: str = Query(default=DEFAULT_WORKSPACE),
+    days: int = Query(7, ge=1, le=365),
+    limit: int = Query(20, ge=1, le=100)
+):
+    """获取热门查询"""
+    if not retrieval_logs_service:
+        raise HTTPException(status_code=503, detail="Retrieval logs service not available")
+    
+    queries = await retrieval_logs_service.get_popular_queries(
+        workspace_id=workspace_id,
+        days=days,
+        limit=limit
+    )
+    return [PopularQueryResponse(**q) for q in queries]
+
+
+@app.get("/retrieval-logs/stats", response_model=RetrievalStatsResponse)
+async def get_retrieval_stats(
+    workspace_id: str = Query(default=DEFAULT_WORKSPACE),
+    days: int = Query(7, ge=1, le=365)
+):
+    """获取检索统计"""
+    if not retrieval_logs_service:
+        raise HTTPException(status_code=503, detail="Retrieval logs service not available")
+    
+    stats = await retrieval_logs_service.get_stats(
+        workspace_id=workspace_id,
+        days=days
+    )
+    return RetrievalStatsResponse(**stats)
+
+
+@app.post("/retrieval-logs/cleanup", response_model=CleanupResponse)
+async def cleanup_retrieval_logs(retention_days: int = Query(30, ge=1, le=365)):
+    """清理旧检索日志"""
+    if not retrieval_logs_service:
+        raise HTTPException(status_code=503, detail="Retrieval logs service not available")
+    
+    deleted = await retrieval_logs_service.cleanup_old_logs(retention_days)
+    return CleanupResponse(
+        deleted_count=deleted,
+        message=f"Cleaned up {deleted} old retrieval logs older than {retention_days} days"
+    )
+
+
+@app.post("/api-usage", response_model=Dict[str, str])
+async def record_api_usage(
+    provider: str = Query(...),
+    model: str = Query(...),
+    operation: str = Query(...),
+    prompt_tokens: int = Query(0),
+    completion_tokens: int = Query(0),
+    cost_usd: float = Query(0.0),
+    workspace_id: Optional[str] = Query(None)
+):
+    """记录 API 使用"""
+    if not api_usage_stats_service:
+        raise HTTPException(status_code=503, detail="API usage stats service not available")
+    
+    try:
+        record_id = await api_usage_stats_service.record_usage(
+            provider=provider,
+            model=model,
+            operation=operation,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            cost_usd=cost_usd,
+            workspace_id=workspace_id
+        )
+        return {"record_id": record_id}
+    except Exception as e:
+        logger.error(f"Failed to record API usage: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api-usage/stats", response_model=APIUsageStatsResponse)
+async def get_api_usage_stats(
+    workspace_id: Optional[str] = Query(None),
+    days: int = Query(30, ge=1, le=365)
+):
+    """获取 API 使用统计"""
+    if not api_usage_stats_service:
+        raise HTTPException(status_code=503, detail="API usage stats service not available")
+    
+    stats = await api_usage_stats_service.get_total_stats(
+        workspace_id=workspace_id,
+        days=days
+    )
+    return APIUsageStatsResponse(**stats)
+
+
+@app.get("/api-usage/daily-cost", response_model=List[DailyCostResponse])
+async def get_daily_cost(
+    workspace_id: Optional[str] = Query(None),
+    days: int = Query(7, ge=1, le=365)
+):
+    """获取每日成本趋势"""
+    if not api_usage_stats_service:
+        raise HTTPException(status_code=503, detail="API usage stats service not available")
+    
+    trends = await api_usage_stats_service.get_cost_by_day(
+        workspace_id=workspace_id,
+        days=days
+    )
+    return [DailyCostResponse(**t) for t in trends]
+
+
+@app.post("/api-usage/cleanup", response_model=CleanupResponse)
+async def cleanup_api_usage(retention_days: int = Query(90, ge=1, le=365)):
+    """清理旧 API 使用统计"""
+    if not api_usage_stats_service:
+        raise HTTPException(status_code=503, detail="API usage stats service not available")
+    
+    deleted = await api_usage_stats_service.cleanup_old_stats(retention_days)
+    return CleanupResponse(
+        deleted_count=deleted,
+        message=f"Cleaned up {deleted} old API usage records older than {retention_days} days"
+    )
+
+
+class DocumentChunkCreate(BaseModel):
+    """创建文档分块请求"""
+    document_id: str
+    chunk_index: int
+    content: str
+    start_line: Optional[int] = None
+    end_line: Optional[int] = None
+    embedding: Optional[List[float]] = None
+
+
+class DocumentChunkResponse(BaseModel):
+    """文档分块响应"""
+    id: str
+    document_id: str
+    chunk_index: int
+    content: str
+    embedding: Optional[str]
+    start_line: Optional[int]
+    end_line: Optional[int]
+    char_count: Optional[int]
+    created_at: Optional[str]
+
+
+class DocumentChunksListResponse(BaseModel):
+    """文档分块列表响应"""
+    chunks: List[DocumentChunkResponse]
+    total_count: int
+
+
+@app.post("/document-chunks", response_model=Dict[str, str])
+async def create_document_chunk(request: DocumentChunkCreate):
+    """创建文档分块"""
+    if not document_chunks_service:
+        raise HTTPException(status_code=503, detail="Document chunks service not available")
+    
+    try:
+        chunk_id = await document_chunks_service.create_chunk(
+            document_id=request.document_id,
+            chunk_index=request.chunk_index,
+            content=request.content,
+            start_line=request.start_line,
+            end_line=request.end_line,
+            embedding=request.embedding
+        )
+        return {"chunk_id": chunk_id}
+    except Exception as e:
+        logger.error(f"Failed to create document chunk: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/document-chunks", response_model=DocumentChunksListResponse)
+async def list_document_chunks(
+    document_id: Optional[str] = Query(None),
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0)
+):
+    """列出文档分块"""
+    if not document_chunks_service:
+        raise HTTPException(status_code=503, detail="Document chunks service not available")
+    
+    chunks = await document_chunks_service.list_chunks(
+        document_id=document_id,
+        limit=limit,
+        offset=offset
+    )
+    total_count = await document_chunks_service.get_chunks_count(document_id)
+    
+    return DocumentChunksListResponse(
+        chunks=[DocumentChunkResponse(**chunk) for chunk in chunks],
+        total_count=total_count
+    )
+
+
+@app.get("/document-chunks/stats", response_model=Dict[str, int])
+async def get_document_chunks_stats(document_id: Optional[str] = Query(None)):
+    """获取文档分块统计"""
+    if not document_chunks_service:
+        raise HTTPException(status_code=503, detail="Document chunks service not available")
+    
+    count = await document_chunks_service.get_chunks_count(document_id)
+    return {"total_chunks": count}
+
+
+@app.get("/document-chunks/{chunk_id}", response_model=DocumentChunkResponse)
+async def get_document_chunk(chunk_id: str):
+    """获取文档分块"""
+    if not document_chunks_service:
+        raise HTTPException(status_code=503, detail="Document chunks service not available")
+    
+    chunk = await document_chunks_service.get_chunk(chunk_id)
+    if not chunk:
+        raise HTTPException(status_code=404, detail="Chunk not found")
+    
+    return DocumentChunkResponse(**chunk)
+
+
+@app.delete("/document-chunks/{chunk_id}", response_model=Dict[str, str])
+async def delete_document_chunk(chunk_id: str):
+    """删除文档分块"""
+    if not document_chunks_service:
+        raise HTTPException(status_code=503, detail="Document chunks service not available")
+    
+    deleted = await document_chunks_service.delete_chunk(chunk_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="Chunk not found")
+    
+    return {"deleted": chunk_id}
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
@@ -1130,3 +1758,89 @@ if __name__ == "__main__":
         port=8000,
         reload=True
     )
+
+
+rag_etl_service = None
+rag_service = None
+
+
+class IngestRequest(BaseModel):
+    """文档摄入请求"""
+    file_path: str = Field(..., description="文件路径")
+    source_id: Optional[str] = Field(None, description="文档唯一标识")
+
+
+class IngestResponse(BaseModel):
+    """文档摄入响应"""
+    status: str = Field(..., description="状态: success, fast_upload, failed")
+    source_id: str = Field(..., description="文档 ID")
+    chunk_count: int = Field(..., description="分块数量")
+    error_msg: Optional[str] = Field(None, description="错误信息")
+
+
+class QueryRequest(BaseModel):
+    """问答查询请求"""
+    question: str = Field(..., min_length=1, description="用户问题")
+    history: Optional[List[Dict[str, str]]] = Field(None, description="对话历史")
+
+
+class QueryResponse(BaseModel):
+    """问答查询响应"""
+    answer: str = Field(..., description="回答内容")
+    sources: List[Dict[str, Any]] = Field(default_factory=list, description="信息来源")
+
+
+@app.post("/ingest", response_model=IngestResponse)
+async def ingest_document(request: IngestRequest):
+    """文档摄入 - ETL 流水线"""
+    global rag_etl_service
+
+    if not rag_etl_service:
+        try:
+            from src.services.rag.etl_service import create_etl_service
+            rag_etl_service = await create_etl_service(workspace_id=DEFAULT_WORKSPACE)
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"ETL service not available: {str(e)}")
+
+    try:
+        result = await rag_etl_service.ingest(
+            file_path=request.file_path,
+            source_id=request.source_id
+        )
+
+        return IngestResponse(
+            status=result.status,
+            source_id=result.source_id,
+            chunk_count=result.chunk_count,
+            error_msg=result.error_msg
+        )
+    except Exception as e:
+        logger.error(f"Ingest failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/query", response_model=QueryResponse)
+async def query_document(request: QueryRequest):
+    """问答查询 - RAG 流水线"""
+    global rag_service
+
+    if not rag_service:
+        try:
+            from src.services.rag.rag_service import create_rag_service
+            rag_service = await create_rag_service(workspace_id=DEFAULT_WORKSPACE)
+        except Exception as e:
+            raise HTTPException(status_code=503, detail=f"RAG service not available: {str(e)}")
+
+    try:
+        result = await rag_service.query(
+            question=request.question,
+            history=request.history
+        )
+
+        return QueryResponse(
+            answer=result.answer,
+            sources=result.sources
+        )
+    except Exception as e:
+        logger.error(f"Query failed: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

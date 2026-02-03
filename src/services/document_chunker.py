@@ -23,8 +23,12 @@ import re
 import hashlib
 import mmap
 import logging
+import asyncio
+import time
+import pickle
 from io import StringIO, BytesIO
 from collections import defaultdict
+from threading import Lock
 
 
 logger = logging.getLogger(__name__)
@@ -2639,38 +2643,194 @@ class SmartChunker:
         max_file_size: int = 100 * 1024 * 1024,
         llm_service: Any = None,
         enable_contextual_enrichment: bool = True,
-        enable_atomic_chunking: bool = True
+        enable_atomic_chunking: bool = True,
+        enable_rate_limiting: bool = False,
+        rate_limit_rpm: int = 100,
+        rate_limit_tpm: int = 10000,
+        enable_batch_processing: bool = False,
+        batch_max_concurrent: int = 5,
+        batch_size: int = 10,
+        batch_timeout: float = 30.0,
+        enable_embedding_cache: bool = False,
+        embedding_cache_size: int = 10000,
+        embedding_cache_file: str = None,
+        enable_strategy_cache: bool = True
     ):
         """
         初始化智能分块器
-        
+
         Args:
             config: 配置字典
             max_file_size: 最大处理文件大小 (默认 100MB)
             llm_service: LLM 服务实例 (用于上下文增强)
             enable_contextual_enrichment: 启用上下文增强
             enable_atomic_chunking: 启用原子分块
+            enable_rate_limiting: 启用令牌桶限流
+            rate_limit_rpm: 每分钟请求数限制
+            rate_limit_tpm: 每分钟令牌数限制
+            enable_batch_processing: 启用批量处理队列
+            batch_max_concurrent: 批量处理最大并发数
+            batch_size: 每批处理的任务数
+            batch_timeout: 任务超时时间
+            enable_embedding_cache: 启用嵌入缓存
+            embedding_cache_size: 嵌入缓存最大容量
+            embedding_cache_file: 嵌入缓存文件路径
+            enable_strategy_cache: 启用策略缓存
         """
         self.config = config or {}
         self.max_file_size = max_file_size
         self.llm_service = llm_service
         self.enable_contextual_enrichment = enable_contextual_enrichment
         self.enable_atomic_chunking = enable_atomic_chunking
-        
+
         self._strategies: Dict[FileType, ChunkingStrategy] = {}
         self._init_strategies()
-        
+
         self.large_file_processor = LargeFileProcessor(max_file_size)
-        
+
         if enable_contextual_enrichment:
             self.contextual_enricher = ContextualRetrievalEnricher(llm_service=llm_service)
         else:
             self.contextual_enricher = None
-        
+
         if enable_atomic_chunking:
             self.summary_builder = SummaryBuilder(llm_service)
         else:
             self.summary_builder = None
+
+        self._init_performance_optimizations(
+            enable_rate_limiting=enable_rate_limiting,
+            rate_limit_rpm=rate_limit_rpm,
+            rate_limit_tpm=rate_limit_tpm,
+            enable_batch_processing=enable_batch_processing,
+            batch_max_concurrent=batch_max_concurrent,
+            batch_size=batch_size,
+            batch_timeout=batch_timeout,
+            enable_embedding_cache=enable_embedding_cache,
+            embedding_cache_size=embedding_cache_size,
+            embedding_cache_file=embedding_cache_file,
+            enable_strategy_cache=enable_strategy_cache
+        )
+
+    def _init_performance_optimizations(
+        self,
+        enable_rate_limiting: bool,
+        rate_limit_rpm: int,
+        rate_limit_tpm: int,
+        enable_batch_processing: bool,
+        batch_max_concurrent: int,
+        batch_size: int,
+        batch_timeout: float,
+        enable_embedding_cache: bool,
+        embedding_cache_size: int,
+        embedding_cache_file: str,
+        enable_strategy_cache: bool
+    ):
+        """初始化性能优化组件"""
+        if enable_rate_limiting:
+            self.rate_limiter = RateLimiter(
+                rpm=rate_limit_rpm,
+                tpm=rate_limit_tpm
+            )
+        else:
+            self.rate_limiter = None
+
+        if enable_batch_processing:
+            self.batch_processor = BatchProcessor(
+                process_fn=self._process_chunk_task,
+                max_concurrent=batch_max_concurrent,
+                batch_size=batch_size,
+                timeout=batch_timeout
+            )
+        else:
+            self.batch_processor = None
+
+        if enable_embedding_cache:
+            self.embedding_cache = EmbeddingCache(
+                max_size=embedding_cache_size,
+                cache_file=embedding_cache_file
+            )
+        else:
+            self.embedding_cache = None
+
+        if enable_strategy_cache:
+            self.strategy_cache = StrategyCache(self._strategies)
+        else:
+            self.strategy_cache = None
+
+    def _process_chunk_task(self, task_data: Dict[str, Any]) -> Any:
+        """处理分块任务的回调函数"""
+        pass
+
+    def set_rate_limiter(self, rpm: int = 100, tpm: int = 10000) -> None:
+        """设置或更新令牌桶限流器"""
+        self.rate_limiter = RateLimiter(rpm=rpm, tpm=tpm)
+        self.config['rate_limit_rpm'] = rpm
+        self.config['rate_limit_tpm'] = tpm
+
+    async def acquire_rate_limit(self, tokens: int = 1) -> float:
+        """获取令牌（用于异步限流控制）
+
+        Returns:
+            等待时间（秒）
+        """
+        if self.rate_limiter:
+            return await self.rate_limiter.acquire(tokens)
+        return 0.0
+
+    async def add_batch_task(self, task_id: str, task_data: Any) -> None:
+        """添加批量处理任务"""
+        if self.batch_processor:
+            await self.batch_processor.add_task(task_id, task_data)
+
+    async def process_batch(self) -> Dict[str, Any]:
+        """处理批量任务队列"""
+        if self.batch_processor:
+            return await self.batch_processor.process_batch()
+        return {}
+
+    def get_embedding(self, content: str, compute_fn: callable = None) -> Optional[List[float]]:
+        """获取嵌入（使用缓存）
+
+        Args:
+            content: 文本内容
+            compute_fn: 嵌入计算函数（如果未命中缓存）
+
+        Returns:
+            嵌入向量
+        """
+        if self.embedding_cache:
+            if compute_fn:
+                return self.embedding_cache.get_or_compute(content, compute_fn)
+            return self.embedding_cache.get(content)
+        return None
+
+    def save_embedding_cache(self) -> None:
+        """保存嵌入缓存到磁盘"""
+        if self.embedding_cache:
+            self.embedding_cache.save_cache()
+
+    def clear_embedding_cache(self) -> None:
+        """清空嵌入缓存"""
+        if self.embedding_cache:
+            self.embedding_cache.clear()
+
+    def get_strategy(self, file_path: str, content: bytes) -> ChunkingStrategy:
+        """获取分块策略（使用缓存）
+
+        Args:
+            file_path: 文件路径
+            content: 文件内容
+
+        Returns:
+            分块策略
+        """
+        if self.strategy_cache:
+            return self.strategy_cache.get_strategy(file_path, content)
+        file_type = self.detect_file_type(file_path, content)
+        if file_type not in self._strategies:
+            file_type = FileType.TEXT
+        return self._strategies[file_type]
     
     def _init_strategies(self):
         """初始化分块策略"""
@@ -2995,6 +3155,238 @@ class SmartChunker:
                 })
         
         return chunks, summaries
+
+
+class RateLimiter:
+    """令牌桶限流器 - 控制并发访问速率"""
+
+    def __init__(self, rpm: int = 100, tpm: int = 10000, max_burst: int = 10):
+        self.rpm = rpm
+        self.tpm = tpm
+        self.max_burst = max_burst
+        self.tokens = max_burst
+        self.last_time = time.time()
+        self.lock = asyncio.Lock()
+
+    async def acquire(self, tokens: int = 1) -> float:
+        """获取令牌
+
+        Args:
+            tokens: 需要的令牌数
+
+        Returns:
+            等待时间（秒）
+        """
+        async with self.lock:
+            now = time.time()
+            elapsed = now - self.last_time
+            self.tokens = min(self.max_burst, self.tokens + elapsed * (self.rpm / 60))
+            self.last_time = now
+
+            if self.tokens >= tokens:
+                self.tokens -= tokens
+                return 0.0
+
+            wait_time = (tokens - self.tokens) * (60 / self.rpm)
+            self.tokens = 0
+            return wait_time
+
+    def get_tokens_remaining(self) -> float:
+        """获取剩余令牌数"""
+        return self.tokens
+
+
+class BatchProcessor:
+    """批量处理队列 - 断点续传与批量并发控制"""
+
+    def __init__(
+        self,
+        process_fn: callable,
+        max_concurrent: int = 5,
+        batch_size: int = 10,
+        timeout: float = 30.0
+    ):
+        self.process_fn = process_fn
+        self.max_concurrent = max_concurrent
+        self.batch_size = batch_size
+        self.timeout = timeout
+        self.semaphore = asyncio.Semaphore(max_concurrent)
+        self.queue = asyncio.Queue()
+        self.results = {}
+        self._task_map = {}
+
+    async def add_task(self, task_id: str, task_data: Any) -> None:
+        """添加任务到队列"""
+        await self.queue.put((task_id, task_data))
+        self._task_map[task_id] = 'pending'
+
+    async def process_batch(self) -> Dict[str, Any]:
+        """处理一批任务"""
+        tasks = []
+        batch_count = 0
+
+        while not self.queue.empty() and batch_count < self.batch_size:
+            task_id, task_data = await self.queue.get()
+            task = asyncio.create_task(self._run_with_semaphore(task_id, task_data))
+            tasks.append(task)
+            batch_count += 1
+
+        if tasks:
+            done, pending = await asyncio.wait(tasks, timeout=self.timeout)
+            for task in pending:
+                task.cancel()
+
+        return self.results
+
+    async def _run_with_semaphore(self, task_id: str, task_data: Any) -> None:
+        async with self.semaphore:
+            try:
+                result = await asyncio.wait_for(
+                    asyncio.get_event_loop().run_in_executor(
+                        None, self.process_fn, task_data
+                    ),
+                    timeout=self.timeout
+                )
+                self.results[task_id] = {'status': 'success', 'result': result}
+            except asyncio.TimeoutError:
+                self.results[task_id] = {'status': 'timeout', 'error': '任务超时'}
+            except Exception as e:
+                self.results[task_id] = {'status': 'error', 'error': str(e)}
+            finally:
+                self._task_map[task_id] = self.results[task_id].get('status', 'unknown')
+
+
+class EmbeddingCache:
+    """嵌入缓存 - 基于内容哈希去重"""
+
+    def __init__(self, max_size: int = 10000, cache_file: str = None):
+        self._cache: Dict[str, List[float]] = {}
+        self._content_to_hash: Dict[str, str] = {}
+        self.max_size = max_size
+        self.cache_file = cache_file
+        self.lock = Lock()
+        if cache_file:
+            self._load_cache()
+
+    def _load_cache(self) -> None:
+        if self.cache_file and Path(self.cache_file).exists():
+            try:
+                with open(self.cache_file, 'rb') as f:
+                    data = pickle.load(f)
+                    self._cache = data.get('embeddings', {})
+                    self._content_to_hash = data.get('content_map', {})
+            except Exception as e:
+                logger.warning(f"加载嵌入缓存失败: {e}")
+
+    def save_cache(self) -> None:
+        if self.cache_file:
+            try:
+                with open(self.cache_file, 'wb') as f:
+                    pickle.dump({
+                        'embeddings': self._cache,
+                        'content_map': self._content_to_hash
+                    }, f)
+            except Exception as e:
+                logger.warning(f"保存嵌入缓存失败: {e}")
+
+    def get(self, content: str) -> Optional[List[float]]:
+        content_hash = hashlib.md5(content.encode('utf-8')).hexdigest()
+        with self.lock:
+            return self._cache.get(content_hash)
+
+    def get_or_compute(self, content: str, compute_fn: callable) -> List[float]:
+        content_hash = hashlib.md5(content.encode('utf-8')).hexdigest()
+        with self.lock:
+            if content_hash in self._cache:
+                return self._cache[content_hash]
+
+            embedding = compute_fn(content)
+            if len(self._cache) >= self.max_size:
+                oldest_key = next(iter(self._cache))
+                del self._cache[oldest_key]
+                del self._content_to_hash[oldest_key]
+
+            self._cache[content_hash] = embedding
+            self._content_to_hash[content_hash] = content[:100]
+            return embedding
+
+    def clear(self) -> None:
+        with self.lock:
+            self._cache.clear()
+            self._content_to_hash.clear()
+
+
+class StrategyCache:
+    """策略缓存 - 避免重复检测文件类型"""
+
+    def __init__(self, strategies: Dict[FileType, ChunkingStrategy]):
+        self._strategies = strategies
+        self._cache: Dict[str, ChunkingStrategy] = {}
+        self._type_cache: Dict[str, FileType] = {}
+
+    def get_strategy(self, file_path: str, content: bytes) -> ChunkingStrategy:
+        content_size = len(content)
+        cache_key = f"{content_size}"
+
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+
+        file_type = None
+        ext = Path(file_path).suffix.lower()
+
+        type_cache_key = f"{ext}:{content_size}"
+        if type_cache_key in self._type_cache:
+            file_type = self._type_cache[type_cache_key]
+        else:
+            file_type = self._detect_file_type_with_heuristics(file_path, content)
+            self._type_cache[type_cache_key] = file_type
+
+        if file_type not in self._strategies:
+            file_type = FileType.TEXT
+
+        if file_type == FileType.PYTHON and content_size > 50000:
+            strategy = self._strategies.get(FileType.PYTHON)
+        else:
+            strategy = self._strategies.get(file_type, self._strategies[FileType.TEXT])
+
+        self._cache[cache_key] = strategy
+        return strategy
+
+    def _detect_file_type_with_heuristics(self, file_path: str, content: bytes) -> FileType:
+        ext = Path(file_path).suffix.lower()
+
+        extension_mapping = {
+            '.py': FileType.PYTHON,
+            '.md': FileType.MARKDOWN,
+            '.json': FileType.JSON,
+            '.yaml': FileType.YAML,
+            '.yml': FileType.YAML,
+            '.sql': FileType.SQL,
+            '.proto': FileType.PROTO,
+            '.js': FileType.JAVASCRIPT,
+            '.ts': FileType.TYPESCRIPT,
+            '.html': FileType.HTML,
+            '.css': FileType.CSS,
+        }
+
+        if ext in extension_mapping:
+            return extension_mapping[ext]
+
+        try:
+            text_content = content.decode('utf-8', errors='ignore')
+            if text_content.startswith('<?xml') or '<html' in text_content[:100].lower():
+                return FileType.HTML
+            if text_content.startswith('{') or text_content.startswith('['):
+                return FileType.JSON
+            if 'def ' in text_content or 'class ' in text_content:
+                return FileType.PYTHON
+        except Exception:
+            pass
+
+        if BinaryDetector.is_binary(content):
+            return FileType.BINARY
+
+        return FileType.TEXT
 
 
 def create_smart_chunker(config: Dict[str, Any] = None) -> SmartChunker:

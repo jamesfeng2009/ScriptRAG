@@ -17,16 +17,20 @@ from .reranker import MultiFactorReranker, DiversityFilter, RetrievalQualityMoni
 from .cache.retrieval_cache import RetrievalCache, CacheConfig
 from .monitoring.retrieval_monitor import RetrievalMonitor, MonitoringConfig
 
-from . import (
+from .retrieval.config import (
     RetrievalConfig,
     RetrievalStrategyConfig,
-    MergerConfig,
+    MergerConfig
+)
+from .retrieval.strategies import (
     RetrievalResult,
     RetrievalStrategy,
     VectorSearchStrategy,
     KeywordSearchStrategy,
     HybridSearchStrategy,
-    StrategyRegistry,
+    StrategyRegistry
+)
+from .retrieval.mergers import (
     ResultMerger,
     WeightedMerger,
     ReciprocalRankMerger,
