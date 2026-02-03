@@ -4,10 +4,11 @@ This service implements the hybrid retrieval strategy using:
 - Multiple retrieval strategies (vector, keyword, hybrid)
 - Configurable result merging algorithms
 - Query expansion and reranking support
+- Advanced enhancement pipeline (Query Rewrite, Cross-Encoder, Adaptive Threshold, GraphRAG)
 """
 
 import logging
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 from pydantic import BaseModel
 
 from .database.vector_db import IVectorDBService
@@ -38,6 +39,15 @@ from .retrieval.mergers import (
     MergerRegistry
 )
 
+from .retrieval_enhancement import (
+    RetrievalEnhancementPipeline,
+    RetrievalPipelineBuilder,
+    EnhancementConfig,
+    EnhancementResult
+)
+
+from .graprag_engine import GraphRAGEngine
+
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +61,7 @@ class RetrievalService:
     - 可配置的结果合并算法
     - 查询扩展和重排序
     - 自定义关键词标记支持
+    - 高级检索增强（查询改写、Cross-Encoder精排、悬崖截断、GraphRAG多跳）
     """
 
     def __init__(
@@ -63,7 +74,9 @@ class RetrievalService:
         diversity_filter: Optional[DiversityFilter] = None,
         quality_monitor: Optional[RetrievalQualityMonitor] = None,
         cache: Optional[RetrievalCache] = None,
-        monitor: Optional[RetrievalMonitor] = None
+        monitor: Optional[RetrievalMonitor] = None,
+        enhancement_config: Optional[EnhancementConfig] = None,
+        graprag_workspace_id: Optional[str] = None
     ):
         """
         初始化检索服务
@@ -78,6 +91,8 @@ class RetrievalService:
             quality_monitor: 质量监控组件
             cache: 缓存组件
             monitor: 监控组件
+            enhancement_config: 检索增强配置
+            graprag_workspace_id: GraphRAG 工作空间 ID
         """
         self.vector_db = vector_db_service
         self.llm_service = llm_service
@@ -94,6 +109,8 @@ class RetrievalService:
 
         self.cache = cache or RetrievalCache(CacheConfig())
         self.monitor = monitor or RetrievalMonitor(MonitoringConfig())
+
+        self._init_enhancement_pipeline(enhancement_config, graprag_workspace_id)
 
     def _initialize_strategies(self):
         """初始化检索策略"""
@@ -156,6 +173,38 @@ class RetrievalService:
             )
 
         logger.info(f"Initialized merger: {self.merger.name}")
+
+    def _init_enhancement_pipeline(
+        self,
+        config: Optional[EnhancementConfig],
+        graprag_workspace_id: Optional[str]
+    ):
+        """初始化检索增强流水线"""
+        if config is None:
+            self.enhancement_pipeline = None
+            logger.info("Enhancement pipeline not enabled (no config provided)")
+            return
+
+        graprag_id = graprag_workspace_id or f"retrieval_{id(self)}"
+
+        if config.enable_graprag:
+            graprag_engine = GraphRAGEngine(workspace_id=graprag_id)
+        else:
+            graprag_engine = None
+
+        self.enhancement_pipeline = RetrievalEnhancementPipeline(
+            llm_service=self.llm_service,
+            vector_db_service=self.vector_db,
+            config=config,
+            graprag_engine=graprag_engine
+        )
+
+        logger.info(
+            f"Enhancement pipeline initialized: "
+            f"query_rewrite={config.enable_query_rewrite}, "
+            f"cross_encoder={config.enable_cross_encoder}, "
+            f"graprag={config.enable_graprag}"
+        )
 
     def register_strategy(
         self,
@@ -424,10 +473,296 @@ class RetrievalService:
 
     def get_strategy_stats(self) -> Dict[str, Any]:
         """获取策略统计信息"""
-        return {
+        stats = {
             "available_strategies": self.list_strategies(),
             "current_strategy": self.config.strategy.name.value,
             "current_merger": self.merger.name,
             "custom_markers": self.config.custom_markers,
             "total_strategies": len(self.strategies)
         }
+
+        if self.enhancement_pipeline:
+            stats["enhancement"] = self.enhancement_pipeline.get_stats()
+
+        return stats
+
+    def enable_enhancement_pipeline(
+        self,
+        enable_query_rewrite: bool = True,
+        enable_cross_encoder: bool = False,
+        enable_mmr: bool = True,
+        enable_adaptive_threshold: bool = True,
+        enable_graprag: bool = False,
+        vector_weight: float = 0.6,
+        keyword_weight: float = 0.4
+    ) -> bool:
+        """
+        启用检索增强流水线
+
+        Args:
+            enable_query_rewrite: 启用查询改写
+            enable_cross_encoder: 启用 Cross-Encoder 精排
+            enable_mmr: 启用 MMR 多样性排序
+            enable_adaptive_threshold: 启用自适应阈值截断
+            enable_graprag: 启用 GraphRAG 多跳检索
+            vector_weight: 向量检索权重
+            keyword_weight: 关键词检索权重
+
+        Returns:
+            是否成功启用
+        """
+        try:
+            config = EnhancementConfig(
+                enable_query_rewrite=enable_query_rewrite,
+                enable_cross_encoder=enable_cross_encoder,
+                enable_mmr=enable_mmr,
+                enable_adaptive_threshold=enable_adaptive_threshold,
+                enable_graprag=enable_graprag,
+                vector_weight=vector_weight,
+                keyword_weight=keyword_weight
+            )
+
+            self._init_enhancement_pipeline(config, None)
+            logger.info("Enhancement pipeline enabled successfully")
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to enable enhancement pipeline: {str(e)}")
+            return False
+
+    async def enhanced_retrieve(
+        self,
+        workspace_id: str,
+        query: str,
+        top_k: int = 10,
+        use_enhancement: bool = True,
+        **kwargs
+    ) -> List[RetrievalResult]:
+        """
+        增强检索（使用检索增强流水线）
+
+        如果启用了增强流水线，则使用完整的增强流程：
+        1. 查询改写
+        2. 查询扩展
+        3. 混合检索
+        4. Cross-Encoder/MMR 精排
+        5. 悬崖截断
+        6. GraphRAG 多跳扩展（可选）
+
+        Args:
+            workspace_id: 工作空间 ID
+            query: 查询文本
+            top_k: 返回结果数量
+            use_enhancement: 是否使用增强流水线
+            **kwargs: 额外参数
+
+        Returns:
+            检索结果列表
+        """
+        if not use_enhancement or not self.enhancement_pipeline:
+            return await self.hybrid_retrieve(workspace_id, query, top_k, **kwargs)
+
+        try:
+            result: EnhancementResult = await self.enhancement_pipeline.enhanced_retrieve(
+                workspace_id=workspace_id,
+                query=query,
+                top_k=top_k,
+                filters=kwargs.get("filters")
+            )
+
+            logger.info(
+                f"Enhanced retrieval: query={query[:50]}..., "
+                f"results={len(result.final_results)}, "
+                f"time={result.processing_time_ms:.1f}ms"
+            )
+
+            return result.final_results
+
+        except Exception as e:
+            logger.error(f"Enhanced retrieval failed: {str(e)}")
+            return await self.hybrid_retrieve(workspace_id, query, top_k, **kwargs)
+
+    async def rewrite_query(self, query: str) -> Dict[str, Any]:
+        """
+        改写查询
+
+        Args:
+            query: 原始查询
+
+        Returns:
+            改写结果
+        """
+        if not self.enhancement_pipeline:
+            return {
+                "original_query": query,
+                "rewritten_query": query,
+                "sub_queries": [],
+                "error": "Enhancement pipeline not enabled"
+            }
+
+        try:
+            rewrite_result = await self.enhancement_pipeline.query_rewriter.rewrite(query)
+            return {
+                "original_query": query,
+                "rewritten_query": rewrite_result.rewritten_query,
+                "sub_queries": rewrite_result.sub_queries,
+                "confidence": rewrite_result.confidence
+            }
+
+        except Exception as e:
+            logger.error(f"Query rewrite failed: {str(e)}")
+            return {
+                "original_query": query,
+                "rewritten_query": query,
+                "sub_queries": [],
+                "error": str(e)
+            }
+
+    async def rerank_results(
+        self,
+        query: str,
+        results: List[RetrievalResult],
+        top_k: int = 10,
+        use_cross_encoder: bool = False
+    ) -> List[RetrievalResult]:
+        """
+        对检索结果进行重排序
+
+        Args:
+            query: 查询文本
+            results: 待重排序的结果
+            top_k: 返回结果数量
+            use_cross_encoder: 是否使用 Cross-Encoder
+
+        Returns:
+            重排序后的结果
+        """
+        if not self.enhancement_pipeline:
+            return results[:top_k]
+
+        try:
+            reranking_pipeline = self.enhancement_pipeline.reranking_pipeline
+
+            if use_cross_encoder:
+                reranked = await reranking_pipeline.rerank(
+                    query=query,
+                    results=results,
+                    top_k=top_k * 2,
+                    use_primary=True
+                )
+            else:
+                reranked = await reranking_pipeline.rerank(
+                    query=query,
+                    results=results,
+                    top_k=top_k * 2,
+                    use_primary=False
+                )
+
+            return [
+                RetrievalResult(
+                    id=r.id,
+                    file_path=r.file_path,
+                    content=r.content,
+                    similarity=r.fused_score,
+                    confidence=r.fused_score,
+                    strategy_name="reranked"
+                )
+                for r in reranked[:top_k]
+            ]
+
+        except Exception as e:
+            logger.error(f"Reranking failed: {str(e)}")
+            return results[:top_k]
+
+    def apply_adaptive_threshold(
+        self,
+        results: List[RetrievalResult],
+        query: Optional[str] = None
+    ) -> Tuple[List[RetrievalResult], Dict[str, Any]]:
+        """
+        应用自适应阈值截断
+
+        Args:
+            results: 待处理的结果
+            query: 查询文本（用于估计复杂度）
+
+        Returns:
+            (截断后的结果, 分析信息)
+        """
+        if not self.enhancement_pipeline:
+            return results, {"error": "Enhancement pipeline not enabled"}
+
+        try:
+            strategy = self.enhancement_pipeline.threshold_strategy
+            scores = [r.similarity for r in results]
+
+            import asyncio
+            complexity = asyncio.get_event_loop().run_until_complete(
+                strategy.estimate_query_complexity(query or "")
+            )
+
+            indices, analysis = strategy.analyze_and_filter(scores, complexity)
+
+            filtered_results = [results[i] for i in indices]
+
+            return filtered_results, {
+                "applied_threshold": analysis.applied_threshold,
+                "retained_count": analysis.retained_count,
+                "cliff_detected": analysis.cliff_detected,
+                "complexity": complexity
+            }
+
+        except Exception as e:
+            logger.error(f"Adaptive threshold failed: {str(e)}")
+            return results, {"error": str(e)}
+
+    def index_for_bm25(self, documents: List[Dict[str, str]]):
+        """
+        索引文档用于 BM25 检索
+
+        Args:
+            documents: 文档列表，每项包含 id, content, file_path
+        """
+        if self.enhancement_pipeline:
+            self.enhancement_pipeline.index_for_bm25(documents)
+
+    def index_for_graprag(self, content: str, file_path: str, doc_type: str = "code"):
+        """
+        索引文档用于 GraphRAG
+
+        Args:
+            content: 文档内容
+            file_path: 文件路径
+            doc_type: 文档类型
+        """
+        if self.enhancement_pipeline:
+            self.enhancement_pipeline.index_for_graprag(content, file_path, doc_type)
+
+    def get_related_via_graprag(
+        self,
+        doc_id: str,
+        max_depth: int = 2
+    ) -> List[Tuple[str, float]]:
+        """
+        通过 GraphRAG 获取关联文档
+
+        Args:
+            doc_id: 文档 ID
+            max_depth: 最大跳数
+
+        Returns:
+            关联文档列表 (节点, 分数)
+        """
+        if not self.enhancement_pipeline or not self.enhancement_pipeline.graprag_engine:
+            return []
+
+        try:
+            related = self.enhancement_pipeline.graprag_engine.get_related_documents(
+                doc_id,
+                max_depth=max_depth
+            )
+            return [(node, score) for node, score in related]
+
+        except Exception as e:
+            logger.error(f"GraphRAG related docs failed: {str(e)}")
+            return []
