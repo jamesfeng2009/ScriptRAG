@@ -66,6 +66,7 @@ from src.services.database.vector_db import (
     IVectorDBService,
     VectorSearchResult
 )
+from src.services.document_chunker import SmartChunker, Chunk
 
 logger = logging.getLogger(__name__)
 
@@ -187,6 +188,12 @@ class PgVectorDBService(IVectorDBService):
         self._query_count = 0
         self._total_query_time = 0.0
         self._cache_hits = 0
+        
+        self._chunker = SmartChunker(config={
+            'chunk_size': chunk_size,
+            'min_chunk_size': max(100, chunk_size // 10),
+            'overlap': chunk_overlap
+        })
     
     def _get_db_url(self) -> str:
         """获取数据库连接 URL"""
@@ -322,55 +329,24 @@ class PgVectorDBService(IVectorDBService):
         return language
     
     def _chunk_document(self, content: str, file_path: str) -> List[Dict[str, Any]]:
-        """将文档分割成块"""
-        chunks = []
-        lines = content.split('\n')
+        """使用智能分块器将文档分割成块"""
+        chunks = self._chunker.chunk_text(content, file_path)
         
-        current_chunk = []
-        current_size = 0
-        chunk_index = 0
-        start_line = 1
-        
-        for line_num, line in enumerate(lines, 1):
-            line_size = len(line) + 1
-            
-            if current_size + line_size > self.chunk_size:
-                if current_chunk:
-                    chunk_content = '\n'.join(current_chunk)
-                    chunks.append({
-                        "chunk_index": chunk_index,
-                        "content": chunk_content,
-                        "start_line": start_line,
-                        "end_line": line_num - 1,
-                        "char_count": len(chunk_content),
-                        "line_count": len(current_chunk)
-                    })
-                    chunk_index += 1
-                
-                if self.chunk_overlap > 0 and len(current_chunk) > self.chunk_overlap:
-                    current_chunk = current_chunk[-self.chunk_overlap:]
-                    current_size = sum(len(l) + 1 for l in current_chunk)
-                    start_line = line_num - len(current_chunk)
-                else:
-                    current_chunk = []
-                    current_size = 0
-                    start_line = line_num
-            
-            current_chunk.append(line)
-            current_size += line_size
-        
-        if current_chunk:
-            chunk_content = '\n'.join(current_chunk)
-            chunks.append({
-                "chunk_index": chunk_index,
-                "content": chunk_content,
-                "start_line": start_line,
-                "end_line": len(lines),
-                "char_count": len(chunk_content),
-                "line_count": len(current_chunk)
+        result = []
+        for chunk in chunks:
+            result.append({
+                "chunk_index": len(result),
+                "content": chunk.content,
+                "start_line": chunk.metadata.start_line,
+                "end_line": chunk.metadata.end_line,
+                "char_count": chunk.metadata.char_count,
+                "content_hash": chunk.metadata.content_hash,
+                "language_structure": chunk.metadata.language_structure,
+                "class_name": chunk.metadata.class_name,
+                "function_name": chunk.metadata.function_name
             })
         
-        return chunks
+        return result
     
     async def index_document(
         self,
@@ -478,12 +454,50 @@ class PgVectorDBService(IVectorDBService):
             doc_id = result.scalar()
             await session.commit()
             
+            await self._ensure_document_record(session, doc_id, workspace_id, file_path, content)
+            
             if auto_chunk and len(content) > self.chunk_size:
                 await self._delete_chunks(session, doc_id)
                 await self._create_chunks(session, doc_id, content, embedding)
             
             logger.debug(f"Indexed document: {file_path} (ID: {doc_id})")
             return str(doc_id)
+    
+    async def _ensure_document_record(
+        self,
+        session: AsyncSession,
+        doc_id: UUID,
+        workspace_id: str,
+        file_path: str,
+        content: str = ""
+    ):
+        """确保 documents 表中有对应记录（用于外键约束）"""
+        check_query = text("""
+            SELECT id FROM screenplay.documents WHERE id = :id
+        """)
+        result = await session.execute(check_query, {'id': doc_id})
+        existing = result.scalar()
+        
+        if not existing:
+            file_hash = self._calculate_file_hash(content or file_path)
+            file_name = file_path.split('/')[-1]
+            file_size = len(content.encode('utf-8')) if content else 0
+            insert_query = text("""
+                INSERT INTO screenplay.documents (id, title, file_name, file_path, content, content_hash, category, language, file_size)
+                VALUES (:id, :title, :file_name, :file_path, :content, :content_hash, :category, :language, :file_size)
+            """)
+            await session.execute(insert_query, {
+                'id': doc_id,
+                'title': file_name,
+                'file_name': file_name,
+                'file_path': file_path,
+                'content': content[:10000] if content else "",
+                'content_hash': file_hash,
+                'category': 'code',
+                'language': 'python',
+                'file_size': file_size
+            })
+            await session.commit()
     
     async def _delete_chunks(self, session: AsyncSession, document_id: str):
         """删除文档分块"""
@@ -503,18 +517,30 @@ class PgVectorDBService(IVectorDBService):
         """创建文档分块"""
         chunks = self._chunk_document(content, "")
         
+        pgvector_embedding = self._embedding_to_pgvector(embedding)
+        
         for chunk in chunks:
-            pgvector_chunk = self._embedding_to_pgvector(embedding)
-            session.add(DocumentChunkModel(
-                document_id=document_id,
-                chunk_index=chunk["chunk_index"],
-                content=chunk["content"],
-                embedding=pgvector_chunk,
-                start_line=chunk["start_line"],
-                end_line=chunk["end_line"],
-                char_count=chunk["char_count"],
-                token_count=chunk["char_count"] // 4
-            ))
+            insert_query = text("""
+                INSERT INTO screenplay.document_chunks (
+                    id, document_id, chunk_index, content, embedding,
+                    start_line, end_line, char_count, token_count
+                ) VALUES (
+                    :id, :document_id, :chunk_index, :content,
+                    CAST(:embedding AS vector),
+                    :start_line, :end_line, :char_count, :token_count
+                )
+            """)
+            await session.execute(insert_query, {
+                'id': uuid4(),
+                'document_id': document_id,
+                'chunk_index': chunk["chunk_index"],
+                'content': chunk["content"],
+                'embedding': pgvector_embedding,
+                'start_line': chunk["start_line"],
+                'end_line': chunk["end_line"],
+                'char_count': chunk["char_count"],
+                'token_count': chunk["char_count"] // 4
+            })
         
         await session.commit()
     
