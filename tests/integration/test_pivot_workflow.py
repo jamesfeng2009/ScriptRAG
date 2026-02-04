@@ -7,12 +7,7 @@ work correctly.
 
 import pytest
 from unittest.mock import Mock, AsyncMock, patch
-from src.domain.models import (
-    SharedState,
-    OutlineStep,
-    RetrievedDocument,
-    ScreenplayFragment
-)
+from src.domain.state_types import GlobalState
 from src.application.orchestrator import WorkflowOrchestrator
 
 
@@ -43,10 +38,27 @@ def mock_llm_service_with_conflict():
             ])
         
         if "生成" in last_message and "大纲" in last_message:
-            # Planner response - use Chinese format
-            return """步骤1: 介绍废弃的功能 X | 关键词: 功能X, 介绍
-步骤2: 如何使用功能 X | 关键词: 使用, 功能X
-步骤3: 功能 X 的最佳实践 | 关键词: 最佳实践, 功能X"""
+            # Planner response - use JSON format
+            import json
+            return json.dumps({
+                "steps": [
+                    {
+                        "step_id": 0,
+                        "title": "介绍废弃的功能 X",
+                        "description": "介绍功能 X 及其在项目中的用途"
+                    },
+                    {
+                        "step_id": 1,
+                        "title": "如何使用功能 X",
+                        "description": "详细说明功能 X 的使用方法"
+                    },
+                    {
+                        "step_id": 2,
+                        "title": "功能 X 的最佳实践",
+                        "description": "提供功能 X 的最佳实践建议"
+                    }
+                ]
+            })
         elif "complexity" in last_message.lower() and "assess" in last_message.lower():
             # Director complexity assessment
             return "0.5"
@@ -54,9 +66,9 @@ def mock_llm_service_with_conflict():
             # Director conflict evaluation - detect conflict only on first call
             evaluation_call_count += 1
             if evaluation_call_count == 1:
-                return "conflict_detected: deprecation"
+                return '{"decision": "pivot", "reason": "检测到废弃功能冲突", "confidence": 0.3}'
             else:
-                return "approved"
+                return '{"decision": "continue", "reason": "内容已通过检查", "confidence": 0.8}'
         elif "modify the outline" in last_message.lower() or "pivot" in last_message.lower():
             # Pivot manager response
             return """Modified outline:
@@ -154,13 +166,14 @@ def mock_summarization_service():
 
 @pytest.fixture
 def initial_state():
-    """Create initial state for pivot testing"""
-    return SharedState(
+    """Create initial state for pivot testing (v2.1 GlobalState format)"""
+    from src.domain.state_types import GlobalState
+    return GlobalState(
         user_topic="How to use feature X",
         project_context="Tutorial on deprecated feature",
         outline=[],
         current_step_index=0,
-        retrieved_docs=[],
+        last_retrieved_docs=[],
         fragments=[],
         current_skill="standard_tutorial",
         global_tone="professional",

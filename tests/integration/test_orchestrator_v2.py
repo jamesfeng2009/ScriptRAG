@@ -210,7 +210,7 @@ class TestRouterFunctions:
             "execution_log": [],
             "error_flag": None,
             "retry_count": 0,
-            "last_fragment": {"fact_check_passed": True}
+            "fact_check_passed": True
         }
 
         result = orchestrator._route_fact_check(state)
@@ -242,7 +242,7 @@ class TestRouterFunctions:
             "execution_log": [],
             "error_flag": None,
             "retry_count": 0,
-            "last_fragment": {"fact_check_passed": False}
+            "fact_check_passed": False
         }
 
         result = orchestrator._route_fact_check(state)

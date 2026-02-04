@@ -21,6 +21,19 @@ class ModelMapping(BaseModel):
     embedding: str         # 用于向量嵌入
 
 
+class ToolCall(BaseModel):
+    """工具调用信息"""
+    id: str = Field(..., description="工具调用 ID")
+    type: str = Field(default="function", description="调用类型")
+    function: Dict[str, str] = Field(..., description="函数信息，包含 name 和 arguments")
+
+
+class ToolChoice(BaseModel):
+    """工具选择配置"""
+    type: Literal["function", "none"] = Field(default="function", description="工具调用类型")
+    function: Optional[Dict[str, str]] = Field(None, description="指定调用的函数")
+
+
 class LLMAdapter(ABC):
     """LLM 适配器抽象基类"""
     
@@ -56,6 +69,38 @@ class LLMAdapter(ABC):
             
         Returns:
             生成的文本内容
+        """
+        pass
+    
+    @abstractmethod
+    async def chat_completion_with_tools(
+        self,
+        messages: List[Dict[str, str]],
+        model: str,
+        tools: List[Dict[str, Any]],
+        tool_choice: Optional[Dict[str, Any]] = None,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        支持工具调用的聊天补全接口
+        
+        Args:
+            messages: 消息列表，格式为 [{"role": "user", "content": "..."}]
+            model: 模型名称
+            tools: 工具定义列表，OpenAI tools 格式
+            tool_choice: 工具选择配置，可选 {"type": "function", "function": {"name": "xxx"}}
+            temperature: 温度参数，控制随机性
+            max_tokens: 最大生成 token 数
+            **kwargs: 其他提供商特定参数
+            
+        Returns:
+            {
+                "content": str,  # 文本响应（当没有工具调用时）
+                "tool_calls": List[ToolCall],  # 工具调用列表
+                "finish_reason": str  # 结束原因：stop/tool_calls/function_call
+            }
         """
         pass
     

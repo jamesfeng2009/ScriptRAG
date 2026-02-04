@@ -37,7 +37,7 @@ v2.1 风格节点函数（LangGraph Native）
 """
 
 import logging
-from typing import Dict, Any, List, Optional, Union
+from typing import Dict, Any, List, Optional, Union, Set, Callable
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -57,6 +57,7 @@ from ...infrastructure.error_handler_v2 import (
     ErrorCategory,
     ErrorRecovery,
 )
+from ..data_access_control import DataAccessControl
 
 
 # ============================================================================
@@ -98,7 +99,13 @@ class NodeFactory:
     # =========================================================================
     # Planner 节点
     # =========================================================================
-    
+
+    @DataAccessControl.agent_access(
+        agent_name="planner",
+        reads={"user_topic", "project_context"},
+        writes={"outline", "execution_log"},
+        description="生成大纲 - 分析用户主题并创建步骤列表"
+    )
     @with_error_handling(agent_name="planner", action_name="generate_outline")
     async def planner_node(self, state: GlobalState) -> Dict[str, Any]:
         """
@@ -232,7 +239,13 @@ class NodeFactory:
     # =========================================================================
     # Navigator 节点
     # =========================================================================
-    
+
+    @DataAccessControl.agent_access(
+        agent_name="navigator",
+        reads={"outline", "current_step_index", "project_context"},
+        writes={"last_retrieved_docs", "execution_log"},
+        description="检索相关文档 - 根据当前步骤检索参考资料"
+    )
     @with_error_handling(agent_name="navigator", action_name="retrieve", error_category=ErrorCategory.RETRIEVAL)
     async def navigator_node(self, state: GlobalState) -> Dict[str, Any]:
         """
@@ -405,7 +418,13 @@ class NodeFactory:
     # =========================================================================
     # Director 节点
     # =========================================================================
-    
+
+    @DataAccessControl.agent_access(
+        agent_name="director",
+        reads={"outline", "fragments", "current_step_index", "last_retrieved_docs"},
+        writes={"director_feedback", "execution_log"},
+        description="评估方向 - 分析内容质量并提供反馈"
+    )
     @with_error_handling(agent_name="director", action_name="evaluate", error_category=ErrorCategory.LLM)
     async def director_node(self, state: GlobalState) -> Dict[str, Any]:
         """
@@ -431,13 +450,15 @@ class NodeFactory:
             
             if quality_score < 0.5:
                 feedback = {
-                    "decision": "pivot",
+                    "decision": "retry",
                     "reason": f"检索质量不足（分数：{quality_score:.2f}），需要补充检索",
                     "confidence": quality_score,
-                    "suggested_skill": "research_mode",
+                    "suggested_skill": None,
+                    "trigger_retrieval": True,
                     "metadata": {
                         "quality_score": quality_score,
-                        "doc_count": len(retrieved_docs)
+                        "doc_count": len(retrieved_docs),
+                        "retry_reason": "low_quality"
                     }
                 }
                 
@@ -445,7 +466,7 @@ class NodeFactory:
                     "director_feedback": feedback,
                     "execution_log": create_success_log(
                         agent="director",
-                        action="pivot_triggered",
+                        action="retry_triggered",
                         details={
                             "step_index": step_index,
                             "quality_score": quality_score,
@@ -524,7 +545,13 @@ class NodeFactory:
     # =========================================================================
     # Writer 节点
     # =========================================================================
-    
+
+    @DataAccessControl.agent_access(
+        agent_name="writer",
+        reads={"outline", "current_step_index", "last_retrieved_docs", "director_feedback", "current_skill"},
+        writes={"fragments", "execution_log"},
+        description="生成剧本片段 - 根据步骤和检索内容生成剧本"
+    )
     @with_error_handling(agent_name="writer", action_name="generate_fragment", error_category=ErrorCategory.LLM)
     async def writer_node(self, state: GlobalState) -> Dict[str, Any]:
         """
@@ -554,14 +581,26 @@ class NodeFactory:
                 }
             
             feedback = state.get("director_feedback")
-            if feedback and feedback.get("decision") == "pivot":
-                return {
-                    "execution_log": create_success_log(
-                        agent="writer",
-                        action="waiting_for_pivot",
-                        details={"reason": feedback.get("reason")}
-                    )
-                }
+            if feedback:
+                if feedback.get("trigger_retrieval"):
+                    return {
+                        "execution_log": create_success_log(
+                            agent="writer",
+                            action="waiting_for_retrieval",
+                            details={
+                                "reason": feedback.get("reason"),
+                                "quality_score": feedback.get("confidence")
+                            }
+                        )
+                    }
+                if feedback.get("decision") == "pivot":
+                    return {
+                        "execution_log": create_success_log(
+                            agent="writer",
+                            action="waiting_for_pivot",
+                            details={"reason": feedback.get("reason")}
+                        )
+                    }
             
             step_index = state.get("current_step_index", 0)
             outline = state.get("outline", [])
@@ -677,21 +716,22 @@ class NodeFactory:
     def step_advancer_node(self, state: GlobalState) -> Dict[str, Any]:
         """
         步骤推进器节点
-        
+
         职责：
         - 将 current_step_index 增加 1
-        
+        - 当所有步骤完成时，设置 workflow_complete=True
+
         Returns:
             Dict[str, Any]: Diff 更新
         """
         try:
             current_index = state.get("current_step_index", 0)
             outline = state.get("outline", [])
-            
+
             new_index = current_index + 1
             is_done = new_index >= len(outline)
-            
-            return {
+
+            updates = {
                 "current_step_index": new_index,
                 "execution_log": create_success_log(
                     agent="step_advancer",
@@ -703,7 +743,12 @@ class NodeFactory:
                     }
                 )
             }
-        
+
+            if is_done:
+                updates["workflow_complete"] = True
+
+            return updates
+
         except Exception as e:
                 logger.error(f"Step advancer error: {str(e)}")
                 return {
@@ -717,7 +762,13 @@ class NodeFactory:
     # =========================================================================
     # Pivot Manager 节点
     # =========================================================================
-    
+
+    @DataAccessControl.agent_access(
+        agent_name="pivot_manager",
+        reads={"outline", "fragments", "current_step_index", "director_feedback"},
+        writes={"outline", "current_skill", "current_step_index", "execution_log"},
+        description="处理转向 - 修改大纲或切换技能"
+    )
     @with_error_handling(agent_name="pivot_manager", action_name="handle_pivot")
     async def pivot_manager_node(self, state: GlobalState) -> Dict[str, Any]:
         """
@@ -770,7 +821,13 @@ class NodeFactory:
     # =========================================================================
     # Retry Protection 节点
     # =========================================================================
-    
+
+    @DataAccessControl.agent_access(
+        agent_name="retry_protection",
+        reads={"outline", "current_step_index", "retry_count"},
+        writes={"retry_count", "error_flag", "execution_log"},
+        description="重试保护 - 检查重试次数并决定是否降级"
+    )
     @with_error_handling(agent_name="retry_protection", action_name="check_retry_limit")
     async def retry_protection_node(self, state: GlobalState) -> Dict[str, Any]:
         """
@@ -845,7 +902,13 @@ class NodeFactory:
     # =========================================================================
     # Fact Checker 节点
     # =========================================================================
-    
+
+    @DataAccessControl.agent_access(
+        agent_name="fact_checker",
+        reads={"fragments", "last_retrieved_docs"},
+        writes={"fragments", "execution_log"},
+        description="事实检查 - 验证片段内容与源文档一致性"
+    )
     @with_error_handling(agent_name="fact_checker", action_name="verify_fragment", error_category=ErrorCategory.VALIDATION)
     async def fact_checker_node(self, state: GlobalState) -> Dict[str, Any]:
         """
@@ -955,8 +1018,14 @@ class NodeFactory:
     # =========================================================================
     # Compiler 节点
     # =========================================================================
-    
-    @with_error_handling(agent_name="compiler", action_name="compile_screenplay")
+
+    @DataAccessControl.agent_access(
+        agent_name="compiler",
+        reads={"fragments", "outline"},
+        writes={"final_screenplay", "execution_log"},
+        description="编译剧本 - 整合所有片段成最终剧本"
+    )
+    @with_error_handling(agent_name="compiler", action_name="compile")
     async def compiler_node(self, state: GlobalState) -> Dict[str, Any]:
         """
         编译器节点
@@ -1045,8 +1114,11 @@ class NodeFactory:
     def route_director_decision(self, state: GlobalState) -> str:
         """导演决策路由"""
         feedback = state.get("director_feedback")
-        if feedback and feedback.get("decision") == "pivot":
-            return "pivot"
+        if feedback:
+            if feedback.get("trigger_retrieval"):
+                return "navigate"
+            if feedback.get("decision") == "pivot":
+                return "pivot"
         return "write"
     
     def route_fact_check(self, state: GlobalState) -> str:

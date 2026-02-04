@@ -67,6 +67,76 @@ class OpenAICompatibleAdapter(LLMAdapter):
         except Exception as e:
             raise Exception(f"Chat completion failed for {self.config.provider}: {str(e)}")
     
+    async def chat_completion_with_tools(
+        self,
+        messages: List[Dict[str, str]],
+        model: str,
+        tools: List[Dict[str, Any]],
+        tool_choice: Optional[Dict[str, Any]] = None,
+        temperature: float = 0.7,
+        max_tokens: Optional[int] = None,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        支持工具调用的聊天补全接口
+        
+        Args:
+            messages: 消息列表
+            model: 模型名称
+            tools: 工具定义列表，OpenAI tools 格式
+            tool_choice: 工具选择配置，可选 {"type": "function", "function": {"name": "xxx"}}
+            temperature: 温度参数
+            max_tokens: 最大生成 token 数
+            **kwargs: 其他参数
+            
+        Returns:
+            {
+                "content": str,  # 文本响应（当没有工具调用时）
+                "tool_calls": List[Dict],  # 工具调用列表
+                "finish_reason": str  # 结束原因：stop/tool_calls/function_call
+            }
+        """
+        try:
+            request_params = {
+                "model": model,
+                "messages": messages,
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                **kwargs
+            }
+            
+            if tools:
+                request_params["tools"] = tools
+            
+            if tool_choice:
+                request_params["tool_choice"] = tool_choice
+            
+            response = await self.client.chat.completions.create(**request_params)
+            
+            message = response.choices[0].message
+            finish_reason = response.choices[0].finish_reason
+            
+            tool_calls = []
+            if message.tool_calls:
+                for call in message.tool_calls:
+                    tool_calls.append({
+                        "id": call.id,
+                        "type": call.type,
+                        "function": {
+                            "name": call.function.name,
+                            "arguments": call.function.arguments
+                        }
+                    })
+            
+            return {
+                "content": message.content if message.content else "",
+                "tool_calls": tool_calls,
+                "finish_reason": finish_reason if finish_reason else "stop"
+            }
+            
+        except Exception as e:
+            raise Exception(f"Chat completion with tools failed for {self.config.provider}: {str(e)}")
+    
     async def embedding(
         self,
         texts: List[str],

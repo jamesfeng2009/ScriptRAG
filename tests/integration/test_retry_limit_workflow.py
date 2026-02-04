@@ -6,12 +6,7 @@ verifying that the retry limit is enforced and forced degradation happens.
 
 import pytest
 from unittest.mock import Mock, AsyncMock, patch
-from src.domain.models import (
-    SharedState,
-    OutlineStep,
-    RetrievedDocument,
-    ScreenplayFragment
-)
+from src.domain.state_types import GlobalState
 from src.application.orchestrator import WorkflowOrchestrator
 
 
@@ -60,9 +55,9 @@ def mock_llm_service_with_repeated_conflicts():
             director_call_count += 1
             # Trigger conflict for first 4 attempts (exceeds max_retries of 3)
             if director_call_count <= 4:
-                return "conflict_detected: repeated_issue"
+                return '{"decision": "pivot", "reason": "检测到重复问题", "confidence": 0.3}'
             else:
-                return "approved"
+                return '{"decision": "continue", "reason": "内容已通过检查", "confidence": 0.8}'
         elif "modify the outline" in last_message.lower() or "pivot" in last_message.lower():
             # Pivot manager response
             return "Modified outline with attempted fix"
@@ -110,13 +105,13 @@ def mock_summarization_service():
 
 @pytest.fixture
 def initial_state():
-    """Create initial state for retry limit testing"""
-    return SharedState(
+    """Create initial state for retry limit testing (v2.1 GlobalState format)"""
+    return GlobalState(
         user_topic="Problematic topic",
         project_context="Context with repeated issues",
         outline=[],
         current_step_index=0,
-        retrieved_docs=[],
+        last_retrieved_docs=[],
         fragments=[],
         current_skill="standard_tutorial",
         global_tone="professional",

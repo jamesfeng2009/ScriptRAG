@@ -160,10 +160,12 @@ DATA_OWNERSHIP_CONFIG: Dict[str, Dict[str, Any]] = {
 class DataAccessControl:
     """数据访问控制类
     
-    提供装饰器和工具方法来管理Agent对SharedState的访问。
+    提供装饰器和工具方法来管理Agent对GlobalState的访问。
+    支持 v2.1 架构的 TypedDict + Reducer 模式。
     """
     
     # 是否启用严格模式（开发时可以启用，生产环境建议关闭）
+    # TODO: 逐步完善各Agent的访问权限后，再全局启用
     STRICT_MODE = False
     
     @staticmethod
@@ -173,9 +175,10 @@ class DataAccessControl:
         writes: Optional[Set[str]] = None,
         description: str = ""
     ) -> Callable:
-        """数据访问装饰器
+        """数据访问装饰器（v2.1 GlobalState 版本）
         
         自动记录Agent的数据访问，并可选地进行权限检查。
+        支持 GlobalState (Dict[str, Any]) 格式。
         
         Args:
             agent_name: Agent名称
@@ -192,7 +195,7 @@ class DataAccessControl:
                 reads={"user_topic", "project_context"},
                 writes={"outline", "execution_log"}
             )
-            async def plan_outline(state: SharedState, llm_service):
+            async def plan_outline(state: GlobalState, llm_service):
                 # ... Agent逻辑
                 pass
         """
@@ -201,113 +204,90 @@ class DataAccessControl:
         
         def decorator(func: Callable) -> Callable:
             @wraps(func)
-            async def async_wrapper(state: SharedState, *args, **kwargs):
-                # 记录访问开始
+            async def async_wrapper(self, state: Dict[str, Any], *args, **kwargs):
                 access_start = datetime.now()
                 
-                # 记录数据访问
-                state.add_log_entry(
-                    agent_name=agent_name,
-                    action="data_access_start",
-                    details={
+                current_log = state.get("execution_log", [])
+                access_log = {
+                    "agent": agent_name,
+                    "action": "data_access_start",
+                    "details": {
                         "reads": list(reads),
                         "writes": list(writes),
                         "description": description,
                         "timestamp": access_start.isoformat()
                     }
-                )
+                }
                 
-                # 严格模式：检查访问权限
                 if DataAccessControl.STRICT_MODE:
                     DataAccessControl._validate_access(
                         agent_name=agent_name,
                         reads=reads,
-                        writes=writes
+                        writes=writes,
+                        state=state
                     )
                 
                 try:
-                    # 执行Agent逻辑
-                    result = await func(state, *args, **kwargs)
+                    result = await func(self, state, *args, **kwargs)
                     
-                    # 记录访问结束
                     access_end = datetime.now()
                     duration = (access_end - access_start).total_seconds()
                     
-                    state.add_log_entry(
-                        agent_name=agent_name,
-                        action="data_access_end",
-                        details={
-                            "duration_seconds": duration,
-                            "success": True
+                    if isinstance(result, dict):
+                        success_log = {
+                            "agent": agent_name,
+                            "action": "data_access_end",
+                            "details": {
+                                "duration_seconds": duration,
+                                "success": True
+                            }
                         }
-                    )
+                        if "execution_log" in result:
+                            if isinstance(result["execution_log"], list):
+                                result["execution_log"] = result["execution_log"] + [success_log]
+                            else:
+                                result["execution_log"] = [success_log]
+                        else:
+                            result["execution_log"] = [success_log]
                     
                     return result
                     
                 except Exception as e:
-                    # 记录错误
-                    state.add_log_entry(
-                        agent_name=agent_name,
-                        action="data_access_error",
-                        details={
-                            "error": str(e),
-                            "error_type": type(e).__name__
-                        }
-                    )
                     raise
             
             @wraps(func)
-            def sync_wrapper(state: SharedState, *args, **kwargs):
-                # 同步版本（用于非async函数）
+            def sync_wrapper(self, state: Dict[str, Any], *args, **kwargs):
                 access_start = datetime.now()
-                
-                state.add_log_entry(
-                    agent_name=agent_name,
-                    action="data_access_start",
-                    details={
-                        "reads": list(reads),
-                        "writes": list(writes),
-                        "description": description,
-                        "timestamp": access_start.isoformat()
-                    }
-                )
                 
                 if DataAccessControl.STRICT_MODE:
                     DataAccessControl._validate_access(
                         agent_name=agent_name,
                         reads=reads,
-                        writes=writes
+                        writes=writes,
+                        state=state
                     )
                 
                 try:
-                    result = func(state, *args, **kwargs)
+                    result = func(self, state, *args, **kwargs)
                     
                     access_end = datetime.now()
                     duration = (access_end - access_start).total_seconds()
                     
-                    state.add_log_entry(
-                        agent_name=agent_name,
-                        action="data_access_end",
-                        details={
-                            "duration_seconds": duration,
-                            "success": True
-                        }
-                    )
+                    if isinstance(result, dict):
+                        result["execution_log"] = result.get("execution_log", []) + [{
+                            "agent": agent_name,
+                            "action": "data_access_end",
+                            "details": {
+                                "duration_seconds": duration,
+                                "success": True
+                            }
+                        }]
                     
                     return result
                     
                 except Exception as e:
-                    state.add_log_entry(
-                        agent_name=agent_name,
-                        action="data_access_error",
-                        details={
-                            "error": str(e),
-                            "error_type": type(e).__name__
-                        }
-                    )
                     raise
             
-            # 根据函数类型返回对应的wrapper
             import inspect
             if inspect.iscoroutinefunction(func):
                 return async_wrapper
@@ -320,7 +300,8 @@ class DataAccessControl:
     def _validate_access(
         agent_name: str,
         reads: Set[str],
-        writes: Set[str]
+        writes: Set[str],
+        state: Dict[str, Any]
     ) -> None:
         """验证访问权限（严格模式）
         
@@ -328,14 +309,21 @@ class DataAccessControl:
             agent_name: Agent名称
             reads: 读取的字段
             writes: 写入的字段
+            state: 当前状态
             
         Raises:
             PermissionError: 如果访问违反了所有权规则
         """
-        # 将agent_name转换为DataOwner
-        try:
-            agent_owner = DataOwner(agent_name.lower())
-        except ValueError:
+        modified_fields = set()
+        for key in writes:
+            if key in state:
+                modified_fields.add(key)
+        
+        unauthorized = modified_fields - writes - {"execution_log"}
+        if unauthorized:
+            logger.warning(
+                f"Agent {agent_name} modified unauthorized fields: {unauthorized}"
+            )
             logger.warning(f"Unknown agent: {agent_name}")
             return
         
