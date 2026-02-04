@@ -440,8 +440,7 @@ docker-compose down
 # 基本用法
 python -m src.presentation.cli \
     --topic "用户认证系统实现" \
-    --context "基于 FastAPI 和 JWT 的认证系统" \
-    --workspace-id "workspace-123"
+    --context "基于 FastAPI 和 JWT 的认证系统"
 
 # 指定 Skill
 python -m src.presentation.cli \
@@ -465,8 +464,7 @@ curl -X POST http://localhost:8000/api/v1/generate \
   -H "Content-Type: application/json" \
   -d '{
     "topic": "Redis 缓存策略",
-    "project_context": "高并发电商系统",
-    "workspace_id": "workspace-123"
+    "project_context": "高并发电商系统"
   }'
 ```
 
@@ -486,7 +484,6 @@ retrieval_service = RetrievalService(...)
 orchestrator = WorkflowOrchestrator(
     llm_service=llm_service,
     retrieval_service=retrieval_service,
-    workspace_id="workspace-123"
 )
 
 # 执行工作流
