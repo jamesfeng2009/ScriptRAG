@@ -1,27 +1,26 @@
-"""Workflow Orchestrator - LangGraph state machine management
+"""
+工作流编排器 - LangGraph 状态机管理
 
-This module implements the LangGraph state machine that orchestrates
-the multi-agent screenplay generation workflow.
+该模块实现了 LangGraph 状态机，用于编排多智能体剧本生成工作流。
 
-Enhanced Features (when enable_dynamic_adjustment=True):
-1. RAGContentAnalyzer integration for semantic content analysis
-2. DynamicDirector for real-time direction adjustment
-3. SkillRecommender for intelligent skill selection
+增强功能（当 enable_dynamic_adjustment=True 时）：
+1. RAGContentAnalyzer 集成用于语义内容分析
+2. DynamicDirector 用于实时方向调整
+3. SkillRecommender 用于智能技能选择
+
+v2.1 架构变更：
+- 使用 GlobalState TypedDict 替代 SharedState
+- 采用 Reducer 模式进行状态更新
+- 函数级隔离和错误处理标准化
 """
 
 import logging
-from typing import List, Literal, Dict, Any, Optional
+import operator
+from typing import List, Literal, Dict, Any, Optional, Annotated
 from langgraph.graph import StateGraph, END
 
-from ..domain.models import SharedState
-from ..domain.agents.planner import plan_outline
-from ..domain.agents.navigator import retrieve_content
-from ..domain.agents.director import evaluate_and_decide
-from ..domain.agents.pivot_manager import handle_pivot
-from ..domain.agents.writer import generate_fragment
-from ..domain.agents.fact_checker import verify_fragment_node
-from ..domain.agents.compiler import compile_screenplay
-from ..domain.agents.retry_protection import check_retry_limit
+from ..domain.state_types import GlobalState
+from ..domain.agents.node_factory import NodeFactory, create_success_log, create_error_log
 from ..domain.agents.enhanced_agents import (
     RAGContentAnalyzer,
     DynamicDirector,
@@ -35,10 +34,8 @@ from ..services.llm.service import LLMService
 from ..services.retrieval_service import RetrievalService
 from ..services.parser.tree_sitter_parser import IParserService
 from ..services.summarization_service import SummarizationService
-from ..infrastructure.error_handler import (
-    ErrorHandler,
-    TimeoutError as CustomTimeoutError,
-    with_timeout
+from ..infrastructure.error_handler_v2 import (
+    with_error_handling,
 )
 
 
@@ -74,7 +71,7 @@ class WorkflowOrchestrator:
         """
         初始化工作流编排器
         
-        Args:
+        参数:
             llm_service: LLM 服务实例
             retrieval_service: 检索服务实例
             parser_service: 解析服务实例
@@ -89,6 +86,14 @@ class WorkflowOrchestrator:
         self.workspace_id = workspace_id
         self.enable_dynamic_adjustment = enable_dynamic_adjustment
         
+        self.node_factory = NodeFactory(
+            llm_service=llm_service,
+            retrieval_service=retrieval_service,
+            parser_service=parser_service,
+            summarization_service=summarization_service,
+            workspace_id=workspace_id
+        )
+        
         if enable_dynamic_adjustment:
             self.rag_analyzer = RAGContentAnalyzer(llm_service)
             self.dynamic_director = DynamicDirector(llm_service)
@@ -97,7 +102,7 @@ class WorkflowOrchestrator:
         
         self.graph = self._build_graph()
         
-        logger.info(f"WorkflowOrchestrator initialized (dynamic_adjustment={enable_dynamic_adjustment})")
+        logger.info(f"WorkflowOrchestrator 初始化完成 (dynamic_adjustment={enable_dynamic_adjustment})")
     
     def _build_graph(self) -> StateGraph:
         """
@@ -105,14 +110,14 @@ class WorkflowOrchestrator:
         
         根据 enable_dynamic_adjustment 参数决定是否启用增强功能。
         
-        Returns:
+        返回:
             编译后的状态图
             
         验证需求: 14.2, 14.3, 14.4, 14.5
         """
-        logger.info(f"Building LangGraph state machine (dynamic_adjustment={self.enable_dynamic_adjustment})")
+        logger.info(f"构建 LangGraph 状态机 (dynamic_adjustment={self.enable_dynamic_adjustment})")
         
-        workflow = StateGraph(SharedState)
+        workflow = StateGraph(GlobalState)
         
         workflow.add_node("planner", self._planner_node)
         workflow.add_node("navigator", self._navigator_node)
@@ -177,489 +182,519 @@ class WorkflowOrchestrator:
         
         compiled_graph = workflow.compile()
         
-        logger.info("LangGraph state machine built and compiled successfully")
+        logger.info("LangGraph 状态机构建并编译成功")
         
         return compiled_graph
     
-    async def _rag_analyzer_node(self, state: SharedState) -> SharedState:
-        """RAG内容分析器节点"""
-        if not hasattr(self, 'rag_analyzer'):
-            return state
+    def _get_current_step(self, state: GlobalState) -> Optional[Dict[str, Any]]:
+        """获取当前步骤"""
+        outline = state.get("outline", [])
+        current_step_index = state.get("current_step_index", 0)
+        
+        if 0 <= current_step_index < len(outline):
+            return outline[current_step_index]
+        return None
+    
+    def _route_director_decision(self, state: GlobalState) -> str:
+        """
+        路由导演决策
+        
+        参数:
+            state: 当前全局状态
             
-        logger.info("Executing RAG analyzer node")
-        try:
-            current_step = state.get_current_step()
-            if not current_step or not state.retrieved_docs:
-                logger.warning("No content to analyze")
-                return state
+        返回:
+            路由目标节点标识
+        """
+        director_feedback = state.get("director_feedback", {})
+        decision = director_feedback.get("decision", "write")
+        
+        # Map "continue" to "write" for compatibility
+        if decision == "continue":
+            decision = "write"
+        
+        return decision
+    
+    def _route_dynamic_director_decision(self, state: GlobalState) -> str:
+        """
+        路由动态导演决策
+        
+        参数:
+            state: 当前全局状态
             
-            query = current_step.description
-            analysis = await self.rag_analyzer.analyze(
-                query=query,
-                retrieved_docs=state.retrieved_docs
-            )
+        返回:
+            路由目标节点标识
+        """
+        director_feedback = state.get("director_feedback", {})
+        adjustment_type = director_feedback.get("adjustment_type", "continue")
+        
+        if adjustment_type == "pivot":
+            return "pivot"
+        elif adjustment_type == "skill_switch":
+            return "skill_switch"
+        else:
+            return "continue"
+    
+    def _route_fact_check(self, state: GlobalState) -> str:
+        """
+        路由事实检查结果
+        
+        参数:
+            state: 当前全局状态
             
-            state.rag_analysis = {
-                "content_types": [ct.value for ct in analysis.content_types],
-                "main_topic": analysis.main_topic,
-                "sub_topics": analysis.sub_topics,
-                "difficulty_level": analysis.difficulty_level,
-                "tone_style": analysis.tone_style.value if analysis.tone_style else None,
-                "key_concepts": analysis.key_concepts,
-                "warnings": analysis.warnings,
-                "prerequisites": analysis.prerequisites,
-                "suggested_skill": analysis.suggested_skill,
-                "confidence": analysis.confidence
-            }
+        返回:
+            路由目标节点标识
+        """
+        fact_check_passed = state.get("fact_check_passed", False)
+        return "valid" if fact_check_passed else "invalid"
+    
+    def _route_completion(self, state: GlobalState) -> str:
+        """
+        路由完成状态
+        
+        参数:
+            state: 当前全局状态
             
-            state.add_log_entry(
-                agent_name="rag_analyzer",
-                action="analyze_content",
+        返回:
+            路由目标节点标识
+        """
+        outline = state.get("outline", [])
+        current_step_index = state.get("current_step_index", 0)
+        
+        if current_step_index >= len(outline):
+            return "done"
+        return "continue"
+    
+    @with_error_handling(agent_name="rag_analyzer", action_name="analyze_content")
+    async def _rag_analyzer_node(self, state: GlobalState) -> Dict[str, Any]:
+        """
+        RAG内容分析器节点
+        
+        职责:
+            - 分析检索到的内容语义
+            - 识别内容类型、难度级别
+            - 提供写作方向建议
+        
+        参数:
+            state: 当前全局状态
+            
+        返回:
+            状态更新字典
+        """
+        logger.info("执行 RAG 分析器节点")
+        
+        current_step = self._get_current_step(state)
+        retrieved_docs = state.get("last_retrieved_docs", [])
+        
+        if not current_step or not retrieved_docs:
+            logger.warning("没有内容可分析")
+            return {}
+        
+        query = current_step.get("description", "")
+        analysis = await self.rag_analyzer.analyze(
+            query=query,
+            retrieved_docs=retrieved_docs
+        )
+        
+        rag_analysis = {
+            "content_types": [ct.value for ct in analysis.content_types],
+            "main_topic": analysis.main_topic,
+            "sub_topics": analysis.sub_topics,
+            "difficulty_level": analysis.difficulty_level,
+            "tone_style": analysis.tone_style.value if analysis.tone_style else None,
+            "key_concepts": analysis.key_concepts,
+            "warnings": analysis.warnings,
+            "prerequisites": analysis.prerequisites,
+            "suggested_skill": analysis.suggested_skill,
+            "confidence": analysis.confidence
+        }
+        
+        return {
+            "director_feedback": {"rag_analysis": rag_analysis},
+            "execution_log": create_success_log(
+                agent="rag_analyzer",
+                action_name="analyze_content",
                 details={
-                    "step_id": current_step.step_id,
+                    "step_id": current_step.get("step_id"),
                     "content_types": analysis.content_types,
                     "difficulty": analysis.difficulty_level,
                     "suggested_skill": analysis.suggested_skill
                 }
             )
-            
-            logger.info(f"RAG analysis completed: types={analysis.content_types}, difficulty={analysis.difficulty_level}")
-            
-            return state
-            
-        except Exception as e:
-            logger.error(f"RAG analyzer failed: {str(e)}")
-            state.add_log_entry(
-                agent_name="rag_analyzer",
-                action="analysis_failed",
-                details={"error": str(e)}
-            )
-            return state
+        }
     
-    async def _dynamic_director_node(self, state: SharedState) -> SharedState:
-        """动态导演节点 - 基于RAG分析做出方向调整决策"""
-        if not hasattr(self, 'dynamic_director'):
-            return state
+    @with_error_handling(agent_name="dynamic_director", action_name="direction_adjustment")
+    async def _dynamic_director_node(self, state: GlobalState) -> Dict[str, Any]:
+        """
+        动态导演节点 - 基于RAG分析做出方向调整决策
+        
+        职责:
+            - 评估 RAG 分析结果
+            - 决定是否需要调整写作方向
+            - 生成具体的调整指令
+        
+        参数:
+            state: 当前全局状态
             
-        logger.info("Executing dynamic director node")
-        try:
-            if not state.rag_analysis:
-                logger.warning("No RAG analysis available")
-                return state
-            
-            analysis = ContentAnalysis(
-                content_types=[],
-                main_topic=state.rag_analysis.get("main_topic", ""),
-                sub_topics=state.rag_analysis.get("sub_topics", []),
-                difficulty_level=state.rag_analysis.get("difficulty_level", 0.5),
-                tone_style=None,
-                key_concepts=state.rag_analysis.get("key_concepts", []),
-                warnings=state.rag_analysis.get("warnings", []),
-                prerequisites=state.rag_analysis.get("prerequisites", []),
-                suggested_skill=state.rag_analysis.get("suggested_skill"),
-                confidence=state.rag_analysis.get("confidence", 0.5)
-            )
-            
-            state, adjustment = await self.dynamic_director.evaluate_and_adjust(
-                state=state,
-                content_analysis=analysis
-            )
-            
-            state.add_log_entry(
-                agent_name="dynamic_director",
-                action="direction_adjustment",
+        返回:
+            状态更新字典
+        """
+        logger.info("执行动态导演节点")
+        
+        director_feedback = state.get("director_feedback", {})
+        rag_analysis = director_feedback.get("rag_analysis", {})
+        
+        if not rag_analysis:
+            logger.warning("没有 RAG 分析结果可用")
+            return {}
+        
+        analysis = ContentAnalysis(
+            content_types=[],
+            main_topic=rag_analysis.get("main_topic", ""),
+            sub_topics=rag_analysis.get("sub_topics", []),
+            difficulty_level=rag_analysis.get("difficulty_level", 0.5),
+            tone_style=None,
+            key_concepts=rag_analysis.get("key_concepts", []),
+            warnings=rag_analysis.get("warnings", []),
+            prerequisites=rag_analysis.get("prerequisites", []),
+            suggested_skill=rag_analysis.get("suggested_skill"),
+            confidence=rag_analysis.get("confidence", 0.5)
+        )
+        
+        current_step = self._get_current_step(state)
+        adjustment = await self.dynamic_director.evaluate_and_adjust(
+            state=state,
+            content_analysis=analysis
+        )
+        
+        return {
+            "director_feedback": {
+                "adjustment_type": adjustment.adjustment_type.value if adjustment else "no_change",
+                "reason": adjustment.reason if adjustment else "",
+                "confidence": adjustment.confidence if adjustment else 0
+            },
+            "execution_log": create_success_log(
+                agent="dynamic_director",
+                action_name="direction_adjustment",
                 details={
                     "adjustment_type": adjustment.adjustment_type.value if adjustment else "no_change",
                     "reason": adjustment.reason if adjustment else "",
                     "confidence": adjustment.confidence if adjustment else 0
                 }
             )
-            
-            logger.info(f"Dynamic director decision: {adjustment.adjustment_type.value if adjustment else 'no_change'}")
-            
-            return state
-            
-        except Exception as e:
-            logger.error(f"Dynamic director failed: {str(e)}")
-            state.add_log_entry(
-                agent_name="dynamic_director",
-                action="decision_failed",
-                details={"error": str(e)}
-            )
-            return state
+        }
     
-    async def _skill_recommender_node(self, state: SharedState) -> SharedState:
-        """技能推荐器节点 - 根据内容分析推荐并切换技能"""
-        if not hasattr(self, 'skill_recommender'):
-            return state
-            
-        logger.info("Executing skill recommender node")
-        try:
-            current_step = state.get_current_step()
-            if not current_step:
-                return state
-            
-            rag_analysis = getattr(state, 'rag_analysis', None)
-            
-            recommendation = await self.skill_recommender.recommend(
-                topic=state.user_topic,
-                context=state.project_context,
-                content_analysis=rag_analysis
-            )
-            
-            recommended_skill = recommendation.get("recommended_skill")
-            confidence = recommendation.get("confidence", 0)
-            reasoning = recommendation.get("reasoning", "")
-            
-            if recommended_skill and confidence > 0.7 and recommended_skill != state.current_skill:
-                old_skill = state.current_skill
-                state.current_skill = recommended_skill
-                
-                if not hasattr(state, 'skill_history') or state.skill_history is None:
-                    state.skill_history = []
-                
-                state.skill_history.append({
-                    "step_id": current_step.step_id,
-                    "reason": f"Auto-switch: {reasoning}",
-                    "from_skill": old_skill,
-                    "to_skill": recommended_skill,
-                    "triggered_by": "skill_recommender",
-                    "confidence": confidence
-                })
-                
-                logger.info(f"Skill auto-switched: {old_skill} -> {recommended_skill} (confidence: {confidence})")
-            
-            state.add_log_entry(
-                agent_name="skill_recommender",
-                action="recommend_skill",
-                details={
-                    "step_id": current_step.step_id,
-                    "recommended_skill": recommended_skill,
-                    "confidence": confidence,
-                    "reasoning": reasoning,
-                    "current_skill": state.current_skill
-                }
-            )
-            
-            return state
-            
-        except Exception as e:
-            logger.error(f"Skill recommender failed: {str(e)}")
-            state.add_log_entry(
-                agent_name="skill_recommender",
-                action="recommendation_failed",
-                details={"error": str(e)}
-            )
-            return state
-    
-    async def _planner_node(self, state: SharedState) -> SharedState:
-        """规划器节点包装函数（带超时保护）"""
-        logger.info("Executing planner node")
-        try:
-            return await ErrorHandler.with_timeout(
-                plan_outline,
-                60.0,
-                state,
-                self.llm_service
-            )
-        except CustomTimeoutError as e:
-            logger.error(f"Planner node timed out: {str(e)}")
-            state.add_log_entry(
-                agent_name="planner",
-                action="timeout",
-                details={"error": str(e)}
-            )
-            return state
-    
-    async def _navigator_node(self, state: SharedState) -> SharedState:
-        """导航器节点包装函数（带超时保护）"""
-        logger.info("Executing navigator node")
-        try:
-            return await ErrorHandler.with_timeout(
-                retrieve_content,
-                60.0,
-                state,
-                self.retrieval_service,
-                self.parser_service,
-                self.summarization_service,
-                self.workspace_id
-            )
-        except CustomTimeoutError as e:
-            logger.error(f"Navigator node timed out: {str(e)}")
-            state.retrieved_docs = []
-            state.add_log_entry(
-                agent_name="navigator",
-                action="timeout",
-                details={"error": str(e)}
-            )
-            return state
-    
-    async def _director_node(self, state: SharedState) -> SharedState:
-        """导演节点包装函数（带超时保护）"""
-        logger.info("Executing director node")
-        try:
-            return await ErrorHandler.with_timeout(
-                evaluate_and_decide,
-                60.0,
-                state,
-                self.llm_service
-            )
-        except CustomTimeoutError as e:
-            logger.error(f"Director node timed out: {str(e)}")
-            state.pivot_triggered = False
-            state.add_log_entry(
-                agent_name="director",
-                action="timeout",
-                details={"error": str(e), "fallback": "approved"}
-            )
-            return state
-    
-    def _pivot_manager_node(self, state: SharedState) -> SharedState:
-        """转向管理器节点包装函数（带超时保护）"""
-        logger.info("Executing pivot_manager node")
-        try:
-            return handle_pivot(state)
-        except Exception as e:
-            logger.error(f"Pivot manager node failed: {str(e)}")
-            state.pivot_triggered = False
-            state.add_log_entry(
-                agent_name="pivot_manager",
-                action="error",
-                details={"error": str(e)}
-            )
-            return state
-    
-    def _retry_protection_node(self, state: SharedState) -> SharedState:
-        """重试保护节点包装函数（带超时保护）"""
-        logger.info("Executing retry_protection node")
-        try:
-            return check_retry_limit(state)
-        except Exception as e:
-            logger.error(f"Retry protection node failed: {str(e)}")
-            current_step = state.get_current_step()
-            if current_step:
-                current_step.status = "skipped"
-            state.add_log_entry(
-                agent_name="retry_protection",
-                action="error",
-                details={"error": str(e), "fallback": "skipped"}
-            )
-            return state
-    
-    async def _writer_node(self, state: SharedState) -> SharedState:
-        """编剧节点包装函数（带超时保护）"""
-        logger.info("Executing writer node")
-        try:
-            return await ErrorHandler.with_timeout(
-                generate_fragment,
-                60.0,
-                state,
-                self.llm_service
-            )
-        except CustomTimeoutError as e:
-            logger.error(f"Writer node timed out: {str(e)}")
-            current_step = state.get_current_step()
-            if current_step:
-                current_step.status = "skipped"
-            state.add_log_entry(
-                agent_name="writer",
-                action="timeout",
-                details={"error": str(e)}
-            )
-            return state
-    
-    async def _fact_checker_node(self, state: SharedState) -> SharedState:
-        """事实检查器节点包装函数（带超时保护）"""
-        logger.info("Executing fact_checker node")
-        try:
-            return await ErrorHandler.with_timeout(
-                verify_fragment_node,
-                60.0,
-                state,
-                self.llm_service
-            )
-        except CustomTimeoutError as e:
-            logger.error(f"Fact checker node timed out: {str(e)}")
-            state.fact_check_passed = True
-            state.add_log_entry(
-                agent_name="fact_checker",
-                action="timeout",
-                details={"error": str(e), "fallback": "assumed_valid"}
-            )
-            return state
-    
-    def _step_advancer_node(self, state: SharedState) -> SharedState:
-        """步骤推进器节点 - 将 current_step_index 推进到下一步"""
-        old_index = state.current_step_index
-        state.current_step_index += 1
-        logger.info(f"Advancing from step {old_index} to {state.current_step_index}")
-        return state
-    
-    async def _compiler_node(self, state: SharedState) -> SharedState:
-        """编译器节点包装函数（带超时保护）"""
-        logger.info("Executing compiler node")
-        try:
-            final_screenplay = await ErrorHandler.with_timeout(
-                compile_screenplay,
-                60.0,
-                state,
-                self.llm_service
-            )
-            
-            state.add_log_entry(
-                agent_name="compiler",
-                action="screenplay_compiled",
-                details={"screenplay_length": len(final_screenplay)}
-            )
-            
-            state.execution_log.append({
-                "agent_name": "compiler",
-                "action": "final_screenplay",
-                "timestamp": state.execution_log[-1]["timestamp"] if state.execution_log else None,
-                "details": {"screenplay": final_screenplay}
-            })
-            
-            return state
-            
-        except CustomTimeoutError as e:
-            logger.error(f"Compiler node timed out: {str(e)}")
-            state.add_log_entry(
-                agent_name="compiler",
-                action="timeout",
-                details={"error": str(e)}
-            )
-            fallback_screenplay = "\n\n".join([f.content for f in state.fragments])
-            state.execution_log.append({
-                "agent_name": "compiler",
-                "action": "final_screenplay",
-                "timestamp": state.execution_log[-1]["timestamp"] if state.execution_log else None,
-                "details": {"screenplay": fallback_screenplay}
-            })
-            return state
-    
-    def _route_director_decision(
-        self,
-        state: SharedState
-    ) -> Literal["pivot", "write"]:
-        """导演决策路由函数（基础模式）"""
-        if state.pivot_triggered:
-            logger.info("Director decision: pivot")
-            return "pivot"
-        logger.info("Director decision: write")
-        return "write"
-    
-    def _route_dynamic_director_decision(
-        self,
-        state: SharedState
-    ) -> Literal["pivot", "skill_switch", "continue"]:
+    @with_error_handling(agent_name="skill_recommender", action_name="recommend_skill")
+    async def _skill_recommender_node(self, state: GlobalState) -> Dict[str, Any]:
         """
-        动态导演决策路由函数（增强模式）
+        技能推荐器节点 - 根据内容分析推荐并切换技能
         
-        根据动态导演的方向调整决策决定下一步动作：
-        - pivot: 检测到冲突或触发条件，需要转向
-        - skill_switch: 建议切换技能
-        - continue: 正常继续
+        职责:
+            - 分析当前上下文和内容特征
+            - 推荐最适合的写作技能
+            - 自动切换技能（如需要）
+        
+        参数:
+            state: 当前全局状态
+            
+        返回:
+            状态更新字典
         """
-        if state.pivot_triggered:
-            logger.info("Dynamic director decision: pivot")
-            return "pivot"
+        logger.info("执行技能推荐器节点")
         
-        rag_analysis = getattr(state, 'rag_analysis', None)
-        if rag_analysis and rag_analysis.get('suggested_skill'):
-            if rag_analysis['suggested_skill'] != state.current_skill:
-                confidence = rag_analysis.get('confidence', 0)
-                if confidence > 0.7:
-                    logger.info(f"Dynamic director decision: skill_switch to {rag_analysis['suggested_skill']}")
-                    return "skill_switch"
+        current_step = self._get_current_step(state)
+        if not current_step:
+            return {}
         
-        logger.info("Dynamic director decision: continue")
-        return "continue"
+        user_topic = state.get("user_topic", "")
+        project_context = state.get("project_context", "")
+        director_feedback = state.get("director_feedback", {})
+        rag_analysis = director_feedback.get("rag_analysis", {})
+        
+        recommendation = await self.skill_recommender.recommend(
+            topic=user_topic,
+            context=project_context,
+            content_analysis=rag_analysis
+        )
+        
+        recommended_skill = recommendation.get("recommended_skill")
+        confidence = recommendation.get("confidence", 0)
+        reasoning = recommendation.get("reasoning", "")
+        
+        updates = {}
+        logs = []
+        
+        if recommended_skill and confidence > 0.7:
+            updates["current_skill"] = recommended_skill
+            
+            skill_history = state.get("skill_history", [])
+            skill_history.append({
+                "step_id": current_step.get("step_id"),
+                "reason": f"自动切换: {reasoning}",
+                "to_skill": recommended_skill,
+                "triggered_by": "skill_recommender",
+                "confidence": confidence
+            })
+            updates["skill_history"] = skill_history
+            
+            logger.info(f"技能自动切换: -> {recommended_skill} (置信度: {confidence})")
+        
+        logs.append(create_success_log(
+            agent="skill_recommender",
+            action_name="recommend_skill",
+            details={
+                "step_id": current_step.get("step_id"),
+                "recommended_skill": recommended_skill,
+                "confidence": confidence,
+                "reasoning": reasoning
+            }
+        ))
+        
+        updates["execution_log"] = logs
+        return updates
     
-    def _route_fact_check(
-        self,
-        state: SharedState
-    ) -> Literal["invalid", "valid"]:
-        """事实检查器路由函数"""
-        if not state.fact_check_passed:
-            logger.info("Fact check decision: invalid")
-            return "invalid"
-        logger.info("Fact check decision: valid")
-        return "valid"
+    @with_error_handling(agent_name="planner", action_name="generate_outline")
+    async def _planner_node(self, state: GlobalState) -> Dict[str, Any]:
+        """
+        规划器节点 - 生成剧本大纲
+        
+        职责:
+            - 分析用户主题和项目上下文
+            - 生成结构化的大纲
+            - 设置初始步骤索引
+        
+        参数:
+            state: 当前全局状态
+            
+        返回:
+            状态更新字典（包含 outline 和 execution_log）
+        """
+        logger.info("执行规划器节点")
+        
+        user_topic = state.get("user_topic", "")
+        project_context = state.get("project_context", "")
+        
+        return await self.node_factory.planner_node(state)
     
-    def _route_completion(
-        self,
-        state: SharedState
-    ) -> Literal["continue", "done"]:
-        """完成检查路由函数"""
-        if state.current_step_index < len(state.outline):
-            logger.info(f"Completion check: continue (step {state.current_step_index}/{len(state.outline)})")
-            return "continue"
-        logger.info("Completion check: done")
-        return "done"
+    @with_error_handling(agent_name="navigator", action_name="retrieve_content")
+    async def _navigator_node(self, state: GlobalState) -> Dict[str, Any]:
+        """
+        导航器节点 - 检索相关内容
+        
+        职责:
+            - 根据当前步骤检索相关内容
+            - 解析和摘要检索结果
+            - 更新检索文档列表
+        
+        参数:
+            state: 当前全局状态
+            
+        返回:
+            状态更新字典
+        """
+        logger.info("执行导航器节点")
+        
+        return await self.node_factory.navigator_node(state)
+    
+    @with_error_handling(agent_name="director", action_name="evaluate_and_decide")
+    async def _director_node(self, state: GlobalState) -> Dict[str, Any]:
+        """
+        导演节点 - 评估并决定下一步行动
+        
+        职责:
+            - 评估当前步骤和检索内容
+            - 决定是转向、写作还是继续
+            - 设置导演反馈标志
+        
+        参数:
+            state: 当前全局状态
+            
+        返回:
+            状态更新字典
+        """
+        logger.info("执行导演节点")
+        
+        return await self.node_factory.director_node(state)
+    
+    @with_error_handling(agent_name="pivot_manager", action_name="handle_pivot")
+    async def _pivot_manager_node(self, state: GlobalState) -> Dict[str, Any]:
+        """
+        转向管理器节点 - 处理步骤转向
+        
+        职责:
+            - 执行转向逻辑
+            - 重置转向标志
+            - 记录转向历史
+        
+        参数:
+            state: 当前全局状态
+            
+        返回:
+            状态更新字典
+        """
+        logger.info("执行转向管理器节点")
+        
+        return await self.node_factory.pivot_manager_node(state)
+    
+    @with_error_handling(agent_name="retry_protection", action_name="check_retry_limit")
+    async def _retry_protection_node(self, state: GlobalState) -> Dict[str, Any]:
+        """
+        重试保护节点 - 检查重试次数限制
+        
+        职责:
+            - 检查当前步骤重试次数
+            - 阻止超过限制的重试
+            - 标记超限步骤
+        
+        参数:
+            state: 当前全局状态
+            
+        返回:
+            状态更新字典
+        """
+        logger.info("执行重试保护节点")
+        
+        return await self.node_factory.retry_protection_node(state)
+    
+    @with_error_handling(agent_name="writer", action_name="generate_fragment")
+    async def _writer_node(self, state: GlobalState) -> Dict[str, Any]:
+        """
+        编剧节点 - 生成剧本片段
+        
+        职责:
+            - 根据大纲步骤生成剧本内容
+            - 追加到片段列表
+            - 设置最后生成的片段
+        
+        参数:
+            state: 当前全局状态
+            
+        返回:
+            状态更新字典（包含 fragments 和 execution_log）
+        """
+        logger.info("执行编剧节点")
+        
+        return await self.node_factory.writer_node(state)
+    
+    @with_error_handling(agent_name="fact_checker", action_name="verify_fragment")
+    async def _fact_checker_node(self, state: GlobalState) -> Dict[str, Any]:
+        """
+        事实检查器节点 - 验证生成内容的准确性
+        
+        职责:
+            - 检查片段中的事实准确性
+            - 标记验证结果
+            - 记录检查日志
+        
+        参数:
+            state: 当前全局状态
+            
+        返回:
+            状态更新字典
+        """
+        logger.info("执行事实检查器节点")
+        
+        return await self.node_factory.fact_checker_node(state)
+    
+    def _step_advancer_node(self, state: GlobalState) -> Dict[str, Any]:
+        """
+        步骤推进器节点 - 将 current_step_index 推进到下一步
+        
+        职责:
+            - 增加当前步骤索引
+            - 检查是否完成所有步骤
+            - 返回推进结果
+        
+        参数:
+            state: 当前全局状态
+            
+        返回:
+            状态更新字典
+        """
+        old_index = state.get("current_step_index", 0)
+        new_index = old_index + 1
+        
+        logger.info(f"推进步骤: {old_index} -> {new_index}")
+        
+        return {
+            "current_step_index": new_index,
+            "execution_log": create_success_log(
+                agent="step_advancer",
+                action_name="advance_step",
+                details={"from_index": old_index, "to_index": new_index}
+            )
+        }
+    
+    @with_error_handling(agent_name="compiler", action_name="compile_screenplay")
+    async def _compiler_node(self, state: GlobalState) -> Dict[str, Any]:
+        """
+        编译器节点 - 编译最终剧本
+        
+        职责:
+            - 编译所有片段成最终剧本
+            - 添加审计日志
+            - 返回最终结果
+        
+        参数:
+            state: 当前全局状态
+            
+        返回:
+            状态更新字典
+        """
+        logger.info("执行编译器节点")
+        
+        return await self.node_factory.compiler_node(state)
     
     async def execute(
-        self,
-        state: SharedState,
+        self, 
+        initial_state: Dict[str, Any],
         recursion_limit: int = 25
-    ) -> Dict[str, Any]:
+    ) -> GlobalState:
         """
-        执行完整的剧本生成工作流
+        执行工作流
         
-        Args:
-            state: 初始共享状态
-            recursion_limit: LangGraph 最大递归迭代次数（默认 25）
+        参数:
+            initial_state: 初始状态字典
+            recursion_limit: 递归限制（默认25）
             
-        Returns:
-            包含最终剧本和执行日志的字典
+        返回:
+            最终状态
             
-        验证需求: 14.6, 3.1, 3.2, 3.3, 3.5
+        验证需求: 14.6
         """
-        logger.info(f"Starting screenplay generation workflow (dynamic_adjustment={self.enable_dynamic_adjustment})")
+        logger.info(f"开始执行工作流，recursion_limit={recursion_limit}")
         
-        try:
-            result_state_dict = await self.graph.ainvoke(
-                state,
-                config={"recursion_limit": recursion_limit}
-            )
-            
-            logger.info("Screenplay generation workflow completed successfully")
-            
-            final_state = SharedState(**result_state_dict)
-            
-            final_screenplay = None
-            for log_entry in reversed(final_state.execution_log):
-                if (log_entry.get("agent_name") == "compiler" and 
-                    log_entry.get("action") == "final_screenplay"):
-                    final_screenplay = log_entry.get("details", {}).get("screenplay")
-                    break
-            
-            return {
-                "success": True,
-                "final_screenplay": final_screenplay,
-                "state": final_state,
-                "execution_log": final_state.execution_log
+        config = {
+            "recursion_limit": recursion_limit,
+            "configurable": {
+                "thread_id": self.workspace_id
             }
+        }
         
-        except RecursionError as e:
-            error_msg = f"Workflow exceeded recursion limit of {recursion_limit}"
-            logger.error(f"{error_msg}: {str(e)}")
-            
-            return {
-                "success": False,
-                "error": error_msg,
-                "state": state,
-                "execution_log": state.execution_log
-            }
+        final_state = await self.graph.ainvoke(initial_state, config=config)
         
-        except Exception as e:
-            logger.error(f"Workflow execution failed: {str(e)}")
+        logger.info("工作流执行完成")
+        
+        return final_state
+    
+    async def execute_streaming(self, initial_state: Dict[str, Any]):
+        """
+        流式执行工作流
+        
+        参数:
+            initial_state: 初始状态字典
             
-            return {
-                "success": False,
-                "error": str(e),
-                "state": state,
-                "execution_log": state.execution_log
+        返回:
+            状态更新流
+        """
+        logger.info("开始流式执行工作流")
+        
+        config = {
+            "configurable": {
+                "thread_id": self.workspace_id
             }
-
-
-EnhancedWorkflowOrchestrator = WorkflowOrchestrator
+        }
+        
+        async for state_update in self.graph.astream(initial_state, config=config):
+            yield state_update
+        
+        logger.info("流式执行工作流完成")

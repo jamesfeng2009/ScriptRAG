@@ -45,14 +45,26 @@ async def test_execute_accepts_recursion_limit_parameter(orchestrator, initial_s
     Test that execute() method accepts recursion_limit parameter.
     """
     # Mock the graph.ainvoke to avoid actual execution
-    orchestrator.graph.ainvoke = AsyncMock(return_value="Test screenplay")
+    mock_state_dict = {
+        "user_topic": initial_state.user_topic,
+        "project_context": initial_state.project_context,
+        "outline": [],
+        "fragments": [],
+        "last_retrieved_docs": [],
+        "execution_log": [],
+        "current_step_index": 0,
+        "error_flag": None,
+        "retry_count": 0
+    }
+    orchestrator.graph.ainvoke = AsyncMock(return_value=mock_state_dict)
     
     # Call execute with recursion_limit parameter
     result = await orchestrator.execute(initial_state, recursion_limit=50)
     
     # Verify the method accepts the parameter and completes
     assert result is not None
-    assert "success" in result
+    assert isinstance(result, dict)
+    assert "user_topic" in result
 
 
 @pytest.mark.asyncio
@@ -61,7 +73,18 @@ async def test_execute_default_recursion_limit_is_25(orchestrator, initial_state
     Test that execute() method has default recursion_limit of 25.
     """
     # Mock the graph.ainvoke to capture config
-    orchestrator.graph.ainvoke = AsyncMock(return_value="Test screenplay")
+    mock_state_dict = {
+        "user_topic": initial_state.user_topic,
+        "project_context": initial_state.project_context,
+        "outline": [],
+        "fragments": [],
+        "last_retrieved_docs": [],
+        "execution_log": [],
+        "current_step_index": 0,
+        "error_flag": None,
+        "retry_count": 0
+    }
+    orchestrator.graph.ainvoke = AsyncMock(return_value=mock_state_dict)
     
     # Call execute without recursion_limit parameter
     await orchestrator.execute(initial_state)
@@ -80,7 +103,18 @@ async def test_execute_passes_recursion_limit_to_langgraph(orchestrator, initial
     Test that recursion_limit parameter is passed to LangGraph config.
     """
     # Mock the graph.ainvoke to capture config
-    orchestrator.graph.ainvoke = AsyncMock(return_value="Test screenplay")
+    mock_state_dict = {
+        "user_topic": initial_state.user_topic,
+        "project_context": initial_state.project_context,
+        "outline": [],
+        "fragments": [],
+        "last_retrieved_docs": [],
+        "execution_log": [],
+        "current_step_index": 0,
+        "error_flag": None,
+        "retry_count": 0
+    }
+    orchestrator.graph.ainvoke = AsyncMock(return_value=mock_state_dict)
     
     # Test with custom recursion_limit
     custom_limit = 100
@@ -130,7 +164,8 @@ async def test_execute_with_various_recursion_limits(orchestrator, initial_state
         result = await orchestrator.execute(initial_state, recursion_limit=limit)
         
         # Verify success
-        assert result["success"] is True
+        assert result is not None
+        assert isinstance(result, dict)
         
         # Verify correct limit was passed
         call_args = orchestrator.graph.ainvoke.call_args

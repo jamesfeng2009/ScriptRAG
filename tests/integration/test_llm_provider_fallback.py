@@ -23,7 +23,7 @@ def mock_llm_service_with_fallback():
     # Track call attempts to simulate primary failure then fallback success
     call_count = 0
     
-    async def mock_chat_completion(messages, task_type, **kwargs):
+    async def mock_chat_completion(messages, task_type=None, **kwargs):
         nonlocal call_count
         call_count += 1
         
@@ -33,6 +33,26 @@ def mock_llm_service_with_fallback():
         
         # Fallback provider succeeds
         last_message = messages[-1]["content"] if messages else ""
+        
+        # Return JSON format for high_performance task type (document retrieval)
+        if task_type == "high_performance":
+            import json
+            return json.dumps([
+                {
+                    "id": "doc1",
+                    "title": "example.py",
+                    "content": "Example code content...",
+                    "source": "src/example.py",
+                    "score": 0.95
+                },
+                {
+                    "id": "doc2", 
+                    "title": "test.py",
+                    "content": "Test code content...",
+                    "source": "tests/test.py",
+                    "score": 0.90
+                }
+            ])
         
         if "generate an outline" in last_message.lower():
             return """

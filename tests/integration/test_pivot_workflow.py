@@ -24,10 +24,23 @@ def mock_llm_service_with_conflict():
     # Track director evaluation calls to simulate conflict detection
     evaluation_call_count = 0
     
-    async def mock_chat_completion(messages, task_type, **kwargs):
+    async def mock_chat_completion(messages, task_type=None, **kwargs):
         nonlocal evaluation_call_count
         
         last_message = messages[-1]["content"] if messages else ""
+        
+        # Return JSON format for high_performance task type (document retrieval)
+        if task_type == "high_performance":
+            import json
+            return json.dumps([
+                {
+                    "id": "doc1",
+                    "title": "example.py",
+                    "content": "Example code content...",
+                    "source": "src/example.py",
+                    "score": 0.95
+                }
+            ])
         
         if "生成" in last_message and "大纲" in last_message:
             # Planner response - use Chinese format

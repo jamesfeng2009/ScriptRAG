@@ -4,6 +4,7 @@
 
 import pytest
 import re
+import json
 from hypothesis import given, strategies as st, settings
 from tests.fixtures.realistic_mock_data import create_mock_llm_service
 
@@ -18,8 +19,9 @@ async def test_planner_response_matches_chinese_format(query_content):
     Property 7: Planner Mock 响应匹配中文格式
     
     For any planner outline generation request, the Mock_LLM response should
-    contain at least 3 lines matching the pattern "步骤N: Title | 关键词: keywords"
-    where N is a number.
+    contain at least 3 steps in either:
+    1. JSON format: {"steps": [{"step_id": 0, "title": "...", "description": "..."}, ...]}
+    2. Line format: "步骤N: Title | 关键词: keywords"
     """
     # Create mock LLM service
     mock_llm = create_mock_llm_service()
@@ -38,12 +40,30 @@ async def test_planner_response_matches_chinese_format(query_content):
     assert isinstance(response, str), "Response must be a string"
     assert len(response) > 0, "Response must not be empty"
     
-    # Split response into lines
+    # Try to parse as JSON
+    try:
+        result = json.loads(response)
+        if isinstance(result, dict) and "steps" in result:
+            # JSON format
+            steps = result["steps"]
+            assert len(steps) >= 3, (
+                f"Planner response must have at least 3 steps, but got {len(steps)} steps in JSON"
+            )
+            # Verify each step has required fields
+            for i, step in enumerate(steps):
+                assert "title" in step, f"Step {i} missing 'title' field"
+                assert "description" in step or "description" in str(type(step)), f"Step {i} missing 'description' field"
+            return
+    except (json.JSONDecodeError, TypeError, KeyError):
+        pass
+    
+    # Fall back to line format parsing
     lines = response.strip().split("\n")
     
     # Verify at least 3 lines
     assert len(lines) >= 3, (
-        f"Planner response must have at least 3 steps, but got {len(lines)} lines"
+        f"Planner response must have at least 3 steps, but got {len(lines)} lines. "
+        f"Response: {response[:200]}"
     )
     
     # Verify each line matches the pattern "步骤N: Title | 关键词: keywords"

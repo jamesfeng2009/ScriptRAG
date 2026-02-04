@@ -44,6 +44,7 @@ class OutlineStep(BaseModel):
     表示剧本大纲中的单个步骤，包含描述、状态和重试计数。
     """
     step_id: int = Field(..., description="步骤 ID", ge=0)
+    title: str = Field(default="", description="步骤标题", min_length=0)
     description: str = Field(..., description="步骤描述", min_length=1)
     status: Literal["pending", "in_progress", "completed", "skipped"] = Field(
         default="pending",
