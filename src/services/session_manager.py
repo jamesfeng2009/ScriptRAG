@@ -23,8 +23,17 @@
 import logging
 import datetime
 import uuid
+import json
+import zlib
+import base64
 from typing import Dict, Any, Optional, List
 from typing_extensions import TypedDict
+
+from .incremental_storage import (
+    IncrementalStorageOptimizer,
+    DeltaState,
+    StateDiffCalculator
+)
 
 
 logger = logging.getLogger(__name__)
@@ -93,7 +102,17 @@ class SessionManager:
             logger.warning("No DB service provided, using in-memory storage")
             self._memory_store: Dict[str, SessionState] = {}
 
-        logger.info(f"SessionManager initialized (max_age={self.config['max_age_hours']}h)")
+        self._session_optimizer = IncrementalStorageOptimizer(
+            enable_compression=self.config.get("enable_compression", True),
+            max_delta_chain=100,
+            compression_threshold=50,
+            max_history_count=self.config.get("max_history_count", 1000),
+            max_history_days=self.config.get("max_history_days", 7)
+        )
+
+        self._session_states: Dict[str, Dict[str, Any]] = {}
+
+        logger.info(f"SessionManager initialized (max_age={self.config['max_age_hours']}h, compression={self.config.get('enable_compression', True)})")
 
     def _generate_session_id(self, workspace_id: str, user_topic: str) -> str:
         """生成会话 ID"""
@@ -445,3 +464,108 @@ class InMemorySessionStore:
         for sid in expired_ids:
             del self.sessions[sid]
         return len(expired_ids)
+
+    async def save_session_incremental(
+        self,
+        session_id: str,
+        state: Dict[str, Any]
+    ) -> bool:
+        """
+        增量保存会话状态（使用差量存储）
+
+        Args:
+            session_id: 会话 ID
+            state: 当前状态
+
+        Returns:
+            是否保存成功
+        """
+        try:
+            if session_id not in self._session_states:
+                self._session_states[session_id] = {}
+                old_state = {}
+            else:
+                old_state = self._session_states[session_id].copy()
+
+            new_state = self._extract_session_dict(state, session_id)
+            self._session_states[session_id] = new_state
+
+            changed_fields = list(new_state.keys())
+
+            self._session_optimizer.record_step(
+                old_state=old_state,
+                new_state=new_state,
+                changed_fields=changed_fields
+            )
+
+            logger.debug(
+                f"Incremental save for {session_id}: "
+                f"changed_fields={changed_fields}"
+            )
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Failed to incrementally save session {session_id}: {str(e)}")
+            return False
+
+    def _extract_session_dict(
+        self,
+        state: Dict[str, Any],
+        session_id: str
+    ) -> Dict[str, Any]:
+        """提取会话字典（用于增量存储）"""
+        return {
+            "session_id": session_id,
+            "user_topic": state.get("user_topic", ""),
+            "project_context": state.get("project_context", ""),
+            "outline": state.get("outline", []),
+            "current_step_index": state.get("current_step_index", 0),
+            "fragments": state.get("fragments", []),
+            "skill_history": state.get("skill_history", []),
+            "created_at": state.get("created_at", datetime.datetime.now().isoformat())
+        }
+
+    def get_storage_stats(self) -> Dict[str, Any]:
+        """获取存储优化统计"""
+        return self._session_optimizer.get_optimization_stats()
+
+    def estimate_session_storage(
+        self,
+        state: Dict[str, Any],
+        estimated_steps: int = 100
+    ) -> Dict[str, Any]:
+        """估算会话存储大小"""
+        session_dict = self._extract_session_dict(state, "estimate")
+        return self._session_optimizer.estimate_storage_size(
+            state=session_dict,
+            steps=estimated_steps
+        )
+
+    async def cleanup_incremental_storage(self) -> Dict[str, Any]:
+        """
+        清理增量存储
+
+        Returns:
+            清理统计
+        """
+        cleanup_stats = {
+            "sessions_before": len(self._session_states),
+            "sessions_after": len(self._session_states),
+            "snapshots_count": 0,
+            "deltas_cleaned": 0
+        }
+
+        if hasattr(self._session_optimizer, 'cleanup_policy'):
+            sessions_to_remove, reason = (
+                self._session_optimizer.cleanup_policy.get_sessions_to_cleanup()
+            )
+
+            for session_id in sessions_to_remove:
+                if session_id in self._session_states:
+                    del self._session_states[session_id]
+
+            cleanup_stats["sessions_after"] = len(self._session_states)
+            cleanup_stats["reason"] = reason
+
+        return cleanup_stats

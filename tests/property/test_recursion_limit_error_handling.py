@@ -120,6 +120,10 @@ async def test_execute_returns_global_state_dict():
     result = await orchestrator.execute(initial_state, recursion_limit=25)
     
     assert isinstance(result, dict)
+    assert "success" in result
+    assert "state" in result
+    assert isinstance(result["state"], dict)
+    
     required_fields = [
         "user_topic",
         "project_context",
@@ -132,7 +136,7 @@ async def test_execute_returns_global_state_dict():
         "retry_count"
     ]
     for field in required_fields:
-        assert field in result, f"Missing required field: {field}"
+        assert field in result["state"], f"Missing required field in state: {field}"
 
 
 @pytest.mark.xfail(reason="Requires full LangGraph node mocking - not unit test")

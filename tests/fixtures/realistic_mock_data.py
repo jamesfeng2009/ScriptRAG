@@ -326,18 +326,37 @@ def create_mock_llm_service() -> Mock:
         
         # Detect agent type from message content (order matters - check more specific patterns first)
         
-        # Check for fact checker - only check message content for verification keywords
-        # Don't check task_type == "test" here as it would intercept all test requests
-        if (
-            "验证" in last_message or 
-            "verify" in last_message_lower or 
-            "一致性" in last_message or 
-            "consistent" in last_message_lower or
-            "幻觉" in last_message_lower
-        ):
+        # Check for fact checker - check multiple patterns to detect verification requests
+        # Must have explicit verification context
+        # Also exclude director evaluation messages
+        is_director_evaluation = (
+            "评估" in last_message or 
+            "evaluation" in last_message_lower or 
+            "批准" in last_message or 
+            "approve" in last_message_lower or
+            "质量" in last_message or 
+            "quality" in last_message_lower
+        )
+        
+        has_verification_context = (
+            ("验证" in last_message) or
+            ("verify" in last_message_lower) or
+            ("一致性" in last_message) or
+            ("consistent" in last_message_lower) or
+            ("比较" in last_message) or
+            ("compare" in last_message_lower)
+        )
+        
+        # Also check if message is specifically about hallucination detection
+        is_hallucination_check = (
+            "幻觉" in last_message_lower or
+            "hallucination" in last_message_lower
+        )
+        
+        if (has_verification_context or is_hallucination_check) and not is_director_evaluation:
             # Fact checker - return VALID for properly formatted fragments
             # Check for obvious hallucinations (nonexistent functions explicitly mentioned)
-            if "nonexistent_function" in last_message.lower() or "fake_function" in last_message.lower():
+            if "nonexistent_function" in last_message_lower or "fake_function" in last_message_lower:
                 return """INVALID
 - 函数 'nonexistent_function()' 未在源文档中找到"""
             else:

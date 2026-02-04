@@ -61,6 +61,8 @@ from .retrieval_quality_assessor import (
     QualityAssessment
 )
 
+from .retrieval_isolation import RetrievalIsolation, IsolationLevel
+
 
 logger = logging.getLogger(__name__)
 
@@ -128,6 +130,10 @@ class RetrievalService:
         self.cache = cache or RetrievalCache(CacheConfig())
         self.enhanced_cache = enhanced_cache or EnhancedRetrievalCache(EnhancedCacheConfig())
         self.monitor = monitor or RetrievalMonitor(MonitoringConfig())
+
+        self.retrieval_isolation = RetrievalIsolation(
+            max_docs_per_step=self.config.strategy.vector.top_k
+        )
 
         self._init_enhancement_pipeline(enhancement_config, graprag_workspace_id)
 
@@ -335,6 +341,14 @@ class RetrievalService:
             )
 
             final_results = self._apply_diversity_filter(reranked_results, final_top_k)
+
+            step_index = kwargs.get("step_index", 0)
+            final_results = self.retrieval_isolation.record_retrieval(
+                query=optimized_query,
+                results=[r.to_dict() if hasattr(r, 'to_dict') else dict(r) for r in final_results],
+                step_index=step_index,
+                agent=kwargs.get("agent", "navigator")
+            )
 
             logger.info(f"Hybrid retrieval returned {len(final_results)} results")
             return final_results
@@ -1086,3 +1100,41 @@ class RetrievalService:
         except Exception as e:
             logger.error(f"GraphRAG 关联文档获取失败: {str(e)}")
             return []
+
+    def clear_step_retrieval(self, state: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        清空当前步的检索结果（用于 Navigator 节点）
+
+        Args:
+            state: 当前状态
+
+        Returns:
+            清空后的状态
+        """
+        return self.retrieval_isolation.clear_step_results(state)
+
+    def get_retrieval_history(self) -> List[Dict[str, Any]]:
+        """获取检索历史（用于审计）"""
+        history = self.retrieval_isolation.retrieval_history
+        return [
+            {
+                "step_index": r.step_index,
+                "query": r.query,
+                "doc_count": r.doc_count,
+                "timestamp": r.timestamp,
+                "agent": r.agent
+            }
+            for r in history
+        ]
+
+    def get_isolation_audit_report(self) -> Dict[str, Any]:
+        """获取隔离审计报告"""
+        return self.retrieval_isolation.get_audit_report()
+
+    def enable_isolation(self):
+        """启用检索结果隔离"""
+        self.retrieval_isolation.enable_isolation()
+
+    def disable_isolation(self):
+        """禁用检索结果隔离（仅用于调试）"""
+        self.retrieval_isolation.disable_isolation()

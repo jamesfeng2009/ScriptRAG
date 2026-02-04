@@ -52,6 +52,8 @@ from ...services.llm.service import LLMService
 from ...services.retrieval_service import RetrievalService
 from ...services.parser.tree_sitter_parser import IParserService
 from ...services.summarization_service import SummarizationService
+from ...services.retrieval_isolation import ContextMinimizer
+from ...domain.agents.fact_checker_minimal_context import FactCheckerMinimalContext
 from ...infrastructure.langgraph_error_handler import (
     with_error_handling,
     ErrorCategory,
@@ -95,6 +97,8 @@ class NodeFactory:
         self.parser_service = parser_service
         self.summarization_service = summarization_service
         self.workspace_id = workspace_id
+
+        self.fact_checker_context = FactCheckerMinimalContext()
     
     # =========================================================================
     # Planner 节点
@@ -915,7 +919,8 @@ class NodeFactory:
         事实检查器节点
         
         职责：
-        - 检查片段中的事实准确性
+        - 使用最小上下文验证片段内容
+        - 隔离历史错误防止级联幻觉
         - 标记验证结果
         - 记录检查日志
         
@@ -924,7 +929,6 @@ class NodeFactory:
         """
         try:
             fragments = state.get("fragments", [])
-            retrieved_docs = state.get("last_retrieved_docs", [])
             
             if not fragments:
                 return {
@@ -936,10 +940,40 @@ class NodeFactory:
                     )
                 }
             
-            last_fragment = fragments[-1]
-            fragment_content = last_fragment.get("content", "") if isinstance(last_fragment, dict) else str(last_fragment)
+            current_fragment_index = len(fragments) - 1
             
-            fact_check_result = await self._verify_facts(fragment_content, retrieved_docs)
+            verification_context = self.fact_checker_context.get_verification_context(
+                state=state,
+                current_fragment_index=current_fragment_index
+            )
+            
+            should_verify, reason = self.fact_checker_context.should_verify(
+                state=state,
+                fragment_index=current_fragment_index
+            )
+            
+            if not should_verify:
+                return {
+                    "fact_check_passed": True,
+                    "execution_log": create_success_log(
+                        agent="fact_checker",
+                        action=reason,
+                        details={"fragment_index": current_fragment_index}
+                    )
+                }
+            
+            fragment = verification_context.get("fragment_to_verify", {})
+            fragment_content = fragment.get("content", "") if isinstance(fragment, dict) else ""
+            
+            retrieved_docs = self.fact_checker_context.extract_retrieved_docs_for_verification(
+                state=state
+            )
+            
+            fact_check_result = await self._verify_facts_minimal(
+                fragment_content=fragment_content,
+                retrieved_docs=retrieved_docs,
+                verification_context=verification_context
+            )
             
             if fact_check_result["is_valid"]:
                 return {
@@ -948,8 +982,10 @@ class NodeFactory:
                         agent="fact_checker",
                         action="fact_check_passed",
                         details={
-                            "fragment_index": len(fragments) - 1,
-                            "issues_found": 0
+                            "fragment_index": current_fragment_index,
+                            "issues_found": 0,
+                            "context_type": verification_context.get("_metadata", {}).get("context_type", "unknown"),
+                            "isolation_enabled": verification_context.get("_metadata", {}).get("isolation_enabled", True)
                         }
                     )
                 }
@@ -962,8 +998,10 @@ class NodeFactory:
                         action="fact_check_failed",
                         error_message=f"发现 {len(issues)} 个事实问题",
                         details={
-                            "fragment_index": len(fragments) - 1,
-                            "issues": issues
+                            "fragment_index": current_fragment_index,
+                            "issues": issues,
+                            "context_type": verification_context.get("_metadata", {}).get("context_type", "unknown"),
+                            "isolation_enabled": verification_context.get("_metadata", {}).get("isolation_enabled", True)
                         }
                     ),
                     "error_flag": "fact_check_failed"
@@ -981,39 +1019,44 @@ class NodeFactory:
                 "error_flag": "fact_check_error"
             }
     
-    async def _verify_facts(self, content: str, docs: List[Dict]) -> Dict[str, Any]:
-        """验证事实（异步内部方法）"""
-        if not docs:
-            return {"is_valid": True, "issues": []}
+    async def _verify_facts_minimal(
+        self,
+        fragment_content: str,
+        retrieved_docs: List[Dict[str, Any]],
+        verification_context: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """使用最小上下文验证事实"""
+        if not retrieved_docs:
+            return {"is_valid": True, "issues": [], "reason": "no_retrieved_docs"}
         
-        prompt = f"""请验证以下内容是否与提供的参考文档一致：
-
-内容：
-{content}
-
-参考文档：
-{docs}
-
-如果内容与参考文档一致，返回 "VALID"。
-如果发现不一致，列出所有问题。
-"""
+        scope = verification_context.get("verification_scope", {})
+        max_docs = scope.get("max_retrieval_docs", 3)
+        docs_to_use = retrieved_docs[:max_docs]
+        
+        prompt_messages = self.fact_checker_context.create_verification_prompt(
+            fragment_content=fragment_content,
+            retrieved_docs=docs_to_use,
+            verification_scope=scope
+        )
         
         try:
             response = await self.llm_service.chat_completion(
-                messages=[{"role": "user", "content": prompt}],
+                messages=prompt_messages,
                 temperature=0.3,
                 max_tokens=1000
             )
             
-            if "VALID" in response.upper() and not response.strip().startswith("INVALID"):
-                return {"is_valid": True, "issues": []}
+            is_valid, hallucinations = self.fact_checker_context.parse_verification_result(response)
             
-            issues = [line.strip() for line in response.split("\n") if line.strip()]
-            return {"is_valid": False, "issues": issues}
+            return {
+                "is_valid": is_valid,
+                "issues": hallucinations,
+                "docs_used": len(docs_to_use)
+            }
         
         except Exception as e:
-            logger.warning(f"Fact verification failed: {e}")
-            return {"is_valid": True, "issues": []}
+            logger.warning(f"Minimal fact verification failed: {e}")
+            return {"is_valid": True, "issues": [], "reason": "verification_error"}
     
     # =========================================================================
     # Compiler 节点

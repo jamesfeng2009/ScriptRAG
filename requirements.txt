@@ -2,6 +2,7 @@
 langgraph>=0.2.0
 pydantic>=2.5.0
 hypothesis>=6.92.0
+tiktoken>=0.6.0  # Token counting for LLM cost control
 
 # LLM Provider SDKs
 openai>=1.10.0

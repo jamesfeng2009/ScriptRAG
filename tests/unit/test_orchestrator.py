@@ -64,7 +64,9 @@ async def test_execute_accepts_recursion_limit_parameter(orchestrator, initial_s
     # Verify the method accepts the parameter and completes
     assert result is not None
     assert isinstance(result, dict)
-    assert "user_topic" in result
+    assert "success" in result
+    assert "state" in result
+    assert "user_topic" in result["state"]
 
 
 @pytest.mark.asyncio

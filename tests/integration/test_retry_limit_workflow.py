@@ -157,10 +157,10 @@ async def test_retry_limit_enforced_after_max_attempts(
     final_state = result["state"]
     
     # Verify outline was created
-    assert len(final_state.outline) > 0
+    assert len(final_state["outline"]) > 0
     
     # Verify workflow completed all steps
-    assert final_state.current_step_index == len(final_state.outline)
+    assert final_state["current_step_index"] == len(final_state["outline"])
     
     # Verify final screenplay was generated
     assert result["final_screenplay"] is not None
@@ -196,10 +196,10 @@ async def test_forced_degradation_skips_step(
     final_state = result["state"]
     
     # Verify workflow completed all steps (some may be skipped)
-    assert final_state.current_step_index == len(final_state.outline)
+    assert final_state["current_step_index"] == len(final_state["outline"])
     
     # Verify at least some steps completed
-    completed_steps = [step for step in final_state.outline if step.status == "completed"]
+    completed_steps = [step for step in final_state["outline"] if step.get("status") == "completed"]
     
     # Not all steps should fail - some should complete
     assert len(completed_steps) > 0
@@ -235,10 +235,10 @@ async def test_workflow_continues_after_skip(
     final_state = result["state"]
     
     # Verify multiple steps were processed
-    assert len(final_state.outline) > 1
+    assert len(final_state["outline"]) > 1
     
     # Verify workflow reached completion
-    assert final_state.current_step_index == len(final_state.outline)
+    assert final_state["current_step_index"] == len(final_state["outline"])
 
 
 @pytest.mark.asyncio
@@ -268,13 +268,13 @@ async def test_retry_attempts_logged(
     assert result["success"] is True
     
     final_state = result["state"]
-    execution_log = final_state.execution_log
+    execution_log = final_state["execution_log"]
     
     # Verify logs exist and workflow completed
     assert len(execution_log) > 0
     
     # Verify workflow completed successfully
-    assert final_state.current_step_index == len(final_state.outline)
+    assert final_state["current_step_index"] == len(final_state["outline"])
 
 
 @pytest.mark.asyncio
@@ -306,13 +306,13 @@ async def test_placeholder_fragment_for_skipped_step(
     final_state = result["state"]
     
     # Check if there are skipped steps
-    skipped_steps = [step for step in final_state.outline if step.status == "skipped"]
+    skipped_steps = [step for step in final_state["outline"] if step.get("status") == "skipped"]
     
     if len(skipped_steps) > 0:
         # Verify fragments exist (may include placeholders)
         # Note: Implementation may or may not add placeholder fragments
         # The key is that workflow completes successfully
-        assert final_state.current_step_index == len(final_state.outline)
+        assert final_state["current_step_index"] == len(final_state["outline"])
 
 
 @pytest.mark.asyncio
@@ -382,13 +382,13 @@ async def test_retry_count_incremented_correctly(
     final_state = result["state"]
     
     # Verify outline exists
-    assert len(final_state.outline) > 0
+    assert len(final_state["outline"]) > 0
     
     # Check retry counts
-    for step in final_state.outline:
+    for step in final_state["outline"]:
         # Retry count should not exceed max_retries + 1
         # (may be at max_retries when forced degradation occurs)
-        assert step.retry_count <= initial_state.max_retries + 1
+        assert step.get("retry_count", 0) <= initial_state.get("max_retries", 3) + 1
 
 
 @pytest.mark.asyncio
@@ -418,7 +418,7 @@ async def test_degradation_action_logged(
     assert result["success"] is True
     
     final_state = result["state"]
-    execution_log = final_state.execution_log
+    execution_log = final_state["execution_log"]
     
     # Look for degradation-related logs
     degradation_logs = [

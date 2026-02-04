@@ -98,7 +98,7 @@ async def test_hallucination_detected_by_fact_checker(
     final_state = result["state"]
     
     # Verify fact checker was invoked
-    execution_log = final_state.execution_log
+    execution_log = final_state["execution_log"]
     fact_checker_logs = [log for log in execution_log if (log.get("agent_name") or log.get("agent")) == "fact_checker"]
     
     # Fact checker should have been called at least once
@@ -137,7 +137,7 @@ async def test_regeneration_triggered_on_hallucination(
     assert result["success"] is True
     
     final_state = result["state"]
-    execution_log = final_state.execution_log
+    execution_log = final_state["execution_log"]
     
     # Verify writer was called multiple times (initial + regeneration)
     writer_logs = [log for log in execution_log if (log.get("agent_name") or log.get("agent")) == "writer"]
@@ -184,10 +184,10 @@ async def test_workflow_completes_after_regeneration(
     final_state = result["state"]
     
     # Verify fragments were generated
-    assert len(final_state.fragments) > 0
+    assert len(final_state["fragments"]) > 0
     
     # Verify all steps completed
-    for step in final_state.outline:
+    for step in final_state["outline"]:
         assert step.status in ["completed", "skipped"]
 
 
@@ -218,7 +218,7 @@ async def test_fact_checker_validation_logged(
     assert result["success"] is True
     
     final_state = result["state"]
-    execution_log = final_state.execution_log
+    execution_log = final_state["execution_log"]
     
     # Verify fact checker logs exist
     fact_checker_logs = [log for log in execution_log if (log.get("agent_name") or log.get("agent")) == "fact_checker"]
@@ -342,7 +342,7 @@ async def test_fact_checker_compares_with_retrieved_docs(
     
     # Verify retrieved documents were obtained
     # (fact checker needs these for comparison)
-    execution_log = final_state.execution_log
+    execution_log = final_state["execution_log"]
     navigator_logs = [log for log in execution_log if (log.get("agent_name") or log.get("agent")) == "navigator"]
     
     # Navigator should have retrieved documents
@@ -379,13 +379,13 @@ async def test_multiple_hallucinations_handled(
     final_state = result["state"]
     
     # Verify all steps completed
-    assert len(final_state.outline) > 0
-    assert len(final_state.fragments) > 0
+    assert len(final_state["outline"]) > 0
+    assert len(final_state["fragments"]) > 0
     
     # Verify fact checker was invoked for each step
-    execution_log = final_state.execution_log
+    execution_log = final_state["execution_log"]
     fact_checker_logs = [log for log in execution_log if (log.get("agent_name") or log.get("agent")) == "fact_checker"]
     
     # Should have at least as many fact checks as completed steps
-    completed_steps = [s for s in final_state.outline if s.status == "completed"]
+    completed_steps = [s for s in final_state["outline"] if s.get("status") == "completed"]
     assert len(fact_checker_logs) >= len(completed_steps)

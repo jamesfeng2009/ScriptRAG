@@ -223,7 +223,7 @@ async def test_pivot_triggered_on_deprecation_conflict(
     final_state = result["state"]
     
     # Verify pivot was triggered at some point
-    execution_log = final_state.execution_log
+    execution_log = final_state["execution_log"]
     
     # Look for pivot manager invocations
     pivot_logs = [log for log in execution_log if (log.get("agent_name") or log.get("agent")) == "pivot_manager"]
@@ -263,10 +263,10 @@ async def test_outline_modified_after_pivot(
     final_state = result["state"]
     
     # Verify outline was created
-    assert len(final_state.outline) > 0
+    assert len(final_state["outline"]) > 0
     
     # Verify pivot manager was invoked
-    execution_log = final_state.execution_log
+    execution_log = final_state["execution_log"]
     pivot_logs = [log for log in execution_log if (log.get("agent_name") or log.get("agent")) == "pivot_manager"]
     assert len(pivot_logs) > 0, "Pivot manager should have been invoked"
 
@@ -338,7 +338,7 @@ async def test_pivot_loop_completes_successfully(
     final_state = result["state"]
     
     # Verify outline was processed
-    assert len(final_state.outline) > 0
+    assert len(final_state["outline"]) > 0
 
 
 @pytest.mark.asyncio
@@ -371,7 +371,7 @@ async def test_skill_switch_to_warning_mode(
     
     # Verify workflow handled deprecation appropriately
     # (either through skill switch or other mechanism)
-    assert len(final_state.execution_log) > 0
+    assert len(final_state["execution_log"]) > 0
 
 
 @pytest.mark.asyncio
@@ -438,10 +438,10 @@ async def test_multiple_pivots_handled(
     final_state = result["state"]
     
     # Verify workflow attempted to process steps
-    assert len(final_state.outline) > 0
+    assert len(final_state["outline"]) > 0
     
     # Verify pivot manager was invoked (possibly multiple times)
-    execution_log = final_state.execution_log
+    execution_log = final_state["execution_log"]
     pivot_logs = [log for log in execution_log if (log.get("agent_name") or log.get("agent")) == "pivot_manager"]
     
     # At least one pivot should have occurred
