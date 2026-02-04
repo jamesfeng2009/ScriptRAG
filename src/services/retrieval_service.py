@@ -5,6 +5,7 @@
 - 可配置的结果合并算法
 - 查询扩展和重排序支持
 - 高级增强流水线（查询改写、Cross-Encoder、自适应阈值、GraphRAG）
+- Redis 缓存后端支持（生产环境推荐）
 """
 
 import logging
@@ -16,6 +17,12 @@ from .llm.service import LLMService
 from .query_expansion import QueryExpansion, QueryOptimizer
 from .reranker import MultiFactorReranker, DiversityFilter, RetrievalQualityMonitor
 from .cache.retrieval_cache import RetrievalCache, CacheConfig
+from .cache.enhanced_cache import (
+    EnhancedRetrievalCache,
+    EnhancedCacheConfig,
+    MemoryCacheBackend,
+    RedisCacheBackend
+)
 from .monitoring.retrieval_monitor import RetrievalMonitor, MonitoringConfig
 
 from .retrieval.config import (
@@ -39,14 +46,20 @@ from .retrieval.mergers import (
     MergerRegistry
 )
 
-from .retrieval_enhancement import (
-    RetrievalEnhancementPipeline,
-    RetrievalPipelineBuilder,
-    EnhancementConfig,
-    EnhancementResult
+from .advanced_retrieval import (
+    AdvancedRetrievalPipeline,
+    AdvancedPipelineBuilder,
+    AdvancedRetrievalConfig,
+    AdvancedRetrievalResult
 )
 
 from .graprag_engine import GraphRAGEngine
+
+from .retrieval_quality_assessor import (
+    RetrievalQualityAssessor,
+    NegativeSampleFilter,
+    QualityAssessment
+)
 
 
 logger = logging.getLogger(__name__)
@@ -74,8 +87,9 @@ class RetrievalService:
         diversity_filter: Optional[DiversityFilter] = None,
         quality_monitor: Optional[RetrievalQualityMonitor] = None,
         cache: Optional[RetrievalCache] = None,
+        enhanced_cache: Optional[EnhancedRetrievalCache] = None,
         monitor: Optional[RetrievalMonitor] = None,
-        enhancement_config: Optional[EnhancementConfig] = None,
+        enhancement_config: Optional[AdvancedRetrievalConfig] = None,
         graprag_workspace_id: Optional[str] = None
     ):
         """
@@ -89,7 +103,8 @@ class RetrievalService:
             reranker: 重排序组件
             diversity_filter: 多样性过滤组件
             quality_monitor: 质量监控组件
-            cache: 缓存组件
+            cache: 基础缓存组件
+            enhanced_cache: 增强缓存组件（支持查询改写、嵌入缓存）
             monitor: 监控组件
             enhancement_config: 检索增强配置
             graprag_workspace_id: GraphRAG 工作空间 ID
@@ -107,7 +122,11 @@ class RetrievalService:
         self.diversity_filter = diversity_filter or DiversityFilter()
         self.quality_monitor = quality_monitor or RetrievalQualityMonitor()
 
+        self.quality_assessor = RetrievalQualityAssessor(llm_service)
+        self.negative_filter = NegativeSampleFilter()
+
         self.cache = cache or RetrievalCache(CacheConfig())
+        self.enhanced_cache = enhanced_cache or EnhancedRetrievalCache(EnhancedCacheConfig())
         self.monitor = monitor or RetrievalMonitor(MonitoringConfig())
 
         self._init_enhancement_pipeline(enhancement_config, graprag_workspace_id)
@@ -176,10 +195,10 @@ class RetrievalService:
 
     def _init_enhancement_pipeline(
         self,
-        config: Optional[EnhancementConfig],
+        config: Optional[AdvancedRetrievalConfig],
         graprag_workspace_id: Optional[str]
     ):
-        """初始化检索增强流水线"""
+        """初始化高级检索流水线"""
         if config is None:
             self.enhancement_pipeline = None
             logger.info("Enhancement pipeline not enabled (no config provided)")
@@ -192,7 +211,7 @@ class RetrievalService:
         else:
             graprag_engine = None
 
-        self.enhancement_pipeline = RetrievalEnhancementPipeline(
+        self.enhancement_pipeline = AdvancedRetrievalPipeline(
             llm_service=self.llm_service,
             vector_db_service=self.vector_db,
             config=config,
@@ -512,7 +531,7 @@ class RetrievalService:
             是否成功启用
         """
         try:
-            config = EnhancementConfig(
+            config = AdvancedRetrievalConfig(
                 enable_query_rewrite=enable_query_rewrite,
                 enable_cross_encoder=enable_cross_encoder,
                 enable_mmr=enable_mmr,
@@ -563,7 +582,7 @@ class RetrievalService:
             return await self.hybrid_retrieve(workspace_id, query, top_k, **kwargs)
 
         try:
-            result: EnhancementResult = await self.enhancement_pipeline.enhanced_retrieve(
+            result: AdvancedRetrievalResult = await self.enhancement_pipeline.enhanced_retrieve(
                 workspace_id=workspace_id,
                 query=query,
                 top_k=top_k,
@@ -617,6 +636,307 @@ class RetrievalService:
                 "sub_queries": [],
                 "error": str(e)
             }
+
+    async def quality_assess(
+        self,
+        query: str,
+        results: List[RetrievalResult]
+    ) -> Dict[str, Any]:
+        """
+        评估检索结果质量
+
+        Args:
+            query: 查询文本
+            results: 检索结果列表
+
+        Returns:
+            质量评估结果，包含覆盖度、一致性、新鲜度、完整性评分
+        """
+        try:
+            assessment = await self.quality_assessor.assess_quality(query, results)
+            return {
+                "query": query,
+                "coverage_score": assessment.coverage_score,
+                "consistency_score": assessment.consistency_score,
+                "freshness_score": assessment.freshness_score,
+                "completeness_score": assessment.completeness_score,
+                "overall_score": assessment.overall_score,
+                "needs_supplemental_retrieval": assessment.needs_supplemental_retrieval,
+                "suggested_supplemental_queries": assessment.suggested_supplemental_queries,
+                "issues": assessment.issues,
+                "recommendations": assessment.recommendations
+            }
+
+        except Exception as e:
+            logger.error(f"Quality assessment failed: {str(e)}")
+            return {
+                "query": query,
+                "error": str(e),
+                "needs_supplemental_retrieval": True,
+                "suggested_supplemental_queries": [query]
+            }
+
+    def filter_negative_samples(
+        self,
+        query: str,
+        results: List[RetrievalResult],
+        threshold: float = 0.3
+    ) -> Tuple[List[RetrievalResult], List[Dict[str, Any]]]:
+        """
+        过滤明显不相关的结果
+
+        Args:
+            query: 查询文本
+            results: 检索结果列表
+            threshold: 相似度阈值，低于此值的结果将被过滤
+
+        Returns:
+            (过滤后的结果列表, 被过滤的详情列表)
+        """
+        try:
+            filtered, filtered_details = self.negative_filter.filter_negative_samples(
+                query, results, threshold
+            )
+            logger.info(
+                f"Negative filtering: query={query[:30]}..., "
+                f"original={len(results)}, filtered={len(filtered)}, "
+                f"removed={len(results) - len(filtered)}"
+            )
+            return filtered, filtered_details
+
+        except Exception as e:
+            logger.error(f"Negative filtering failed: {str(e)}")
+            return results, []
+
+    async def enhanced_retrieve_with_quality(
+        self,
+        workspace_id: str,
+        query: str,
+        top_k: int = 10,
+        enable_quality_check: bool = True,
+        enable_negative_filter: bool = True,
+        negative_threshold: float = 0.3,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """
+        增强检索（包含质量评估和负样本过滤）
+
+        完整流程：
+        1. 检索结果获取
+        2. 负样本过滤（可选）
+        3. 质量评估（可选）
+        4. 返回结果和评估报告
+
+        Args:
+            workspace_id: 工作空间 ID
+            query: 查询文本
+            top_k: 返回结果数量
+            enable_quality_check: 是否启用质量评估
+            enable_negative_filter: 是否启用负样本过滤
+            negative_threshold: 负样本过滤阈值
+            **kwargs: 其他参数
+
+        Returns:
+            包含结果和评估信息的字典
+        """
+        result = await self.enhanced_retrieve(
+            workspace_id=workspace_id,
+            query=query,
+            top_k=top_k,
+            **kwargs
+        )
+
+        quality_info = {
+            "results_count": len(result),
+            "quality_assessment": None,
+            "negative_filtered": [],
+            "filter_threshold": negative_threshold
+        }
+
+        if enable_negative_filter and result:
+            result, filtered_details = self.filter_negative_samples(
+                query, result, negative_threshold
+            )
+            quality_info["negative_filtered"] = filtered_details
+            quality_info["results_count"] = len(result)
+
+        if enable_quality_check and result:
+            quality_info["quality_assessment"] = await self.quality_assess(query, result)
+
+        return {
+            "results": result,
+            "quality_info": quality_info
+        }
+
+    async def cache_rewritten_query(
+        self,
+        original_query: str,
+        rewritten_query: str,
+        sub_queries: List[str],
+        confidence: float = 1.0,
+        query_type: str = "hybrid"
+    ) -> None:
+        """
+        缓存查询改写结果
+
+        Args:
+            original_query: 原始查询
+            rewritten_query: 改写后的查询
+            sub_queries: 子查询列表
+            confidence: 置信度
+            query_type: 查询类型
+        """
+        self.enhanced_cache.set_rewritten_query(
+            query=original_query,
+            rewritten_query=rewritten_query,
+            sub_queries=sub_queries,
+            confidence=confidence,
+            query_type=query_type
+        )
+        logger.debug(f"Cached rewritten query: {original_query[:50]}...")
+
+    async def get_cached_rewritten_query(self, query: str) -> Optional[Dict[str, Any]]:
+        """
+        获取缓存的查询改写结果
+
+        Args:
+            query: 原始查询
+
+        Returns:
+            改写结果字典，未缓存返回 None
+        """
+        result = self.enhanced_cache.get_rewritten_query(query)
+        if result:
+            logger.debug(f"Cache hit for query: {query[:50]}...")
+        return result
+
+    async def cache_embedding(self, text: str, embedding: List[float]) -> None:
+        """
+        缓存文本嵌入
+
+        Args:
+            text: 文本
+            embedding: 嵌入向量
+        """
+        self.enhanced_cache.set_embedding(text, embedding)
+        logger.debug(f"Cached embedding: {text[:50]}...")
+
+    async def get_cached_embedding(self, text: str) -> Optional[List[float]]:
+        """
+        获取缓存的嵌入
+
+        Args:
+            text: 文本
+
+        Returns:
+            嵌入向量，未缓存返回 None
+        """
+        result = self.enhanced_cache.get_embedding(text)
+        if result:
+            logger.debug(f"Cache hit for embedding: {text[:50]}...")
+        return result
+
+    @staticmethod
+    async def create_redis_cache(
+        redis_host: str = "localhost",
+        redis_port: int = 6379,
+        redis_db: int = 0,
+        config: Optional[EnhancedCacheConfig] = None
+    ) -> EnhancedRetrievalCache:
+        """
+        创建 Redis 后端的增强检索缓存（生产环境推荐）
+
+        Args:
+            redis_host: Redis 主机地址
+            redis_port: Redis 端口
+            redis_db: Redis 数据库编号
+            config: 缓存配置
+
+        Returns:
+            配置了 Redis 后端的 EnhancedRetrievalCache 实例
+
+        Example:
+            # 创建 Redis 缓存
+            cache = await RetrievalService.create_redis_cache(
+                redis_host="redis.example.com",
+                redis_port=6379
+            )
+
+            # 在 RetrievalService 中使用
+            service = RetrievalService(
+                vector_db_service=vector_db,
+                llm_service=llm_service,
+                enhanced_cache=cache
+            )
+        """
+        from .database.redis_cache import RedisCacheService
+
+        redis_service = RedisCacheService(
+            host=redis_host,
+            port=redis_port,
+            db=redis_db
+        )
+        await redis_service.connect()
+
+        cache_config = config or EnhancedCacheConfig()
+
+        backend = RedisCacheBackend(
+            config=cache_config,
+            redis_service=redis_service
+        )
+
+        return EnhancedRetrievalCache(
+            config=cache_config,
+            storage_backend={
+                "type": "redis",
+                "backend": backend,
+                "service": redis_service
+            }
+        )
+
+    async def get_cache_stats(self) -> Dict[str, Any]:
+        """
+        获取缓存统计信息
+
+        Returns:
+            包含各缓存统计信息的字典
+        """
+        return self.enhanced_cache.get_stats()
+
+    async def clear_cache(self, cache_type: Optional[str] = None) -> Dict[str, int]:
+        """
+        清除缓存
+
+        Args:
+            cache_type: 缓存类型（query_rewrite/embedding/result），None 表示所有
+
+        Returns:
+            清除的条目数量
+        """
+        return self.enhanced_cache.clear(cache_type)
+
+    async def preheat_cache(
+        self,
+        queries: List[str],
+        embedding_func: Optional[callable] = None,
+        rewrite_func: Optional[callable] = None
+    ) -> Dict[str, Any]:
+        """
+        预热缓存
+
+        Args:
+            queries: 查询列表
+            embedding_func: 嵌入函数
+            rewrite_func: 改写函数
+
+        Returns:
+            预热结果统计
+        """
+        return await self.enhanced_cache.preheat(
+            queries=queries,
+            embedding_func=embedding_func,
+            rewrite_func=rewrite_func
+        )
 
     async def rerank_results(
         self,

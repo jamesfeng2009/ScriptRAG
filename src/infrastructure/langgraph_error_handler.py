@@ -1,7 +1,7 @@
 """
-错误处理与日志规范（v2.1）
+LangGraph 工作流错误处理器
 
-本模块定义了遵循 v2.1 架构规范的错误处理和日志记录标准。
+本模块为 LangGraph 工作流提供标准化的错误处理和日志记录功能。
 
 核心原则：
 1. 所有节点必须捕获异常，不传播到 LangGraph 层面
@@ -18,11 +18,10 @@
     - unknown_error: 未知错误
 
 使用示例：
-    from src.infrastructure.error_handler_v2 import (
+    from src.infrastructure.langgraph_error_handler import (
         with_error_handling,
-        ErrorContext,
-        log_success,
-        log_error
+        ErrorCategory,
+        ErrorRecovery
     )
 
     @with_error_handling(agent="planner", action="generate_outline")

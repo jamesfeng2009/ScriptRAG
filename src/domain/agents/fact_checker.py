@@ -6,6 +6,9 @@
 3. 验证所有陈述是否基于来源
 4. 检测到幻觉时触发重新生成
 5. 记录验证结果
+6. 细粒度幻觉检测（句子级别）
+7. 幻觉类型分类和严重程度评估
+8. 幻觉预防和修复
 """
 
 import logging
@@ -14,6 +17,15 @@ from typing import List, Dict, Any, Optional, Tuple
 
 from ..models import SharedState, ScreenplayFragment, RetrievedDocument
 from ...services.llm.service import LLMService
+from ...services.hallucination_detection import (
+    GranularHallucinationDetector,
+    HallucinationClassifier,
+    HallucinationPrevention,
+    HallucinationRepairer,
+    UnifiedHallucinationService,
+    FragmentHallucinationResult,
+    HallucinationType
+)
 from ...infrastructure.logging import get_agent_logger
 from ...infrastructure.error_handler import (
     FactCheckerError,
@@ -355,3 +367,146 @@ async def verify_fragment_node(
         logger.warning("Fact Checker: Error occurred, assuming fragment is valid")
     
     return result
+
+
+async def granular_verify_fragment(
+    fragment: ScreenplayFragment,
+    retrieved_docs: List[RetrievedDocument],
+    llm_service: LLMService,
+    enable_repair: bool = True
+) -> Dict[str, Any]:
+    """
+    细粒度幻觉检测和修复
+
+    功能：
+    1. 句子级别的幻觉检测
+    2. 幻觉类型分类
+    3. 严重程度评估
+    4. 幻觉修复（可选）
+
+    Args:
+        fragment: 要验证的剧本片段
+        retrieved_docs: 检索到的源文档列表
+        llm_service: LLM 服务
+        enable_repair: 是否启用自动修复
+
+    Returns:
+        包含检测结果和修复建议的字典
+    """
+    detector = GranularHallucinationDetector(llm_service)
+    classifier = HallucinationClassifier()
+    repairer = HallucinationRepairer(llm_service)
+
+    try:
+        logger.info(
+            f"Granular Fact Checker: Starting detailed verification for "
+            f"step {fragment.step_id}"
+        )
+
+        result = await detector.detect_sentence_level(
+            content=fragment.content,
+            retrieved_docs=[
+                {"id": doc.source, "content": doc.content}
+                for doc in retrieved_docs
+            ],
+            fragment_id=fragment.step_id
+        )
+
+        hallucinations = [
+            sentence for sentence in result.sentences
+            if sentence.is_hallucination
+        ]
+
+        classified_hallucinations = []
+        for hallucination in hallucinations:
+            hallucination_type = classifier.classify_hallucination(
+                hallucination.sentence,
+                context=fragment.content
+            )
+            severity = classifier.get_severity(hallucination_type.value)
+
+            classified_hallucinations.append({
+                "sentence": hallucination.sentence,
+                "is_hallucination": hallucination.is_hallucination,
+                "confidence": hallucination.confidence,
+                "type": hallucination_type.value,
+                "severity": severity,
+                "reason": hallucination.reason,
+                "supporting_source": hallucination.supporting_source
+            })
+
+        repair_result = None
+        if enable_repair and hallucinations:
+            repair_result = await repairer.repair_hallucination(
+                fragment=fragment,
+                hallucinations=[
+                    {
+                        "sentence": h.sentence,
+                        "type": classifier.classify_hallucination(
+                            h.sentence, fragment.content
+                        ).value,
+                        "reason": h.reason
+                    }
+                    for h in hallucinations
+                ],
+                retrieved_docs=[
+                    {"id": doc.source, "content": doc.content}
+                    for doc in retrieved_docs
+                ]
+            )
+
+        is_valid = len(hallucinations) == 0
+
+        return {
+            "is_valid": is_valid,
+            "fragment_id": fragment.step_id,
+            "total_sentences": len(result.sentences),
+            "hallucination_count": len(hallucinations),
+            "hallucinations": classified_hallucinations,
+            "overall_confidence": result.overall_confidence,
+            "hallucination_rate": result.hallucination_rate,
+            "repair_result": repair_result,
+            "recommendations": result.recommendations
+        }
+
+    except Exception as e:
+        logger.error(f"Granular fact check failed: {str(e)}")
+        return {
+            "is_valid": True,
+            "error": str(e),
+            "fragment_id": fragment.step_id,
+            "fallback_to_basic": True
+        }
+
+
+async def enhance_prompt_with_prevention(
+    original_prompt: str,
+    retrieved_docs: List[RetrievedDocument],
+    llm_service: LLMService
+) -> str:
+    """
+    使用预防机制增强 prompt
+
+    功能：
+    1. 提取可用函数和类列表
+    2. 添加约束防止幻觉
+    3. 添加正确/错误示例
+
+    Args:
+        original_prompt: 原始 prompt
+        retrieved_docs: 检索到的文档
+        llm_service: LLM 服务
+
+    Returns:
+        增强后的 prompt
+    """
+    prevention = HallucinationPrevention(llm_service)
+
+    enhanced_prompt = prevention.enhance_prompt_with_constraints(
+        original_prompt,
+        [{"id": doc.source, "content": doc.content} for doc in retrieved_docs]
+    )
+
+    enhanced_prompt = prevention.add_verification_examples(enhanced_prompt)
+
+    return enhanced_prompt

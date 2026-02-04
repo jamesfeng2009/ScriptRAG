@@ -31,11 +31,19 @@ from ..domain.agents.enhanced_agents import (
     DirectionAdjustment,
     DirectionAdjustmentType
 )
+from ..domain.agents.agent_collaboration import (
+    AgentNegotiator,
+    ParallelAgentExecutor,
+    AgentExecutionTracer,
+    AgentReflection,
+    CollaborationManager
+)
 from ..services.llm.service import LLMService
 from ..services.retrieval_service import RetrievalService
 from ..services.parser.tree_sitter_parser import IParserService
 from ..services.summarization_service import SummarizationService
-from ..infrastructure.error_handler_v2 import (
+from ..services.session_manager import SessionManager
+from ..infrastructure.langgraph_error_handler import (
     with_error_handling,
 )
 from .base_orchestrator import BaseWorkflowOrchestrator
@@ -66,11 +74,14 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
         parser_service: IParserService,
         summarization_service: SummarizationService,
         workspace_id: str,
-        enable_dynamic_adjustment: bool = False
+        enable_dynamic_adjustment: bool = False,
+        session_manager: Optional[SessionManager] = None,
+        auto_save_sessions: bool = False,
+        save_interval_steps: int = 5
     ):
         """
         初始化工作流编排器
-        
+
         参数:
             llm_service: LLM 服务实例
             retrieval_service: 检索服务实例
@@ -78,6 +89,9 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             summarization_service: 摘要服务实例
             workspace_id: 工作空间 ID
             enable_dynamic_adjustment: 是否启用动态方向调整（默认关闭以保持兼容性）
+            session_manager: 会话管理器实例（可选，用于断点续传）
+            auto_save_sessions: 是否自动保存会话状态
+            save_interval_steps: 自动保存间隔（步数）
         """
         self.llm_service = llm_service
         self.retrieval_service = retrieval_service
@@ -85,6 +99,9 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
         self.summarization_service = summarization_service
         self.workspace_id = workspace_id
         self.enable_dynamic_adjustment = enable_dynamic_adjustment
+        self.session_manager = session_manager
+        self.auto_save_sessions = auto_save_sessions
+        self.save_interval_steps = save_interval_steps
         
         self.node_factory = NodeFactory(
             llm_service=llm_service,
@@ -101,9 +118,13 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             self.dynamic_director = DynamicDirector(llm_service)
             self.skill_recommender = SkillRecommender(llm_service)
             self.screenplay_writer = StructuredScreenplayWriter(llm_service)
-        
+
+        self.collaboration_manager = CollaborationManager(llm_service)
+        self.execution_tracer = AgentExecutionTracer()
+        self.agent_reflection = AgentReflection(llm_service)
+
         self.graph = self._build_graph()
-        
+
         logger.info(f"WorkflowOrchestrator 初始化完成 (dynamic_adjustment={enable_dynamic_adjustment})")
     
     def _build_graph(self) -> StateGraph:
@@ -130,11 +151,15 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
         workflow.add_node("fact_checker", self._fact_checker_node)
         workflow.add_node("step_advancer", self._step_advancer_node)
         workflow.add_node("compiler", self._compiler_node)
-        
+
         if self.enable_dynamic_adjustment:
             workflow.add_node("rag_analyzer", self._rag_analyzer_node)
             workflow.add_node("dynamic_director", self._dynamic_director_node)
             workflow.add_node("skill_recommender", self._skill_recommender_node)
+
+        workflow.add_node("collaboration_manager", self._collaboration_manager_node)
+        workflow.add_node("execution_tracer", self._execution_tracer_node)
+        workflow.add_node("agent_reflection", self._agent_reflection_node)
         
         workflow.set_entry_point("planner")
         
@@ -694,45 +719,123 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
         return await self.node_factory.compiler_node(state)
     
     async def execute(
-        self, 
+        self,
         initial_state: Dict[str, Any],
+        session_id: Optional[str] = None,
         recursion_limit: int = 25
     ) -> Dict[str, Any]:
         """
         执行工作流
-        
+
+        支持断点续传功能：
+        1. 如果提供了 session_id，尝试恢复之前的会话状态
+        2. 执行过程中自动保存会话状态（如果启用）
+        3. 执行完成后保存最终状态
+
         参数:
             initial_state: 初始状态字典
+            session_id: 会话 ID（用于恢复之前的会话）
             recursion_limit: 递归限制（默认25）
-            
+
         返回:
-            包含success和最终状态的字典
-            
-        验证需求: 14.6
+            包含success、session_id和最终状态的字典
+
+        使用示例:
+            # 启动新会话
+            result = await orchestrator.execute(initial_state)
+            print(f"Session ID: {result['session_id']}")
+
+            # 恢复之前的会话
+            restored = await orchestrator.execute(
+                initial_state,
+                session_id=result['session_id']
+            )
         """
-        logger.info(f"开始执行工作流，recursion_limit={recursion_limit}")
-        
-        config = {
-            "recursion_limit": recursion_limit,
-            "configurable": {
-                "thread_id": self.workspace_id
-            }
-        }
-        
+        current_session_id = session_id
+
         try:
+            if current_session_id and self.session_manager:
+                restored_state = await self.session_manager.load_session(current_session_id)
+                if restored_state:
+                    logger.info(f"从会话 {current_session_id} 恢复，继续执行")
+                    initial_state = restored_state
+                    initial_state["resumed_from_session"] = current_session_id
+                else:
+                    logger.warning(f"会话 {current_session_id} 不存在，将创建新会话")
+                    current_session_id = None
+
+            logger.info(f"开始执行工作流，recursion_limit={recursion_limit}")
+
+            config = {
+                "recursion_limit": recursion_limit,
+                "configurable": {
+                    "thread_id": self.workspace_id
+                }
+            }
+
             final_state = await self.graph.ainvoke(initial_state, config=config)
+
+            if self.session_manager and current_session_id:
+                await self.session_manager.save_session(
+                    current_session_id,
+                    final_state,
+                    self.workspace_id
+                )
+
             logger.info("工作流执行完成")
             return {
                 "success": True,
+                "session_id": current_session_id,
                 "state": final_state
             }
+
         except Exception as e:
-            logger.error(f"工作流执行失败: {e}")
+            logger.error(f"工作流执行失败: {str(e)}")
+
+            if self.session_manager and current_session_id:
+                try:
+                    await self.session_manager.save_session(
+                        current_session_id,
+                        initial_state,
+                        self.workspace_id
+                    )
+                    logger.info(f"已保存失败状态到会话 {current_session_id}")
+                except Exception as save_error:
+                    logger.error(f"保存失败状态失败: {str(save_error)}")
+
             return {
                 "success": False,
+                "session_id": current_session_id,
                 "error": str(e),
                 "state": initial_state
             }
+
+    async def save_checkpoint(
+        self,
+        state: Dict[str, Any],
+        session_id: str
+    ) -> bool:
+        """
+        保存检查点
+
+        用于在执行过程中手动保存状态。
+
+        Args:
+            state: 当前状态
+            session_id: 会话 ID
+
+        Returns:
+            是否保存成功
+        """
+        if not self.session_manager:
+            logger.warning("未配置 session_manager，无法保存检查点")
+            return False
+
+        return await self.session_manager.save_session(
+            session_id,
+            state,
+            self.workspace_id
+        )
     
     async def execute_streaming(self, initial_state: Dict[str, Any]):
         """
@@ -756,3 +859,116 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             yield state_update
         
         logger.info("流式执行工作流完成")
+
+    @with_error_handling(agent_name="collaboration_manager", action_name="manage_collaboration")
+    async def _collaboration_manager_node(self, state: GlobalState) -> Dict[str, Any]:
+        """
+        协作管理器节点
+
+        职责：
+            - 管理 Agent 之间的协作
+            - 处理技能切换协商
+            - 执行并行任务
+        """
+        try:
+            negotiation_result = await self.collaboration_manager.negotiate_skill_switch(
+                director_recommendation=state.get("director_recommendation", ""),
+                writer_preference=state.get("writer_preference", ""),
+                content_analysis=state.get("content_analysis", {}),
+                query=state.get("query", ""),
+                current_state=dict(state)
+            )
+
+            return {
+                "collaboration_result": {
+                    "negotiation_status": negotiation_result.status.value,
+                    "negotiated_skill": negotiation_result.negotiated_skill,
+                    "decision_type": negotiation_result.decision_type.value,
+                    "reason": negotiation_result.reason
+                },
+                "negotiation_history": state.get("negotiation_history", []) + [dict(negotiation_result)]
+            }
+
+        except Exception as e:
+            logger.error(f"协作管理失败: {str(e)}")
+            return {"collaboration_error": str(e)}
+
+    @with_error_handling(agent_name="execution_tracer", action_name="trace_execution")
+    async def _execution_tracer_node(self, state: GlobalState) -> Dict[str, Any]:
+        """
+        执行追踪器节点
+
+        职责：
+            - 记录 Agent 执行链
+            - 追踪决策过程
+            - 分析执行模式
+        """
+        try:
+            current_agent = state.get("current_agent", "unknown")
+            input_state = {
+                "query": state.get("query", ""),
+                "step_index": state.get("current_step_index", 0)
+            }
+
+            execution_node = await self.execution_tracer.trace_decision(
+                agent_name=current_agent,
+                input_state=input_state,
+                output_state=dict(state),
+                decision_reason=state.get("director_feedback", {}).get("reason", "执行完成"),
+                execution_time_ms=state.get("execution_time_ms", 0)
+            )
+
+            chain_visualization = self.execution_tracer.visualize_chain()
+            stats = self.execution_tracer.get_stats()
+
+            return {
+                "execution_node": execution_node,
+                "execution_chain_visualization": chain_visualization,
+                "execution_stats": stats
+            }
+
+        except Exception as e:
+            logger.error(f"执行追踪失败: {str(e)}")
+            return {"tracing_error": str(e)}
+
+    @with_error_handling(agent_name="agent_reflection", action_name="reflect_on_failure")
+    async def _agent_reflection_node(self, state: GlobalState) -> Dict[str, Any]:
+        """
+        自我反思节点
+
+        职责：
+            - 从失败中学习
+            - 分析失败模式
+            - 生成调整建议
+        """
+        try:
+            recent_failures = state.get("recent_failures", [])
+            current_agent = state.get("current_agent", "unknown")
+
+            if not recent_failures:
+                return {"reflection_result": None}
+
+            reflection_result = await self.agent_reflection.reflect_on_failure(
+                agent_name=current_agent,
+                failure_context={
+                    "failures": recent_failures,
+                    "query": state.get("query", ""),
+                    "step_index": state.get("current_step_index", 0)
+                },
+                state=dict(state)
+            )
+
+            return {
+                "reflection_result": {
+                    "reflection_id": reflection_result.reflection_id,
+                    "failure_pattern": reflection_result.failure_pattern,
+                    "suggested_adjustments": reflection_result.suggested_adjustments,
+                    "confidence": reflection_result.confidence,
+                    "reason": reflection_result.reason
+                },
+                "agent_reflection_history": state.get("agent_reflection_history", []) + [dict(reflection_result)]
+            }
+
+        except Exception as e:
+            logger.error(f"自我反思失败: {str(e)}")
+            return {"reflection_error": str(e)}

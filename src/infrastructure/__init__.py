@@ -2,11 +2,10 @@
 
 本模块包含基础设施相关组件：
 - error_handler.py: 原始错误处理（v1）
-- error_handler_v2.py: v2.1 错误处理（推荐）
+- langgraph_error_handler.py: LangGraph 工作流专用错误处理
 - logging.py: 日志配置
 - metrics.py: 性能指标
 - audit_logger.py: 审计日志
-- error_handler.py: 统一错误处理
 """
 
 from . import error_handler
@@ -22,7 +21,7 @@ __all__ = [
 ]
 
 try:
-    from . import error_handler_v2
-    __all__.append("error_handler_v2")
+    from . import langgraph_error_handler
+    __all__.append("langgraph_error_handler")
 except ImportError:
     pass

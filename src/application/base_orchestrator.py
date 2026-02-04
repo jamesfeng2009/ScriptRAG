@@ -6,7 +6,7 @@ from datetime import datetime
 
 from ..domain.state_types import GlobalState
 from ..domain.agents.node_factory import NodeFactory
-from ..infrastructure.error_handler_v2 import with_error_handling
+from ..infrastructure.langgraph_error_handler import with_error_handling
 
 logger = logging.getLogger(__name__)
 

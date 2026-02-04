@@ -4,16 +4,23 @@
 1. 查询意图改写：将不完整/模糊查询改写为更适合检索的形式
 2. 复杂查询分解：将复杂查询分解为多个子查询
 3. 上下文增强：基于项目上下文补充隐含信息
+4. 智能缓存：避免重复查询的重复计算
+5. 混合策略：规则 + LLM 混合改写
 
 解决的问题：
 - 用户查询不完整导致召回率低
 - 隐含的技术栈/框架信息丢失
 - 复杂查询难以精确匹配
+- 重复查询重复计算
+- LLM 调用成本高
 """
 
+import hashlib
+import json
 import logging
 import re
-from typing import List, Dict, Optional, Tuple
+import time
+from typing import List, Dict, Optional, Any, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
 
@@ -55,9 +62,138 @@ class QueryContext:
     workspace_id: str = ""
 
 
+class IntentClassifier:
+    """
+    查询意图分类器
+    
+    功能：
+    - 基于规则的快速意图分类
+    - 置信度评估
+    - 分类结果验证
+    """
+    
+    def __init__(self):
+        self.type_indicators = {
+            QueryType.TERMINOLOGY: ['什么是', 'what is', 'explain', '解释', '定义', '概念'],
+            QueryType.USAGE: ['如何使用', 'how to', 'how do i', '用法', '使用', '怎么用'],
+            QueryType.IMPLEMENTATION: ['如何实现', '实现', 'implementation', '怎么写', '编写', '开发'],
+            QueryType.COMPARISON: ['区别', 'difference', 'vs', '比较', '对比', '不同'],
+            QueryType.DEBUGGING: ['错误', 'error', 'bug', '问题', '异常', '失败', '报错'],
+            QueryType.ARCHITECTURE: ['架构', 'architecture', '设计', '结构', '组成'],
+        }
+        
+        self.simple_query_patterns = [
+            r'^什么是\w+$',
+            r'^如何\w+\w*$',
+            r'^\w+是什么$',
+            r'^explain\s+\w+$',
+            r'^how to \w+$',
+        ]
+    
+    def classify(self, query: str) -> Tuple[QueryType, float]:
+        """
+        分类查询意图
+        
+        Args:
+            query: 查询文本
+            
+        Returns:
+            (查询类型, 置信度)
+        """
+        query_lower = query.lower().strip()
+        
+        type_scores: Dict[QueryType, float] = {}
+        
+        for qtype, indicators in self.type_indicators.items():
+            matches = sum(1 for ind in indicators if ind in query_lower)
+            if matches > 0:
+                type_scores[qtype] = min(matches / len(indicators) + 0.3, 1.0)
+        
+        if not type_scores:
+            return QueryType.GENERAL, 0.5
+        
+        best_type = max(type_scores.items(), key=lambda x: x[1])
+        return best_type[0], best_type[1]
+    
+    def is_simple_query(self, query: str) -> bool:
+        """
+        判断是否为简单查询
+        
+        简单查询特征：
+        - 长度短（< 20字符）
+        - 关键词明确
+        - 不包含复杂逻辑
+        """
+        query = query.strip()
+        
+        if len(query) < 5 or len(query) > 50:
+            return False
+        
+        for pattern in self.simple_query_patterns:
+            if re.match(pattern, query, re.IGNORECASE):
+                return True
+        
+        simple_keywords = ['什么是', 'how to', 'explain', '如何使用']
+        if any(kw in query.lower() for kw in simple_keywords):
+            word_count = len(query.split())
+            if word_count <= 5:
+                return True
+        
+        return False
+    
+    def validate_classification(
+        self,
+        query: str,
+        query_type: QueryType,
+        confidence: float
+    ) -> bool:
+        """
+        验证分类结果的有效性
+        
+        Args:
+            query: 查询文本
+            query_type: 分类结果
+            confidence: 置信度
+            
+        Returns:
+            是否有效
+        """
+        if confidence < 0.3:
+            return False
+        
+        if query_type == QueryType.TERMINOLOGY:
+            return bool(re.search(r'什么|what|explain|定义', query.lower()))
+        
+        if query_type == QueryType.USAGE:
+            return bool(re.search(r'使用|how|用法', query.lower()))
+        
+        if query_type == QueryType.DEBUGGING:
+            return bool(re.search(r'错误|error|bug|问题|异常|失败', query.lower()))
+        
+        return True
+
+
+@dataclass
+class RewriteCacheEntry:
+    """缓存条目"""
+    rewritten_query: str
+    query_type: QueryType
+    confidence: float
+    added_context: List[str]
+    sub_queries: List[str]
+    timestamp: float
+
+
 class QueryRewriter:
     """
-    查询改写器
+    查询改写器 v2.0
+    
+    增强功能：
+    - 智能缓存：避免重复查询的重复计算
+    - 混合策略：规则 + LLM 混合改写
+    - 独立意图分类器
+    - 简单查询快速处理
+    - 复杂查询 LLM 深度改写
     
     功能：
     - 意图消歧：确定查询的具体意图
@@ -66,69 +202,291 @@ class QueryRewriter:
     - 分解：将复杂查询分解为多个子查询
     """
     
+    SIMPLE_QUERY_THRESHOLD = 0.7
+    
     def __init__(
         self,
         llm_service: LLMService,
-        project_context: Optional[Dict] = None
+        project_context: Optional[Dict] = None,
+        cache_ttl: int = 3600,
+        enable_hybrid_strategy: bool = True
     ):
         self.llm_service = llm_service
         self.project_context = project_context or {}
+        self.cache_ttl = cache_ttl
+        self.enable_hybrid_strategy = enable_hybrid_strategy
         
-        # 术语规范化映射
+        self._cache: Dict[str, RewriteCacheEntry] = {}
+        
+        self.intent_classifier = IntentClassifier()
+        
         self.term_normalization = {
             '异步': ['async', 'asyncio', 'await', '非阻塞'],
             '并发': ['concurrency', 'parallel', '多线程'],
             'api': ['api', '接口', 'endpoint', '接口'],
             '请求': ['request', 'http请求', '网络请求'],
         }
+        
+        self._simple_query_cache: Dict[str, str] = {}
+    
+    def _get_cache_key(
+        self,
+        query: str,
+        context: Optional[QueryContext] = None
+    ) -> str:
+        """
+        生成缓存键
+        
+        Args:
+            query: 查询文本
+            context: 查询上下文
+            
+        Returns:
+            缓存键字符串
+        """
+        cache_data = {
+            'query': query,
+            'project_type': context.project_type if context else 'general',
+            'language': context.detected_language if context else '',
+            'framework': context.detected_framework if context else '',
+        }
+        
+        cache_str = json.dumps(cache_data, sort_keys=True)
+        return hashlib.md5(cache_str.encode()).hexdigest()
+    
+    def _is_cache_valid(self, entry: RewriteCacheEntry) -> bool:
+        """
+        检查缓存是否有效
+        
+        Args:
+            entry: 缓存条目
+            
+        Returns:
+            是否有效
+        """
+        current_time = time.time()
+        return (current_time - entry.timestamp) < self.cache_ttl
+    
+    def _rule_based_rewrite(
+        self,
+        query: str,
+        query_type: QueryType
+    ) -> str:
+        """
+        基于规则的查询改写
+        
+        Args:
+            query: 原始查询
+            query_type: 查询类型
+            
+        Returns:
+            改写后的查询
+        """
+        rewritten = query
+        
+        if query_type == QueryType.TERMINOLOGY:
+            if not query.lower().startswith(('what is', '什么是')):
+                rewritten = f"什么是 {query.replace('什么是', '').strip()}"
+        
+        elif query_type == QueryType.USAGE:
+            if not any(kw in query.lower() for kw in ['如何使用', 'how to']):
+                rewritten = f"如何使用{query}"
+        
+        elif query_type == QueryType.IMPLEMENTATION:
+            if not any(kw in query.lower() for kw in ['如何实现', '怎么写']):
+                rewritten = f"如何实现{query}"
+        
+        return rewritten
+    
+    async def _llm_rewrite_with_retry(
+        self,
+        query: str,
+        query_type: QueryType,
+        added_context: List[str],
+        context: Optional[QueryContext] = None,
+        max_retries: int = 2
+    ) -> Dict[str, Any]:
+        """
+        带重试的 LLM 改写
+        
+        Args:
+            query: 原始查询
+            query_type: 查询类型
+            added_context: 添加的上下文
+            context: 查询上下文
+            max_retries: 最大重试次数
+            
+        Returns:
+            改写结果字典
+        """
+        context_str = '\n'.join(added_context) if added_context else "无额外上下文"
+        project_info = ""
+        if context:
+            if context.project_type != 'general':
+                project_info += f"项目类型: {context.project_type}\n"
+            if context.detected_language:
+                project_info += f"检测语言: {context.detected_language}\n"
+            if context.detected_framework:
+                project_info += f"检测框架: {context.detected_framework}\n"
+        
+        prompt = f"""请将以下查询改写为更适合代码/文档检索的形式。
+
+## 查询信息
+原始查询类型: {query_type.value}
+项目背景:
+{project_info if project_info else context_str}
+
+原始查询: {query}
+
+## 改写要求
+1. 补充隐含的技术栈、框架或语言信息
+2. 规范化专业术语
+3. 保持查询的核心意图不变
+4. 如果查询简短且是特定术语，直接返回原查询
+5. 输出 JSON 格式: {{"rewritten": "改写后的查询", "confidence": 0.85}}
+
+改写结果:"""
+
+        for attempt in range(max_retries):
+            try:
+                messages = [
+                    {
+                        "role": "system",
+                        "content": "你是一个搜索查询优化专家，擅长将用户的模糊查询改写为精确的检索查询。输出必须是有效的 JSON 格式。"
+                    },
+                    {
+                        "role": "user",
+                        "content": prompt
+                    }
+                ]
+                
+                response = await self.llm_service.chat_completion(
+                    messages=messages,
+                    task_type="lightweight",
+                    temperature=0.3,
+                    max_tokens=200
+                )
+                
+                import json as json_lib
+                try:
+                    result = json_lib.loads(response)
+                    if 'rewritten' in result:
+                        return {
+                            'rewritten': result['rewritten'],
+                            'confidence': result.get('confidence', 0.8)
+                        }
+                except:
+                    pass
+                
+                rewritten = response.strip()
+                if len(rewritten) < len(query) * 0.3:
+                    return {'rewritten': query, 'confidence': 0.5}
+                
+                return {'rewritten': rewritten, 'confidence': 0.75}
+                
+            except Exception as e:
+                logger.warning(f"LLM rewrite attempt {attempt + 1} failed: {str(e)}")
+                if attempt == max_retries - 1:
+                    return {'rewritten': query, 'confidence': 0.5}
+        
+        return {'rewritten': query, 'confidence': 0.5}
     
     async def rewrite(
         self,
         query: str,
-        context: Optional[QueryContext] = None
+        context: Optional[QueryContext] = None,
+        bypass_cache: bool = False
     ) -> RewriteResult:
         """
-        改写查询
+        改写查询 v2.0
+        
+        混合策略流程：
+        1. 检查缓存
+        2. 简单查询使用规则改写
+        3. 复杂查询使用 LLM 改写
+        4. 缓存结果
         
         Args:
             query: 原始查询
             context: 查询上下文
+            bypass_cache: 强制绕过缓存
             
         Returns:
             改写结果
         """
         logger.info(f"Rewriting query: {query[:100]}...")
         
-        # 1. 检测查询类型
-        query_type = await self._detect_query_type(query)
+        cache_key = self._get_cache_key(query, context)
         
-        # 2. 检测编程语言和框架
-        detected = await self._detect_language_framework(query, context)
+        if not bypass_cache and cache_key in self._cache:
+            entry = self._cache[cache_key]
+            if self._is_cache_valid(entry):
+                logger.info(f"Cache hit for query: {query[:50]}...")
+                return RewriteResult(
+                    original_query=query,
+                    rewritten_query=entry.rewritten_query,
+                    query_type=entry.query_type,
+                    confidence=entry.confidence * 0.95,
+                    added_context=entry.added_context,
+                    sub_queries=entry.sub_queries
+                )
         
-        # 3. 提取上下文信息
+        query_type, confidence = self.intent_classifier.classify(query)
+        
         added_context = await self._extract_context(query, context)
         
-        # 4. 执行改写
-        rewritten = await self._execute_rewrite(
-            query, query_type, detected, added_context, context
-        )
+        if self.enable_hybrid_strategy and self.intent_classifier.is_simple_query(query):
+            logger.info(f"Using rule-based rewrite for simple query: {query[:50]}...")
+            rewritten = self._rule_based_rewrite(query, query_type)
+            
+            sub_queries = []
+            if self._is_complex_query(query):
+                sub_queries = await self._decompose_query(query, context)
+            
+            result = RewriteResult(
+                original_query=query,
+                rewritten_query=rewritten,
+                query_type=query_type,
+                confidence=confidence * 0.9,
+                added_context=added_context,
+                sub_queries=sub_queries
+            )
+        else:
+            logger.info(f"Using LLM rewrite for complex query: {query[:50]}...")
+            llm_result = await self._llm_rewrite_with_retry(
+                query, query_type, added_context, context
+            )
+            
+            rewritten = llm_result['rewritten']
+            llm_confidence = llm_result['confidence']
+            
+            sub_queries = []
+            if self._is_complex_query(query):
+                sub_queries = await self._decompose_query(query, context)
+            
+            combined_confidence = (confidence + llm_confidence) / 2
+            
+            result = RewriteResult(
+                original_query=query,
+                rewritten_query=rewritten,
+                query_type=query_type,
+                confidence=combined_confidence,
+                added_context=added_context,
+                sub_queries=sub_queries
+            )
         
-        # 5. 如果是复杂查询，分解为子查询
-        sub_queries = []
-        if self._is_complex_query(query):
-            sub_queries = await self._decompose_query(query, context)
-        
-        result = RewriteResult(
-            original_query=query,
-            rewritten_query=rewritten,
-            query_type=query_type,
-            confidence=0.85,
-            added_context=added_context,
-            sub_queries=sub_queries
+        self._cache[cache_key] = RewriteCacheEntry(
+            rewritten_query=result.rewritten_query,
+            query_type=result.query_type,
+            confidence=result.confidence,
+            added_context=result.added_context,
+            sub_queries=result.sub_queries,
+            timestamp=time.time()
         )
         
         logger.info(
             f"Query rewritten: type={query_type.value}, "
+            f"confidence={result.confidence:.2f}, "
             f"sub_queries={len(sub_queries)}"
         )
         
@@ -137,14 +495,92 @@ class QueryRewriter:
     async def rewrite_batch(
         self,
         queries: List[str],
-        context: Optional[QueryContext] = None
+        context: Optional[QueryContext] = None,
+        parallel: bool = True
     ) -> List[RewriteResult]:
-        """批量改写查询"""
-        results = []
-        for query in queries:
-            result = await self.rewrite(query, context)
-            results.append(result)
-        return results
+        """
+        批量改写查询
+        
+        Args:
+            queries: 查询列表
+            context: 查询上下文
+            parallel: 是否并行处理
+            
+        Returns:
+            改写结果列表
+        """
+        if not parallel:
+            results = []
+            for query in queries:
+                result = await self.rewrite(query, context)
+                results.append(result)
+            return results
+        
+        import asyncio
+        
+        tasks = [self.rewrite(query, context) for query in queries]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        final_results = []
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                logger.error(f"Batch rewrite failed for query {i}: {str(result)}")
+                final_results.append(RewriteResult(
+                    original_query=queries[i],
+                    rewritten_query=queries[i],
+                    query_type=QueryType.GENERAL,
+                    confidence=0.0
+                ))
+            else:
+                final_results.append(result)
+        
+        return final_results
+    
+    def clear_cache(self, older_than: Optional[float] = None) -> int:
+        """
+        清除缓存
+        
+        Args:
+            older_than: 只清除早于此时间戳的条目（秒）
+            
+        Returns:
+            清除的条目数量
+        """
+        if older_than is None:
+            count = len(self._cache)
+            self._cache.clear()
+            return count
+        
+        current_time = time.time()
+        keys_to_remove = [
+            key for key, entry in self._cache.items()
+            if (current_time - entry.timestamp) > older_than
+        ]
+        
+        for key in keys_to_remove:
+            del self._cache[key]
+        
+        return len(keys_to_remove)
+    
+    def get_cache_stats(self) -> Dict[str, Any]:
+        """
+        获取缓存统计信息
+        
+        Returns:
+            统计信息字典
+        """
+        current_time = time.time()
+        valid_entries = sum(
+            1 for entry in self._cache.values()
+            if self._is_cache_valid(entry)
+        )
+        
+        return {
+            'total_entries': len(self._cache),
+            'valid_entries': valid_entries,
+            'expired_entries': len(self._cache) - valid_entries,
+            'cache_ttl_seconds': self.cache_ttl
+        }
     
     async def _detect_query_type(self, query: str) -> QueryType:
         """检测查询类型"""

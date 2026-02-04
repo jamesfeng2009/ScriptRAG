@@ -6,7 +6,7 @@ v2.1 风格节点函数（LangGraph Native）
 - 接受 GlobalState (TypedDict)
 - 返回 Diff (Dict[str, Any])，LangGraph 自动合并
 - 使用 Reducer 实现追加保护
-- 完整的错误处理（使用 error_handler_v2）
+- 完整的错误处理（使用 langgraph_error_handler）
 
 日志规范：
     所有节点必须：
@@ -33,7 +33,7 @@ v2.1 风格节点函数（LangGraph Native）
     https://docs/architecture/v2.1_architecture_spec.md#73-迁移指南
 
 错误处理文档：
-    src/infrastructure/error_handler_v2.py
+    src/infrastructure/langgraph_error_handler.py
 """
 
 import logging
@@ -52,7 +52,7 @@ from ...services.llm.service import LLMService
 from ...services.retrieval_service import RetrievalService
 from ...services.parser.tree_sitter_parser import IParserService
 from ...services.summarization_service import SummarizationService
-from ...infrastructure.error_handler_v2 import (
+from ...infrastructure.langgraph_error_handler import (
     with_error_handling,
     ErrorCategory,
     ErrorRecovery,

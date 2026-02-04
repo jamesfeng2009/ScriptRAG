@@ -1,18 +1,25 @@
-"""Retrieval Enhancement Pipeline - 检索增强流水线
+"""Advanced Retrieval Pipeline - 高级检索流水线
 
-功能：
-1. 查询改写与扩展
-2. 混合检索（向量 + 关键词）
-3. Cross-Encoder 精排
-4. 悬崖截断
-5. Small-to-Big 上下文组装
-6. GraphRAG 多跳检索（可选）
+高级检索功能模块，提供端到端的检索增强能力。
+
+功能模块：
+1. 查询改写与扩展 (QueryRewriter)
+2. 混合检索 (HybridSearchService)
+3. Cross-Encoder 精排 (CrossEncoderReranker)
+4. 悬崖截断 (AdaptiveThresholdStrategy)
+5. Small-to-Big 上下文组装 (SmallToBigRetrievalPipeline)
+6. GraphRAG 多跳检索 (GraphRAGEngine)
+7. MMR 多样性排序 (MMMReranker)
+
+与 retrieval_service.py 的区别：
+- retrieval_service.py: 主入口服务，负责整体编排
+- advanced_retrieval.py: 高级检索功能实现，提供细粒度控制
 
 使用方式：
 ```python
-from src.services.retrieval_enhancement import RetrievalEnhancementPipeline
+from src.services.advanced_retrieval import AdvancedRetrievalPipeline
 
-pipeline = RetrievalEnhancementPipeline(
+pipeline = AdvancedRetrievalPipeline(
     llm_service=llm_service,
     vector_db=vector_db,
     enable_cross_encoder=True,
@@ -65,8 +72,9 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
-class EnhancementConfig:
-    """检索增强配置"""
+class AdvancedRetrievalConfig:
+    """高级检索配置"""
+
     # 查询改写
     enable_query_rewrite: bool = True
     enable_query_expansion: bool = True
@@ -97,8 +105,8 @@ class EnhancementConfig:
 
 
 @dataclass
-class EnhancementResult:
-    """增强检索结果"""
+class AdvancedRetrievalResult:
+    """高级检索结果"""
     query: str
     rewritten_query: Optional[str] = None
     expanded_queries: List[str] = field(default_factory=list)
@@ -110,21 +118,24 @@ class EnhancementResult:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
-class RetrievalEnhancementPipeline:
+class AdvancedRetrievalPipeline:
     """
-    检索增强流水线
+    高级检索流水线
     
-    整合所有检索增强技术，提供端到端的检索增强能力
+    整合所有检索增强技术，提供端到端的检索增强能力。
+    与 RetrievalService 的区别：
+    - AdvancedRetrievalPipeline: 专注高级检索功能，可独立使用
+    - RetrievalService: 主服务，封装增强流水线并提供统一 API
     """
     
     def __init__(
         self,
         llm_service: LLMService,
         vector_db_service: IVectorDBService,
-        config: Optional[EnhancementConfig] = None,
+        config: Optional[AdvancedRetrievalConfig] = None,
         graprag_engine: Optional[GraphRAGEngine] = None
     ):
-        self.config = config or EnhancementConfig()
+        self.config = config or AdvancedRetrievalConfig()
         self.llm_service = llm_service
         self.vector_db = vector_db_service
         
@@ -195,7 +206,7 @@ class RetrievalEnhancementPipeline:
         embedding: Optional[List[float]] = None,
         filters: Optional[Dict] = None,
         original_results: Optional[List[RetrievalResult]] = None
-    ) -> EnhancementResult:
+    ) -> "AdvancedRetrievalResult":
         """
         执行增强检索
         
@@ -212,7 +223,7 @@ class RetrievalEnhancementPipeline:
         """
         start_time = datetime.now()
         
-        result = EnhancementResult(query=query)
+        result = AdvancedRetrievalResult(query=query)
         
         try:
             # Step 1: 查询改写
@@ -437,9 +448,9 @@ class RetrievalEnhancementPipeline:
         }
 
 
-class RetrievalPipelineBuilder:
+class AdvancedPipelineBuilder:
     """
-    检索流水线构建器
+    高级检索流水线构建器
     
     提供便捷的流水线配置方式
     """
@@ -448,22 +459,22 @@ class RetrievalPipelineBuilder:
     def create_basic_pipeline(
         llm_service: LLMService,
         vector_db_service: IVectorDBService
-    ) -> RetrievalEnhancementPipeline:
+    ) -> AdvancedRetrievalPipeline:
         """创建基础流水线（仅查询改写 + 阈值控制）"""
-        config = EnhancementConfig(
+        config = AdvancedRetrievalConfig(
             enable_query_rewrite=True,
             enable_cross_encoder=False,
             enable_graprag=False
         )
-        return RetrievalEnhancementPipeline(llm_service, vector_db_service, config)
+        return AdvancedRetrievalPipeline(llm_service, vector_db_service, config)
     
     @staticmethod
     def create_standard_pipeline(
         llm_service: LLMService,
         vector_db_service: IVectorDBService
-    ) -> RetrievalEnhancementPipeline:
+    ) -> AdvancedRetrievalPipeline:
         """创建标准流水线（包含所有核心功能）"""
-        config = EnhancementConfig(
+        config = AdvancedRetrievalConfig(
             enable_query_rewrite=True,
             enable_query_expansion=True,
             enable_cross_encoder=False,  # 需要安装依赖
@@ -471,16 +482,16 @@ class RetrievalPipelineBuilder:
             enable_adaptive_threshold=True,
             enable_small_to_big=True
         )
-        return RetrievalEnhancementPipeline(llm_service, vector_db_service, config)
+        return AdvancedRetrievalPipeline(llm_service, vector_db_service, config)
     
     @staticmethod
     def create_full_pipeline(
         llm_service: LLMService,
         vector_db_service: IVectorDBService,
         graprag_engine: Optional[GraphRAGEngine] = None
-    ) -> RetrievalEnhancementPipeline:
+    ) -> AdvancedRetrievalPipeline:
         """创建完整流水线（包含所有功能）"""
-        config = EnhancementConfig(
+        config = AdvancedRetrievalConfig(
             enable_query_rewrite=True,
             enable_query_expansion=True,
             enable_cross_encoder=True,
@@ -489,9 +500,16 @@ class RetrievalPipelineBuilder:
             enable_small_to_big=True,
             enable_graprag=True
         )
-        return RetrievalEnhancementPipeline(
+        return AdvancedRetrievalPipeline(
             llm_service, 
             vector_db_service, 
             config,
             graprag_engine
         )
+
+
+# 向后兼容：保留旧类名
+RetrievalEnhancementPipeline = AdvancedRetrievalPipeline
+EnhancementConfig = AdvancedRetrievalConfig
+EnhancementResult = AdvancedRetrievalResult
+RetrievalPipelineBuilder = AdvancedPipelineBuilder
