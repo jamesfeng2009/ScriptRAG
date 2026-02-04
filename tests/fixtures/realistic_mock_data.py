@@ -314,27 +314,27 @@ def create_mock_llm_service() -> Mock:
     
     async def mock_chat_completion(
         messages: List[Dict[str, str]],
-        task_type: str,
+        task_type: str = None,
         **kwargs
     ) -> str:
         """Mock chat completion that returns format-appropriate responses"""
+        import json
+        
         # Get the last message content to detect agent type
         last_message = messages[-1]["content"] if messages else ""
         last_message_lower = last_message.lower()
         
         # Detect agent type from message content (order matters - check more specific patterns first)
         
-        # Check for planner first (most specific with "生成大纲")
-        if "生成大纲" in last_message or ("outline" in last_message_lower and "generate" in last_message_lower):
-            # Planner agent - return Chinese format outline
-            # Simple scenarios (default): 3 steps to reduce iterations
-            # Complex scenarios: up to 5 steps
-            return """步骤1: Python异步编程基础介绍 | 关键词: async, await, 协程
-步骤2: 事件循环和并发控制 | 关键词: event loop, asyncio, 并发
-步骤3: 实用异步模式和最佳实践 | 关键词: 模式, 最佳实践, 错误处理"""
-        
-        # Check for fact checker (check for verification context, not just keywords)
-        elif ("验证" in last_message and "片段" in last_message) or ("verify" in last_message_lower and "fragment" in last_message_lower):
+        # Check for fact checker - only check message content for verification keywords
+        # Don't check task_type == "test" here as it would intercept all test requests
+        if (
+            "验证" in last_message or 
+            "verify" in last_message_lower or 
+            "一致性" in last_message or 
+            "consistent" in last_message_lower or
+            "幻觉" in last_message_lower
+        ):
             # Fact checker - return VALID for properly formatted fragments
             # Check for obvious hallucinations (nonexistent functions explicitly mentioned)
             if "nonexistent_function" in last_message.lower() or "fake_function" in last_message.lower():
@@ -343,6 +343,43 @@ def create_mock_llm_service() -> Mock:
             else:
                 # For all other cases, return VALID to prevent regeneration loops (需求 4.4)
                 return "VALID"
+        
+        # Check for high_performance document retrieval (returns JSON)
+        if task_type == "high_performance" or "JSON" in last_message or "文档信息" in last_message:
+            # Return JSON array of document summaries
+            docs = create_realistic_retrieval_results(last_message, 3)
+            return json.dumps([
+                {
+                    "id": doc.id,
+                    "title": doc.file_path.split("/")[-1] if hasattr(doc, 'file_path') else doc.get("file_path", "").split("/")[-1],
+                    "content": doc.content[:200] + "..." if hasattr(doc, 'content') else doc.get("content", "")[:200] + "...",
+                    "source": doc.file_path if hasattr(doc, 'file_path') else doc.get("file_path", ""),
+                    "score": doc.similarity if hasattr(doc, 'similarity') else doc.get("similarity", 0.0)
+                }
+                for doc in docs
+            ])
+        
+        # Check for planner first (most specific with "生成大纲")
+        if "生成大纲" in last_message or ("outline" in last_message_lower and "generate" in last_message_lower):
+            # Planner agent - return Chinese format outline with steps
+            # Detect complexity from message content
+            is_complex = any(keyword in last_message for keyword in [
+                "完整", "详细", "深入", "全面", "进阶", "高级",
+                "complete", "detailed", "comprehensive", "advanced"
+            ])
+            
+            if is_complex:
+                # Complex scenario - return 5 steps
+                return """步骤1: Python异步编程基础介绍 | 关键词: async, await, 协程
+步骤2: 事件循环和并发控制 | 关键词: event loop, asyncio, 并发
+步骤3: 实用异步模式和最佳实践 | 关键词: 上下文管理器, 重试机制, 错误处理
+步骤4: 异步错误处理和调试 | 关键词: 异常处理, 调试, 日志
+步骤5: 性能优化和最佳实践总结 | 关键词: 性能, 优化, 总结"""
+            else:
+                # Simple scenario - return exactly 3 steps
+                return """步骤1: Python异步编程基础介绍 | 关键词: async, await, 协程
+步骤2: 事件循环和并发控制 | 关键词: event loop, asyncio, 并发
+步骤3: 实用异步模式和最佳实践 | 关键词: 上下文管理器, 重试机制, 错误处理"""
         
         # Check for director complexity FIRST (more specific than evaluation)
         elif "复杂度" in last_message or ("complexity" in last_message_lower and "assess" in last_message_lower):
@@ -399,9 +436,8 @@ Python的async/await语法提供了一种简洁的方式来编写异步代码。
 步骤2: 事件循环和并发控制 | 关键词: event loop, asyncio, 并发
 步骤3: 实用异步模式和最佳实践 | 关键词: 上下文管理器, 重试机制, 错误处理"""
         
-        else:
-            # Writer agent - return realistic fragment text (50+ characters)
-            return """本节介绍Python的async/await语法。`run_with_timeout()`函数展示了如何使用`asyncio.wait_for()`来执行带超时保护的协程。`AsyncContextManager`类展示了如何正确实现异步上下文管理器，包括`__aenter__`和`__aexit__`方法。这些模式在实际开发中非常有用，可以帮助我们编写更加健壮的异步代码。"""
+        # Default fallback for unrecognized requests
+        return """本节介绍Python的async/await语法。`run_with_timeout()`函数展示了如何使用`asyncio.wait_for()`来执行带超时保护的协程。`AsyncContextManager`类展示了如何正确实现异步上下文管理器，包括`__aenter__`和`__aexit__`方法。这些模式在实际开发中非常有用，可以帮助我们编写更加健壮的异步代码。"""
     
     # Set up the mock
     mock_service.chat_completion = AsyncMock(side_effect=mock_chat_completion)

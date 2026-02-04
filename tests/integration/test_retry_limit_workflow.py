@@ -23,16 +23,35 @@ def mock_llm_service_with_repeated_conflicts():
     # Track director calls to simulate repeated conflicts
     director_call_count = 0
     
-    async def mock_chat_completion(messages, task_type, **kwargs):
+    async def mock_chat_completion(messages, task_type=None, **kwargs):
         nonlocal director_call_count
         
         last_message = messages[-1]["content"] if messages else ""
         
-        if "生成" in last_message and "大纲" in last_message:
-            # Planner response - use Chinese format expected by parser
-            return """步骤1: 介绍有问题的主题 | 关键词: 介绍, 问题
-步骤2: 详细说明问题 | 关键词: 详细, 问题
-步骤3: 提供解决方案 | 关键词: 解决方案"""
+        # Return JSON format for high_performance task type (document retrieval)
+        if task_type == "high_performance":
+            import json
+            return json.dumps([
+                {
+                    "id": "doc1",
+                    "title": "example.py",
+                    "content": "Example code content...",
+                    "source": "src/example.py",
+                    "score": 0.95
+                }
+            ])
+        
+        # Check for various patterns in the message
+        if "大纲" in last_message or "outline" in last_message.lower():
+            # Planner response - return JSON format directly
+            import json
+            return json.dumps({
+                "steps": [
+                    {"step_id": 0, "title": "介绍有问题的主题", "description": "介绍有问题的主题内容"},
+                    {"step_id": 1, "title": "详细说明问题", "description": "详细说明问题的核心内容"},
+                    {"step_id": 2, "title": "提供解决方案", "description": "提供解决方案的详细内容"}
+                ]
+            })
         elif "complexity" in last_message.lower() and "assess" in last_message.lower():
             # Director complexity assessment - return numeric score
             return "0.5"
@@ -47,18 +66,19 @@ def mock_llm_service_with_repeated_conflicts():
         elif "modify the outline" in last_message.lower() or "pivot" in last_message.lower():
             # Pivot manager response
             return "Modified outline with attempted fix"
-        elif "generate a screenplay fragment" in last_message.lower() or "生成" in last_message:
+        elif "fragment" in last_message.lower() or "剧本片段" in last_message:
             # Writer response
             return "Fragment content for the step"
         elif "verify" in last_message.lower() or "fact-check" in last_message.lower():
             # Fact checker response
             return "valid"
-        elif "compile" in last_message.lower() or "integrate" in last_message.lower() or "整合" in last_message:
+        elif "compile" in last_message.lower() or "integrate" in last_message.lower() or "final" in last_message.lower():
             # Compiler response
             return "# Final Screenplay\n\n## Introduction\n\nContent with skipped steps.\n\n## Conclusion\n\nThis is the final screenplay."
         else:
-            # Default response for any other case
-            return "0.5"
+            # Default response - return a simple JSON format for safety
+            import json
+            return json.dumps({"steps": [{"step_id": 0, "title": "默认步骤", "description": "默认描述"}]})
     
     llm_service.chat_completion = AsyncMock(side_effect=mock_chat_completion)
     llm_service.embedding = AsyncMock(return_value=[[0.1] * 1536])
