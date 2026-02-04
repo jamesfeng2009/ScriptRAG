@@ -16,6 +16,7 @@ v2.1 架构变更：
 
 import logging
 import operator
+from datetime import datetime
 from typing import List, Literal, Dict, Any, Optional, Annotated
 from langgraph.graph import StateGraph, END
 
@@ -37,12 +38,13 @@ from ..services.summarization_service import SummarizationService
 from ..infrastructure.error_handler_v2 import (
     with_error_handling,
 )
+from .base_orchestrator import BaseWorkflowOrchestrator
 
 
 logger = logging.getLogger(__name__)
 
 
-class WorkflowOrchestrator:
+class WorkflowOrchestrator(BaseWorkflowOrchestrator):
     """
     工作流编排器 - 管理 LangGraph 状态机
     
@@ -55,8 +57,6 @@ class WorkflowOrchestrator:
     2. 定义智能体节点和边
     3. 实现路由函数
     4. 执行完整的剧本生成工作流
-    
-    验证需求: 14.2, 14.3, 14.4, 14.5, 14.6
     """
     
     def __init__(
@@ -93,6 +93,8 @@ class WorkflowOrchestrator:
             summarization_service=summarization_service,
             workspace_id=workspace_id
         )
+        
+        super().__init__(self.node_factory)
         
         if enable_dynamic_adjustment:
             self.rag_analyzer = RAGContentAnalyzer(llm_service)
@@ -159,7 +161,11 @@ class WorkflowOrchestrator:
             workflow.add_conditional_edges(
                 "director",
                 self._route_director_decision,
-                {"pivot": "pivot_manager", "write": "retry_protection"}
+                {
+                    "pivot": "pivot_manager", 
+                    "navigate": "navigator",
+                    "write": "retry_protection"
+                }
             )
         
         workflow.add_edge("pivot_manager", "navigator")
@@ -188,12 +194,26 @@ class WorkflowOrchestrator:
     
     def _get_current_step(self, state: GlobalState) -> Optional[Dict[str, Any]]:
         """获取当前步骤"""
-        outline = state.get("outline", [])
-        current_step_index = state.get("current_step_index", 0)
+        outline = self._get_state_value(state, "outline", [])
+        current_step_index = self._get_state_value(state, "current_step_index", 0)
         
         if 0 <= current_step_index < len(outline):
             return outline[current_step_index]
         return None
+    
+    def _get_state_value(self, state: GlobalState, key: str, default: Any = None) -> Any:
+        """安全地从状态中获取值，支持字典和Pydantic模型"""
+        if isinstance(state, dict):
+            return state.get(key, default)
+        else:
+            return getattr(state, key, default)
+    
+    def _get_director_feedback(self, state: GlobalState) -> Dict[str, Any]:
+        """安全地获取导演反馈"""
+        feedback = self._get_state_value(state, "director_feedback", {})
+        if isinstance(feedback, dict):
+            return feedback
+        return {}
     
     def _route_director_decision(self, state: GlobalState) -> str:
         """
@@ -205,14 +225,23 @@ class WorkflowOrchestrator:
         返回:
             路由目标节点标识
         """
-        director_feedback = state.get("director_feedback", {})
-        decision = director_feedback.get("decision", "write")
+        director_feedback = self._get_director_feedback(state)
+        trigger_retrieval = director_feedback.get("trigger_retrieval", False)
         
-        # Map "continue" to "write" for compatibility
-        if decision == "continue":
-            decision = "write"
+        if trigger_retrieval:
+            return "navigate"
         
-        return decision
+        decision = director_feedback.get("decision", None)
+        if decision:
+            if decision == "continue":
+                decision = "write"
+            return decision
+        
+        pivot_triggered = self._get_state_value(state, "pivot_triggered", False)
+        if pivot_triggered:
+            return "pivot"
+        
+        return "write"
     
     def _route_dynamic_director_decision(self, state: GlobalState) -> str:
         """
@@ -224,7 +253,7 @@ class WorkflowOrchestrator:
         返回:
             路由目标节点标识
         """
-        director_feedback = state.get("director_feedback", {})
+        director_feedback = self._get_director_feedback(state)
         adjustment_type = director_feedback.get("adjustment_type", "continue")
         
         if adjustment_type == "pivot":
@@ -244,24 +273,21 @@ class WorkflowOrchestrator:
         返回:
             路由目标节点标识
         """
-        fact_check_passed = state.get("fact_check_passed", False)
+        fact_check_passed = self._get_state_value(state, "fact_check_passed", False)
+        logger.info(f"route_fact_check: fact_check_passed={fact_check_passed}")
         return "valid" if fact_check_passed else "invalid"
     
     def _route_completion(self, state: GlobalState) -> str:
-        """
-        路由完成状态
+        outline = self._get_state_value(state, "outline", [])
+        current_step_index = self._get_state_value(state, "current_step_index", 0)
+        workflow_complete = self._get_state_value(state, "workflow_complete", False)
         
-        参数:
-            state: 当前全局状态
-            
-        返回:
-            路由目标节点标识
-        """
-        outline = state.get("outline", [])
-        current_step_index = state.get("current_step_index", 0)
+        logger.info(f"route_completion: index={current_step_index}, outline_len={len(outline)}, complete={workflow_complete}")
         
-        if current_step_index >= len(outline):
+        if workflow_complete or current_step_index >= len(outline):
+            logger.info("route_completion: returning 'done'")
             return "done"
+        logger.info("route_completion: returning 'continue'")
         return "continue"
     
     @with_error_handling(agent_name="rag_analyzer", action_name="analyze_content")
@@ -283,7 +309,7 @@ class WorkflowOrchestrator:
         logger.info("执行 RAG 分析器节点")
         
         current_step = self._get_current_step(state)
-        retrieved_docs = state.get("last_retrieved_docs", [])
+        retrieved_docs = self._get_state_value(state, "last_retrieved_docs", [])
         
         if not current_step or not retrieved_docs:
             logger.warning("没有内容可分析")
@@ -340,7 +366,7 @@ class WorkflowOrchestrator:
         """
         logger.info("执行动态导演节点")
         
-        director_feedback = state.get("director_feedback", {})
+        director_feedback = self._get_director_feedback(state)
         rag_analysis = director_feedback.get("rag_analysis", {})
         
         if not rag_analysis:
@@ -405,9 +431,9 @@ class WorkflowOrchestrator:
         if not current_step:
             return {}
         
-        user_topic = state.get("user_topic", "")
-        project_context = state.get("project_context", "")
-        director_feedback = state.get("director_feedback", {})
+        user_topic = self._get_state_value(state, "user_topic", "")
+        project_context = self._get_state_value(state, "project_context", "")
+        director_feedback = self._get_director_feedback(state)
         rag_analysis = director_feedback.get("rag_analysis", {})
         
         recommendation = await self.skill_recommender.recommend(
@@ -426,7 +452,7 @@ class WorkflowOrchestrator:
         if recommended_skill and confidence > 0.7:
             updates["current_skill"] = recommended_skill
             
-            skill_history = state.get("skill_history", [])
+            skill_history = self._get_state_value(state, "skill_history", [])
             skill_history.append({
                 "step_id": current_step.get("step_id"),
                 "reason": f"自动切换: {reasoning}",
@@ -470,8 +496,8 @@ class WorkflowOrchestrator:
         """
         logger.info("执行规划器节点")
         
-        user_topic = state.get("user_topic", "")
-        project_context = state.get("project_context", "")
+        user_topic = self._get_state_value(state, "user_topic", "")
+        project_context = self._get_state_value(state, "project_context", "")
         
         return await self.node_factory.planner_node(state)
     
@@ -492,6 +518,19 @@ class WorkflowOrchestrator:
             状态更新字典
         """
         logger.info("执行导航器节点")
+        
+        outline = self._get_state_value(state, "outline", [])
+        current_step_index = self._get_state_value(state, "current_step_index", 0)
+        
+        if current_step_index >= len(outline):
+            return {
+                "workflow_complete": True,
+                "execution_log": [{
+                    "timestamp": datetime.now().isoformat(),
+                    "node": "navigator",
+                    "action": f"navigation complete - all {len(outline)} steps processed"
+                }]
+            }
         
         return await self.node_factory.navigator_node(state)
     
@@ -596,33 +635,43 @@ class WorkflowOrchestrator:
         return await self.node_factory.fact_checker_node(state)
     
     def _step_advancer_node(self, state: GlobalState) -> Dict[str, Any]:
-        """
-        步骤推进器节点 - 将 current_step_index 推进到下一步
+        old_index = self._get_state_value(state, "current_step_index", 0)
+        outline = self._get_state_value(state, "outline", [])
+        skip_current_step = self._get_state_value(state, "skip_current_step", False)
         
-        职责:
-            - 增加当前步骤索引
-            - 检查是否完成所有步骤
-            - 返回推进结果
+        is_complete = old_index >= len(outline)
         
-        参数:
-            state: 当前全局状态
-            
-        返回:
-            状态更新字典
-        """
-        old_index = state.get("current_step_index", 0)
+        if skip_current_step or is_complete:
+            logger.info(f"推进步骤: {old_index} -> {old_index}, complete=True (workflow done)")
+            result = {
+                "current_step_index": old_index,
+                "execution_log": create_success_log(
+                    agent="step_advancer",
+                    action="advance_step",
+                    details={"from_index": old_index, "to_index": old_index, "is_complete": True}
+                ),
+                "workflow_complete": True
+            }
+            return result
+        
         new_index = old_index + 1
+        is_complete_after = new_index >= len(outline)
         
-        logger.info(f"推进步骤: {old_index} -> {new_index}")
+        logger.info(f"推进步骤: {old_index} -> {new_index}, complete={is_complete_after}")
         
-        return {
+        result = {
             "current_step_index": new_index,
             "execution_log": create_success_log(
                 agent="step_advancer",
-                action_name="advance_step",
-                details={"from_index": old_index, "to_index": new_index}
+                action="advance_step",
+                details={"from_index": old_index, "to_index": new_index, "is_complete": is_complete_after}
             )
         }
+        
+        if is_complete_after:
+            result["workflow_complete"] = True
+            
+        return result
     
     @with_error_handling(agent_name="compiler", action_name="compile_screenplay")
     async def _compiler_node(self, state: GlobalState) -> Dict[str, Any]:
@@ -648,7 +697,7 @@ class WorkflowOrchestrator:
         self, 
         initial_state: Dict[str, Any],
         recursion_limit: int = 25
-    ) -> GlobalState:
+    ) -> Dict[str, Any]:
         """
         执行工作流
         
@@ -657,7 +706,7 @@ class WorkflowOrchestrator:
             recursion_limit: 递归限制（默认25）
             
         返回:
-            最终状态
+            包含success和最终状态的字典
             
         验证需求: 14.6
         """
@@ -670,11 +719,20 @@ class WorkflowOrchestrator:
             }
         }
         
-        final_state = await self.graph.ainvoke(initial_state, config=config)
-        
-        logger.info("工作流执行完成")
-        
-        return final_state
+        try:
+            final_state = await self.graph.ainvoke(initial_state, config=config)
+            logger.info("工作流执行完成")
+            return {
+                "success": True,
+                "state": final_state
+            }
+        except Exception as e:
+            logger.error(f"工作流执行失败: {e}")
+            return {
+                "success": False,
+                "error": str(e),
+                "state": initial_state
+            }
     
     async def execute_streaming(self, initial_state: Dict[str, Any]):
         """

@@ -197,6 +197,7 @@ class GlobalState(TypedDict):
     # ============================================================
     last_retrieved_docs: Annotated[List[Dict[str, Any]], overwrite_reducer]
     director_feedback: Annotated[Optional[Dict[str, Any]], overwrite_reducer]
+    fact_check_passed: Annotated[Optional[bool], overwrite_reducer]
     
     # ============================================================
     # 5. 审计日志 (Audit - Append Only ⭐)
@@ -208,6 +209,12 @@ class GlobalState(TypedDict):
     # ============================================================
     error_flag: Annotated[Optional[str], overwrite_reducer]
     retry_count: Annotated[int, overwrite_reducer]
+    workflow_complete: Annotated[Optional[bool], overwrite_reducer]
+    
+    # ============================================================
+    # 7. 最终输出 (Output - Overwrite)
+    # ============================================================
+    final_screenplay: Annotated[Optional[str], overwrite_reducer]
 
 
 class InitialState(TypedDict):
@@ -229,6 +236,40 @@ class CheckpointState(TypedDict):
     checkpoint_id: str
     parent_checkpoint_id: Optional[str]
     timestamp: str
+
+
+class ToolCall(TypedDict):
+    """工具调用类型
+    
+    用于 Function Calling 流程中的工具调用。
+    """
+    id: str
+    type: str
+    function: Dict[str, str]
+
+
+class ToolResult(TypedDict):
+    """工具执行结果类型
+    
+    用于 Function Calling 流程中的工具执行结果。
+    """
+    tool_call_id: str
+    name: str
+    content: Optional[Dict[str, Any]]
+    success: bool
+    error: Optional[str]
+
+
+class HumanIntervention(TypedDict):
+    """人工干预请求类型
+    
+    用于用户干预流程。
+    """
+    type: str
+    prompt: str
+    choices: Optional[List[str]]
+    requested_at: str
+    completed_at: Optional[str]
 
 
 # ============================================================================
