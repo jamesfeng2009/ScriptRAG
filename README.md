@@ -543,14 +543,6 @@ make lint  # 如果有 Makefile
 - [src/services/README.md](src/services/README.md) - 服务层设计
 - [src/domain/README_SKILLS.md](src/domain/README_SKILLS.md) - Skill 系统详解
 
-### 设计文档
-
-- [需求文档](.kiro/specs/rag-screenplay-multi-agent/requirements.md) - 完整需求规格
-- [设计文档](.kiro/specs/rag-screenplay-multi-agent/design.md) - 详细设计说明
-- [任务列表](.kiro/specs/rag-screenplay-multi-agent/tasks.md) - 实施进度
-- [LLM 适配器设计](docs/LLM_ADAPTER_DESIGN.md) - 多 LLM 支持架构
-- [数据库设置](scripts/DATABASE_SETUP_SUMMARY.md) - 数据库配置指南
-
 ## 性能基准
 
 系统性能目标：
