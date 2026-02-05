@@ -227,14 +227,14 @@ class TestSkillServiceIntegration:
         )
         await skill_service.create(record)
 
-        await skill_service.get("cache_test_skill")
+        await skill_service.get_all()  # This populates the cache
         cache_key = skill_service._get_cache_key("all")
         assert cache_key in skill_service._cache
 
         await skill_service.update("cache_test_skill", description="Updated")
         assert cache_key not in skill_service._cache
 
-        await skill_service.get("cache_test_skill")
+        await skill_service.get_all()  # This repopulates the cache
         assert cache_key in skill_service._cache
 
     @pytest.mark.asyncio

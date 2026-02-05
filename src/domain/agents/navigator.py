@@ -97,7 +97,7 @@ async def retrieve_content(
         for result in retrieval_results:
             # 3. 解析代码提取元数据
             parsed_code = parser_service.parse(
-                file_path=result.source,
+                file_path=result.file_path,
                 content=result.content
             )
             
@@ -122,7 +122,7 @@ async def retrieve_content(
                 confidence=result.confidence,  # 置信度分数
                 metadata={
                     'similarity': result.similarity,
-                    'search_source': result.source,  # "vector", "keyword", or "hybrid"
+                    'search_source': result.strategy_name,
                     'has_deprecated': parsed_code.has_deprecated,
                     'has_fixme': parsed_code.has_fixme,
                     'has_todo': parsed_code.has_todo,

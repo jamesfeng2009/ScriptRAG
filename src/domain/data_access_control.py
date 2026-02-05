@@ -93,8 +93,8 @@ DATA_OWNERSHIP_CONFIG: Dict[str, FieldConfig] = {
     ),
     "outline": FieldConfig(
         owner=DataOwner.PLANNER,
-        write_policy=WritePolicy.OWNER_ONLY,
-        required_by={"navigator", "director", "writer", "compiler", "retry_protection"},
+        write_policy=WritePolicy.SHARED_WRITE,
+        required_by={"navigator", "director", "writer", "compiler", "retry_protection", "pivot_manager"},
         sensitivity=ContextSensitivity.MEDIUM,
         description="剧本大纲"
     ),
@@ -108,7 +108,7 @@ DATA_OWNERSHIP_CONFIG: Dict[str, FieldConfig] = {
     "fragments": FieldConfig(
         owner=DataOwner.WRITER,
         write_policy=WritePolicy.APPEND_ONLY,
-        required_by={"director", "fact_checker", "compiler"},
+        required_by={"director", "fact_checker", "compiler", "pivot_manager"},
         sensitivity=ContextSensitivity.MEDIUM,
         max_history=50,
         description="生成的剧本片段"

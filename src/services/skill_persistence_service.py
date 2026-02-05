@@ -267,7 +267,15 @@ class SkillDatabaseService:
         for field, column in field_mapping.items():
             if field in kwargs:
                 set_clauses.append(f"{column} = ${param_idx}")
-                values.append(kwargs[field])
+                value = kwargs[field]
+                # Convert dict fields to JSON strings
+                if field in ('prompt_config', 'compatible_with', 'extra_data') and isinstance(value, dict):
+                    import json
+                    value = json.dumps(value)
+                elif field == 'compatible_with' and isinstance(value, list):
+                    import json
+                    value = json.dumps(value)
+                values.append(value)
                 param_idx += 1
 
         if not set_clauses:

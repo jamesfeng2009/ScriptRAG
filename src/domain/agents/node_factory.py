@@ -54,12 +54,14 @@ from ...services.parser.tree_sitter_parser import IParserService
 from ...services.summarization_service import SummarizationService
 from ...services.retrieval_isolation import ContextMinimizer
 from ...domain.agents.fact_checker_minimal_context import FactCheckerMinimalContext
+from ...domain.agents.director import detect_conflicts
 from ...infrastructure.langgraph_error_handler import (
     with_error_handling,
     ErrorCategory,
     ErrorRecovery,
 )
 from ..data_access_control import DataAccessControl
+from ..models import OutlineStep
 
 
 # ============================================================================
@@ -289,7 +291,14 @@ class NodeFactory:
             
             logger.info(f"Navigator: Retrieving for step {step_index}: {step_title}")
             
-            retrieved_docs = await self._retrieve_documents_async(query)
+            if hasattr(self, 'retrieval_service') and self.retrieval_service:
+                retrieved_docs = await self.retrieval_service.hybrid_retrieve(
+                    workspace_id=self.workspace_id or "",
+                    query=query,
+                    top_k=5
+                )
+            else:
+                retrieved_docs = await self._retrieve_documents_async(query)
             
             docs_as_dicts = []
             for i, doc in enumerate(retrieved_docs):
@@ -436,12 +445,13 @@ class NodeFactory:
         
         职责：
         - 评估检索结果质量
+        - 检测废弃冲突
         - 决定是否继续或转向
         - 返回结构化反馈
         
         数据流向：
-        - 输入：last_retrieved_docs, current_step_index
-        - 输出：director_feedback (Overwrite)
+        - 输入：last_retrieved_docs, current_step_index, outline
+        - 输出：director_feedback (Overwrite), pivot_triggered, pivot_reason
         
         Returns:
             Dict[str, Any]: Diff 更新
@@ -449,6 +459,77 @@ class NodeFactory:
         try:
             retrieved_docs = state.get("last_retrieved_docs", [])
             step_index = state.get("current_step_index", 0)
+            outline = state.get("outline", [])
+            
+            current_step = None
+            if step_index < len(outline):
+                step = outline[step_index]
+                if isinstance(step, dict):
+                    current_step = OutlineStep(
+                        step_id=step_index,
+                        title=step.get("title", f"步骤 {step_index}"),
+                        description=step.get("description", ""),
+                        status="in_progress"
+                    )
+                else:
+                    current_step = step
+            
+            # 检测冲突（废弃、安全等）
+            conflict_detected = False
+            conflict_type = None
+            conflict_details = None
+            
+            if current_step and retrieved_docs:
+                # 转换检索文档为兼容格式（dict 或 RetrievedDocument）
+                converted_docs = []
+                for doc in retrieved_docs:
+                    if isinstance(doc, dict):
+                        # Navigator 返回的字典格式
+                        class FakeRetrievedDoc:
+                            def __init__(self, d):
+                                self.metadata = d.get("metadata", {})
+                                self.source = d.get("source", d.get("file_path", ""))
+                        converted_docs.append(FakeRetrievedDoc(doc))
+                    else:
+                        converted_docs.append(doc)
+                
+                has_conflict, conflict_type, conflict_details = detect_conflicts(
+                    current_step=current_step,
+                    retrieved_docs=converted_docs
+                )
+                conflict_detected = has_conflict
+            
+            if conflict_detected:
+                pivot_trigger = True
+                pivot_reason = conflict_type
+                feedback = {
+                    "decision": "pivot",
+                    "reason": f"检测到{conflict_type}: {conflict_details}",
+                    "confidence": 0.3,
+                    "suggested_skill": None,
+                    "metadata": {
+                        "conflict_type": conflict_type,
+                        "conflict_details": conflict_details,
+                        "quality_score": self._evaluate_retrieval_quality(retrieved_docs)
+                    }
+                }
+                
+                logger.warning(f"Director: Conflict detected ({conflict_type}), triggering pivot")
+                
+                return {
+                    "director_feedback": feedback,
+                    "pivot_triggered": True,
+                    "pivot_reason": pivot_reason,
+                    "execution_log": create_success_log(
+                        agent="director",
+                        action="conflict_detected",
+                        details={
+                            "step_index": step_index,
+                            "conflict_type": conflict_type,
+                            "conflict_details": conflict_details
+                        }
+                    )
+                }
             
             quality_score = self._evaluate_retrieval_quality(retrieved_docs)
             

@@ -181,15 +181,24 @@ async def test_fallback_provider_used_on_primary_failure(
         workspace_id="test-workspace"
     )
     
-    result = await orchestrator.execute(initial_state, recursion_limit=500)
+    result = await orchestrator.execute(initial_state, recursion_limit=100)
     
     assert result["success"] is True
-    assert result["final_screenplay"] is not None
+    assert "state" in result
     
     final_state = result["state"]
     
-    assert len(final_state.outline) > 0
-    assert len(final_state.fragments) > 0
+    # Verify outline was created
+    outline = final_state.get("outline", [])
+    assert len(outline) > 0, "Outline should have been created"
+    
+    # Verify fragments were generated
+    fragments = final_state.get("fragments", [])
+    assert len(fragments) > 0, "Fragments should have been generated"
+    
+    # Verify final screenplay was generated
+    final_screenplay = final_state.get("final_screenplay")
+    assert final_screenplay is not None, "Final screenplay should be generated"
 
 
 @pytest.mark.skip(reason="Full end-to-end workflow has recursion issues")

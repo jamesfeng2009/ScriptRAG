@@ -260,6 +260,8 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
         if decision:
             if decision == "continue":
                 decision = "write"
+            elif decision == "retry":
+                decision = "navigate"
             return decision
         
         pivot_triggered = self._get_state_value(state, "pivot_triggered", False)

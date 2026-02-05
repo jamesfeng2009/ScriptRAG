@@ -17,7 +17,7 @@ from src.services.retrieval import (
     StrategyRegistry
 )
 from src.services.retrieval.mergers import WeightedMerger
-from src.services.database.vector_db import IVectorDBService
+from src.services.database.vector_db import IVectorDBService, VectorSearchResult
 from src.services.llm.service import LLMService
 from tests.fixtures.realistic_mock_data import (
     create_realistic_code_examples,
@@ -93,6 +93,44 @@ class RealDataTestContext:
             async def delete_workspace(self, workspace_id: str) -> bool:
                 self.documents = []
                 return True
+
+            async def delete_documents(self, document_ids: List[str]) -> int:
+                """Delete documents by IDs"""
+                count = 0
+                for doc_id in document_ids:
+                    for i, doc in enumerate(self.documents):
+                        if doc.get("id") == doc_id:
+                            self.documents.pop(i)
+                            count += 1
+                            break
+                return count
+
+            async def get_document_count(self, workspace_id: str) -> int:
+                """Get document count for workspace"""
+                return len(self.documents)
+
+            async def search(
+                self,
+                workspace_id: str,
+                query_embedding: List[float],
+                top_k: int = 5,
+                filters: Optional[Dict[str, Any]] = None
+            ) -> List[VectorSearchResult]:
+                """Search implementation"""
+                import random
+                results = []
+                for i, doc in enumerate(self.documents[:top_k]):
+                    similarity = 0.95 - (i * 0.05) + random.uniform(-0.05, 0.05)
+                    similarity = max(0.5, min(1.0, similarity))
+                    result = VectorSearchResult(
+                        id=f"doc-{i+1}",
+                        file_path=doc.get("file_path", f"file_{i}.py"),
+                        content=doc.get("content", ""),
+                        similarity=similarity,
+                        metadata={"source": "mock"}
+                    )
+                    results.append(result)
+                return results
 
             async def vector_search(
                 self,

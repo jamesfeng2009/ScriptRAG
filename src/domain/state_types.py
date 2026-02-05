@@ -212,7 +212,13 @@ class GlobalState(TypedDict):
     workflow_complete: Annotated[Optional[bool], overwrite_reducer]
     
     # ============================================================
-    # 7. 最终输出 (Output - Overwrite)
+    # 7. 转向控制数据 (Control Plane - Overwrite)
+    # ============================================================
+    pivot_triggered: Annotated[bool, overwrite_reducer]
+    pivot_reason: Annotated[Optional[str], overwrite_reducer]
+    
+    # ============================================================
+    # 8. 最终输出 (Output - Overwrite)
     # ============================================================
     final_screenplay: Annotated[Optional[str], overwrite_reducer]
 

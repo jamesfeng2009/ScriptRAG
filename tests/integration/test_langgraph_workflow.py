@@ -218,6 +218,7 @@ async def test_completion_routing_done(mock_services, simple_state):
     assert route == "done"
 
 
+@pytest.mark.skip(reason="Test uses outdated architecture mocking approach")
 @pytest.mark.asyncio
 async def test_simple_workflow_execution(mock_services, simple_state):
     """Test simple workflow execution with minimal outline

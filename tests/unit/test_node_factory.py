@@ -176,9 +176,9 @@ class TestNavigatorNode:
     async def test_navigator_node_with_content(self):
         """测试有内容时的检索"""
         mock_retrieval = Mock()
-        mock_retrieval.retrieve = AsyncMock(return_value=[
-            {"id": "doc1", "content": "测试内容1"},
-            {"id": "doc2", "content": "测试内容2"}
+        mock_retrieval.hybrid_retrieve = AsyncMock(return_value=[
+            {"id": "doc1", "content": "测试内容1", "source": "test_source"},
+            {"id": "doc2", "content": "测试内容2", "source": "test_source"}
         ])
         mock_llm = Mock()
         mock_llm.chat_completion = AsyncMock(return_value='[{"id": "doc1", "content": "测试内容1"}]')
