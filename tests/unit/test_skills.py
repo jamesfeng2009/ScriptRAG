@@ -18,14 +18,17 @@ class TestSkillsConfiguration:
     """Test the SKILLS dictionary configuration"""
     
     def test_all_six_skills_defined(self):
-        """Test that all six required skills are defined"""
+        """Test that all required skills are defined"""
         expected_skills = {
             "standard_tutorial",
             "warning_mode",
             "visualization_analogy",
             "research_mode",
             "meme_style",
-            "fallback_summary"
+            "fallback_summary",
+            "code_example",
+            "api_documentation",
+            "security_audit"
         }
         assert set(SKILLS.keys()) == expected_skills
     
@@ -203,7 +206,7 @@ class TestSkillManager:
     def test_skill_manager_initialization(self):
         """Test SkillManager initialization with default skills"""
         manager = SkillManager()
-        assert len(manager.list_skills()) == 6
+        assert len(manager.list_skills()) == 9
         assert "standard_tutorial" in manager.list_skills()
     
     def test_skill_manager_with_custom_skills(self):
@@ -217,7 +220,7 @@ class TestSkillManager:
         }
         manager = SkillManager(custom_skills=custom_skills)
         assert "custom_skill" in manager.list_skills()
-        assert len(manager.list_skills()) == 7
+        assert len(manager.list_skills()) == 10
     
     def test_register_skill(self):
         """Test registering a new skill"""
@@ -330,8 +333,8 @@ class TestDefaultSkillManager:
         assert isinstance(default_skill_manager, SkillManager)
     
     def test_default_manager_has_all_skills(self):
-        """Test that default manager has all six skills"""
-        assert len(default_skill_manager.list_skills()) == 6
+        """Test that default manager has all skills"""
+        assert len(default_skill_manager.list_skills()) == 9
     
     def test_default_manager_is_valid(self):
         """Test that default manager has valid skill graph"""

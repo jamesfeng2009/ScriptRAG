@@ -1,30 +1,85 @@
-# Skills Configuration File
+# Skills 配置文件
 # 
-# This file defines all available skills for the screenplay generation system.
-# Skills can be customized without modifying code.
+# 本文件定义 RAG 剧本生成系统的技能配置。
+# 支持分层认知框架和信号路由系统。
 #
-# Format:
-#   skill_name:
-#     description: Brief description of the skill
-#     tone: Tone/style (professional, casual, technical, etc.)
-#     compatible_with: List of compatible skill names
-#     prompt_config:
-#       system_prompt: System prompt template
-#       user_template: User prompt template with placeholders
-#       temperature: LLM temperature (0.0-1.0)
-#       max_tokens: Maximum tokens to generate
-#     enabled: Whether this skill is active (true/false)
-#     metadata: Additional metadata (optional)
+# 结构说明：
+#   version: 配置版本
+#   layers: 技能层次定义
+#   skills: 技能配置
+#     - description: 技能描述
+#     - tone: 语气/风格
+#     - layer: 所属层次 (foundation/semantic/domain)
+#     - triggers: 触发器列表
+#       - type: 触发类型 (marker/keyword/complexity/domain)
+#       - value: 触发值
+#       - priority: 优先级 (数值越小优先级越高)
+#     - compatible_with: 兼容的技能列表
+#     - prompt_config: 提示词配置
+#     - enabled: 是否启用
+#     - metadata: 元数据
 
-version: "1.0"
+version: "2.0"
+
+layers:
+  foundation:
+    description: "基础层：标准格式、代码示例、教程结构"
+    compatible_layers:
+      - semantic
+      - domain
+  
+  semantic:
+    description: "语义层：概念解释、原理说明、类比分析"
+    compatible_layers:
+      - foundation
+      - domain
+  
+  domain:
+    description: "领域层：特定场景、专业领域、API文档"
+    compatible_layers:
+      - foundation
+      - semantic
 
 skills:
+  # ============ FOUNDATION 层技能 ============
+  
   standard_tutorial:
     description: "清晰、结构化的教程格式"
     tone: "professional"
+    layer: "foundation"
+    triggers:
+      - type: "keyword"
+        value: "教程"
+        priority: 5
+      - type: "keyword"
+        value: "入门"
+        priority: 5
+      - type: "keyword"
+        value: "学习"
+        priority: 6
+      - type: "keyword"
+        value: "教学"
+        priority: 6
+      - type: "keyword"
+        value: "说明"
+        priority: 7
+      - type: "keyword"
+        value: "指南"
+        priority: 6
+      - type: "keyword"
+        value: "步骤"
+        priority: 6
+      - type: "keyword"
+        value: "怎么"
+        priority: 7
+      - type: "keyword"
+        value: "如何"
+        priority: 7
     compatible_with:
       - visualization_analogy
       - warning_mode
+      - research_mode
+      - fallback_summary
     prompt_config:
       system_prompt: |
         你是一个专业的技术教程编写专家。你的任务是生成清晰、结构化的教程内容。
@@ -49,42 +104,140 @@ skills:
       category: "tutorial"
       difficulty: "beginner"
 
-  warning_mode:
-    description: "突出显示废弃/风险内容"
-    tone: "cautionary"
+  code_example:
+    description: "以代码示例为主体的教学模式"
+    tone: "technical"
+    layer: "foundation"
+    triggers:
+      - type: "keyword"
+        value: "代码"
+        priority: 3
+      - type: "keyword"
+        value: "示例"
+        priority: 3
+      - type: "keyword"
+        value: "实现"
+        priority: 4
+      - type: "complexity"
+        value: "low"
+        priority: 5
+      - type: "keyword"
+        value: "写法"
+        priority: 4
+      - type: "keyword"
+        value: "demo"
+        priority: 3
+      - type: "keyword"
+        value: "sample"
+        priority: 3
+      - type: "keyword"
+        value: "snippet"
+        priority: 3
+      - type: "keyword"
+        value: "片段"
+        priority: 4
     compatible_with:
       - standard_tutorial
-      - research_mode
+      - visualization_analogy
+      - api_documentation
     prompt_config:
       system_prompt: |
-        你是一个技术风险评估专家。你的任务是突出显示废弃功能、安全问题和潜在风险。
+        你是一个代码教学专家。你的任务是以代码示例为主体进行教学。
         要求：
-        - 使用警示性、谨慎的语调
-        - 明确指出废弃的功能和替代方案
-        - 强调安全问题和 FIXME 标记
-        - 提供迁移建议和最佳实践
-        - 所有警告必须基于检索内容中的标记
-        - 使用 ⚠️ 符号标记重要警告
+        - 代码优先，解释为辅
+        - 提供完整、可运行的代码示例
+        - 包含详细的代码注释
+        - 解释关键代码行
+        - 所有代码必须基于检索内容
       user_template: |
         步骤描述: {step_description}
         
-        检索到的内容（包含警告标记）:
+        检索到的代码内容:
         {retrieved_content}
         
-        请生成突出显示风险和废弃内容的剧本片段。
+        请生成以代码为主体的教学剧本。
       temperature: 0.6
-      max_tokens: 2000
+      max_tokens: 2500
     enabled: true
     metadata:
-      category: "safety"
-      priority: "high"
+      category: "education"
+      difficulty: "beginner"
 
+  fallback_summary:
+    description: "详情不可用时的高层概述"
+    tone: "neutral"
+    layer: "foundation"
+    triggers:
+      - type: "complexity"
+        value: "medium"
+        priority: 4
+    compatible_with:
+      - standard_tutorial
+      - research_mode
+      - warning_mode
+      - meme_style
+    prompt_config:
+      system_prompt: |
+        你是一个技术摘要专家，擅长提供高层次的概述。
+        要求：
+        - 使用中性、客观的语调
+        - 提供简洁的高层次概述
+        - 避免深入技术细节
+        - 关注核心概念和关键要点
+        - 承认详细信息不可用时的限制
+        - 基于可用的检索内容提供摘要
+      user_template: |
+        步骤描述: {step_description}
+        
+        可用的内容:
+        {retrieved_content}
+        
+        请提供高层次的概述性剧本片段。
+      temperature: 0.5
+      max_tokens: 1000
+    enabled: true
+    metadata:
+      category: "fallback"
+      auto_trigger: true
+
+  # ============ SEMANTIC 层技能 ============
+  
   visualization_analogy:
     description: "使用类比和可视化解释复杂概念"
     tone: "engaging"
+    layer: "semantic"
+    triggers:
+      - type: "complexity"
+        value: "high"
+        priority: 3
+      - type: "keyword"
+        value: "原理"
+        priority: 4
+      - type: "keyword"
+        value: "解释"
+        priority: 4
+      - type: "keyword"
+        value: "理解"
+        priority: 4
+      - type: "keyword"
+        value: "概念"
+        priority: 5
+      - type: "keyword"
+        value: "本质"
+        priority: 4
+      - type: "keyword"
+        value: "类比"
+        priority: 3
+      - type: "keyword"
+        value: "像"
+        priority: 6
+      - type: "keyword"
+        value: "比喻"
+        priority: 4
     compatible_with:
       - standard_tutorial
       - meme_style
+      - research_mode
     prompt_config:
       system_prompt: |
         你是一个善于用类比和可视化解释复杂概念的教育专家。
@@ -112,9 +265,43 @@ skills:
   research_mode:
     description: "承认信息缺口并建议研究方向"
     tone: "exploratory"
+    layer: "semantic"
+    triggers:
+      - type: "marker"
+        value: "TODO"
+        priority: 1
+      - type: "keyword"
+        value: "设计"
+        priority: 5
+      - type: "keyword"
+        value: "架构"
+        priority: 5
+      - type: "keyword"
+        value: "最佳实践"
+        priority: 5
+      - type: "keyword"
+        value: "考虑"
+        priority: 6
+      - type: "keyword"
+        value: "建议"
+        priority: 6
+      - type: "keyword"
+        value: "选择"
+        priority: 6
+      - type: "keyword"
+        value: "应该"
+        priority: 7
+      - type: "keyword"
+        value: "优缺点"
+        priority: 5
+      - type: "keyword"
+        value: "比较"
+        priority: 6
     compatible_with:
       - standard_tutorial
       - warning_mode
+      - visualization_analogy
+      - fallback_summary
     prompt_config:
       system_prompt: |
         你是一个研究顾问，擅长识别知识缺口并建议研究方向。
@@ -142,9 +329,21 @@ skills:
   meme_style:
     description: "轻松幽默的呈现方式"
     tone: "casual"
+    layer: "semantic"
+    triggers:
+      - type: "keyword"
+        value: "轻松"
+        priority: 6
+      - type: "keyword"
+        value: "有趣"
+        priority: 6
+      - type: "keyword"
+        value: "幽默"
+        priority: 7
     compatible_with:
       - visualization_analogy
       - fallback_summary
+      - standard_tutorial
     prompt_config:
       system_prompt: |
         你是一个技术内容创作者，擅长用轻松幽默的方式讲解技术。
@@ -169,53 +368,239 @@ skills:
       category: "entertainment"
       audience: "casual_learners"
 
-  fallback_summary:
-    description: "详情不可用时的高层概述"
-    tone: "neutral"
+  # ============ DOMAIN 层技能 ============
+  
+  warning_mode:
+    description: "突出显示废弃/风险内容"
+    tone: "cautionary"
+    layer: "domain"
+    triggers:
+      - type: "marker"
+        value: "@deprecated"
+        priority: 1
+      - type: "marker"
+        value: "FIXME"
+        priority: 1
+      - type: "marker"
+        value: "Security"
+        priority: 1
+      - type: "marker"
+        value: "WARNING"
+        priority: 2
     compatible_with:
       - standard_tutorial
       - research_mode
+      - fallback_summary
     prompt_config:
       system_prompt: |
-        你是一个技术摘要专家，擅长提供高层次的概述。
+        你是一个技术风险评估专家。你的任务是突出显示废弃功能、安全问题和潜在风险。
         要求：
-        - 使用中性、客观的语调
-        - 提供简洁的高层次概述
-        - 避免深入技术细节
-        - 关注核心概念和关键要点
-        - 承认详细信息不可用时的限制
-        - 基于可用的检索内容提供摘要
+        - 使用警示性、谨慎的语调
+        - 明确指出废弃的功能和替代方案
+        - 强调安全问题和 FIXME 标记
+        - 提供迁移建议和最佳实践
+        - 所有警告必须基于检索内容中的标记
+        - 使用 ⚠️ 符号标记重要警告
       user_template: |
         步骤描述: {step_description}
         
-        可用的内容:
+        检索到的内容（包含警告标记）:
         {retrieved_content}
         
-        请提供高层次的概述性剧本片段。
-      temperature: 0.5
-      max_tokens: 1000
+        请生成突出显示风险和废弃内容的剧本片段。
+      temperature: 0.6
+      max_tokens: 2000
     enabled: true
     metadata:
-      category: "fallback"
-      auto_trigger: true
+      category: "safety"
+      priority: "high"
 
-# Custom skills can be added below
-# Example:
-#
-# api_documentation:
-#   description: "API文档生成模式"
-#   tone: "technical"
-#   compatible_with:
-#     - standard_tutorial
-#   prompt_config:
-#     system_prompt: |
-#       你是API文档专家，专注于生成清晰的API说明...
-#     user_template: |
-#       API端点: {step_description}
-#       相关代码: {retrieved_content}
-#       请生成API文档。
-#     temperature: 0.5
-#     max_tokens: 1500
-#   enabled: true
-#   metadata:
-#     category: "documentation"
+  api_documentation:
+    description: "API接口文档生成模式"
+    tone: "technical"
+    layer: "domain"
+    triggers:
+      - type: "domain"
+        value: "api"
+        priority: 1
+      - type: "keyword"
+        value: "API"
+        priority: 2
+      - type: "keyword"
+        value: "接口"
+        priority: 2
+      - type: "keyword"
+        value: "端点"
+        priority: 3
+      - type: "keyword"
+        value: "参数"
+        priority: 3
+      - type: "keyword"
+        value: "请求"
+        priority: 4
+      - type: "keyword"
+        value: "响应"
+        priority: 4
+      - type: "keyword"
+        value: "HTTP"
+        priority: 3
+      - type: "keyword"
+        value: "REST"
+        priority: 3
+      - type: "keyword"
+        value: "SDK"
+        priority: 3
+      - type: "keyword"
+        value: "client"
+        priority: 4
+      - type: "keyword"
+        value: "调用"
+        priority: 4
+    compatible_with:
+      - standard_tutorial
+      - code_example
+      - warning_mode
+    prompt_config:
+      system_prompt: |
+        你是一个 API 文档专家，专注于生成清晰、准确的接口文档。
+        要求：
+        - 使用技术、精确的语调
+        - 详细说明每个 API 的用途、参数和返回值
+        - 提供请求和响应的示例
+        - 说明可能的错误码和异常处理
+        - 包含使用场景和最佳实践
+        - 所有信息必须基于检索内容
+      user_template: |
+        API 描述: {step_description}
+        
+        API 相关信息:
+        {retrieved_content}
+        
+        请生成专业的 API 文档片段。
+      temperature: 0.5
+      max_tokens: 2500
+    enabled: true
+    metadata:
+      category: "documentation"
+      difficulty: "intermediate"
+
+  security_audit:
+    description: "安全审计和风险评估模式"
+    tone: "cautionary"
+    layer: "domain"
+    triggers:
+      - type: "marker"
+        value: "Security"
+        priority: 1
+      - type: "marker"
+        value: "HACK"
+        priority: 1
+      - type: "keyword"
+        value: "安全"
+        priority: 2
+      - type: "keyword"
+        value: "漏洞"
+        priority: 2
+      - type: "keyword"
+        value: "权限"
+        priority: 3
+      - type: "keyword"
+        value: "认证"
+        priority: 3
+    compatible_with:
+      - warning_mode
+      - api_documentation
+      - standard_tutorial
+    prompt_config:
+      system_prompt: |
+        你是一个安全审计专家，专注于识别和评估安全风险。
+        要求：
+        - 使用严谨、专业的语调
+        - 详细分析潜在的安全威胁
+        - 提供修复建议和最佳安全实践
+        - 强调关键风险点
+        - 引用相关的安全标准和规范
+        - 所有分析必须基于检索内容
+      user_template: |
+        代码/配置描述: {step_description}
+        
+        安全相关信息:
+        {retrieved_content}
+        
+        请生成安全审计报告片段。
+      temperature: 0.5
+      max_tokens: 2000
+    enabled: true
+    metadata:
+      category: "security"
+      priority: "high"
+
+# 路由规则配置
+routing:
+  # 标记信号优先级（数值越小优先级越高）
+  marker_priorities:
+    "@deprecated": 1
+    "FIXME": 1
+    "Security": 1
+    "HACK": 1
+    "WARNING": 2
+    "TODO": 3
+    "BUG": 3
+    "NOTE": 5
+    "IMPORTANT": 5
+
+  # 复杂度阈值
+  complexity_thresholds:
+    high: 0.7
+    medium: 0.4
+    low: 0.2
+
+  # 领域映射
+  domain_mapping:
+    api: "api_documentation"
+    database: "api_documentation"
+    security: "security_audit"
+    frontend: "code_example"
+    backend: "api_documentation"
+    testing: "code_example"
+    devops: "code_example"
+
+# 兼容性规则
+compatibility:
+  # 层次间兼容性
+  layer_compatibility:
+    foundation:
+      - semantic
+      - domain
+    semantic:
+      - foundation
+      - domain
+    domain:
+      - foundation
+      - semantic
+
+  # 语气兼容性
+  tone_compatibility:
+    professional:
+      - "technical"
+      - "neutral"
+      - "cautionary"
+    casual:
+      - "engaging"
+      - "neutral"
+    technical:
+      - "professional"
+      - "neutral"
+    cautionary:
+      - "professional"
+      - "neutral"
+    engaging:
+      - "professional"
+      - "casual"
+    exploratory:
+      - "professional"
+      - "neutral"
+    neutral:
+      - "professional"
+      - "technical"
+      - "casual"

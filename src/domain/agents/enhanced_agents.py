@@ -5,7 +5,7 @@
 架构：
     1. RAGContentAnalyzer - 语义分析检索到的内容
     2. DynamicDirector - 做出方向调整决策
-    3. SkillRecommender - 根据内容分析推荐技能
+    3. SkillRecommender - 根据内容分析推荐技能（集成信号路由）
     4. StructuredScreenplayWriter - 生成结构化剧本格式
 
 核心功能：
@@ -13,6 +13,8 @@
     - 根据内容特征动态切换技能
     - 结构化剧本输出（场景、人物、对话）
     - 生成过程中的实时方向调整
+    - 混合路由策略（信号路由 + LLM 路由）
+    - 分层认知框架支持
 """
 
 import logging
@@ -24,6 +26,8 @@ import json
 
 from ...services.llm.service import LLMService
 from ...domain.models import SharedState, RetrievedDocument, OutlineStep
+from ...domain.skills import SKILLS, SkillLayer, check_skill_compatibility
+from ...domain.skill_router import SmartSkillRouter, ContentAnalysis as SignalContentAnalysis, default_smart_router
 from ...infrastructure.logging import get_agent_logger
 
 
@@ -592,24 +596,31 @@ class DynamicDirector:
 
 
 class SkillRecommender:
-    """Skill推荐器 - 基于上下文推荐最合适的Skill
+    """Skill推荐器 - 基于上下文和信号路由推荐最合适的Skill
     
     职责：
     1. 分析当前上下文（用户主题、检索内容）
-    2. 推荐最适合的Skill
-    3. 提供备选Skill列表
-    4. 解释推荐原因
+    2. 使用信号路由进行快速智能选择
+    3. 使用LLM进行复杂场景的补充推荐
+    4. 提供备选Skill列表
+    5. 解释推荐原因
+    6. 支持分层认知框架
     """
     
-    def __init__(self, llm_service: LLMService):
+    SIGNAL_CONFIDENCE_THRESHOLD = 0.7
+    
+    def __init__(self, llm_service: LLMService, signal_router: SmartSkillRouter = None):
         self.llm_service = llm_service
-        logger.info("SkillRecommender initialized")
+        self.signal_router = signal_router or default_smart_router
+        self._llm_fallback_enabled = True
+        logger.info("SkillRecommender initialized with hybrid routing (signal + LLM)")
     
     async def recommend(
         self,
         topic: str,
         context: str,
-        content_analysis: Optional[ContentAnalysis] = None
+        content_analysis: Optional[ContentAnalysis] = None,
+        current_skill: Optional[str] = None
     ) -> Dict[str, Any]:
         """推荐最合适的Skill
         
@@ -617,46 +628,95 @@ class SkillRecommender:
             topic: 用户主题
             context: 项目上下文
             content_analysis: 可选的内容分析结果
+            current_skill: 当前使用的技能（用于兼容性检查）
             
         Returns:
             Dict包含推荐结果和解释
         """
         logger.info(f"SkillRecommender: Analyzing topic={topic}")
         
-        # 构建推荐提示
-        recommend_prompt = self._build_recommend_prompt(topic, context, content_analysis)
+        combined_query = self._build_combined_query(topic, context, content_analysis)
         
-        try:
-            response = await self.llm_service.chat_completion(
-                messages=recommend_prompt,
-                task_type="high_performance",
-                temperature=0.3,
-                max_tokens=800
-            )
-            
-            result = self._parse_recommend_response(response)
-            
-            # 记录推荐日志
-            agent_logger.log_skill_recommendation(
+        signal_result = self._signal_based_selection(
+            query=combined_query,
+            current_skill=current_skill
+        )
+        
+        logger.info(
+            f"Signal routing result: skill={signal_result['skill']}, "
+            f"confidence={signal_result['confidence']:.2f}"
+        )
+        
+        if signal_result["confidence"] >= self.SIGNAL_CONFIDENCE_THRESHOLD:
+            return self._format_signal_result(signal_result)
+        
+        if self._llm_fallback_enabled:
+            logger.info("Signal confidence low, using LLM fallback")
+            llm_result = await self._llm_based_selection(
                 topic=topic,
-                recommended_skill=result["recommended_skill"],
-                confidence=result["confidence"],
-                reasoning=result["reasoning"]
+                context=context,
+                content_analysis=content_analysis,
+                signal_context=signal_result
             )
-            
-            return result
-            
-        except Exception as e:
-            logger.error(f"Skill recommendation failed: {e}")
-            return self._fallback_recommendation(topic)
+            return self._merge_results(signal_result, llm_result)
+        
+        return self._format_signal_result(signal_result)
     
-    def _build_recommend_prompt(
+    def _build_combined_query(
         self,
         topic: str,
         context: str,
         content_analysis: Optional[ContentAnalysis]
-    ) -> List[Dict[str, str]]:
-        """构建推荐提示"""
+    ) -> str:
+        """构建组合查询"""
+        parts = [topic]
+        
+        if context:
+            parts.append(context)
+        
+        if content_analysis:
+            if content_analysis.key_concepts:
+                parts.extend(content_analysis.key_concepts[:5])
+            if content_analysis.warnings:
+                parts.extend(content_analysis.warnings[:3])
+            if content_analysis.content_types:
+                parts.extend([ct.value for ct in content_analysis.content_types])
+        
+        return " ".join(parts)
+    
+    def _signal_based_selection(
+        self,
+        query: str,
+        current_skill: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """基于信号的技能选择"""
+        result = self.signal_router.select_skill(
+            content=query,
+            current_skill=current_skill
+        )
+        
+        alternatives = []
+        for alt in result.get("alternatives", [])[:3]:
+            alternatives.append(alt.get("skill", alt))
+        
+        return {
+            "skill": result["selected_skill"],
+            "confidence": result["confidence"],
+            "reasoning": result.get("reasoning", []),
+            "signals": result.get("signals", []),
+            "alternatives": alternatives,
+            "layer_transition": result.get("layer_transition"),
+            "source": "signal_router"
+        }
+    
+    async def _llm_based_selection(
+        self,
+        topic: str,
+        context: str,
+        content_analysis: Optional[ContentAnalysis],
+        signal_context: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """基于LLM的技能选择"""
         analysis_info = ""
         if content_analysis:
             analysis_info = f"""
@@ -667,26 +727,46 @@ class SkillRecommender:
 - 警告信息: {content_analysis.warnings}
 """
         
-        return [
+        signal_info = ""
+        if signal_context:
+            signal_info = f"""
+信号路由结果:
+- 推荐技能: {signal_context.get('skill', 'N/A')}
+- 置信度: {signal_context.get('confidence', 0):.2f}
+- 检测到的信号: {signal_context.get('signals', [])}
+"""
+
+        prompt = [
             {
                 "role": "system",
-                "content": """你是一个Skill推荐专家。根据用户主题和内容分析，推荐最合适的Skill。
+                "content": f"""你是一个Skill推荐专家。根据用户主题、内容分析和信号路由结果，推荐最合适的Skill。
 
-可用的Skill:
-1. standard_tutorial - 标准教程风格，适合大多数技术讲解
-2. warning_mode - 警告模式，适合讲解危险操作或注意事项
-3. visualization_analogy - 可视化类比，适合复杂概念的解释
-4. research_mode - 研究模式，适合深入探索未知领域
-5. meme_style - 表情包风格，适合轻松有趣的内容
+技能系统说明:
+- standard_tutorial: 标准教程风格，适合大多数技术讲解
+- warning_mode: 警告模式，适合讲解危险操作或注意事项
+- visualization_analogy: 可视化类比，适合复杂概念的解释
+- research_mode: 研究模式，适合深入探索未知领域
+- meme_style: 表情包风格，适合轻松有趣的内容
+- code_example: 代码示例，适合编程实践
+- api_documentation: API文档，适合接口说明
+- security_audit: 安全审计，适合安全相关内容
+
+分层认知框架:
+- foundation层: 基础概念和教程 (standard_tutorial, code_example)
+- semantic层: 语义理解和分析 (visualization_analogy, research_mode)
+- domain层: 领域特定 (warning_mode, api_documentation, security_audit)
+
+如果信号路由置信度较低，请结合上述信息给出更准确的推荐。
 
 推荐格式（JSON）：
 ```json
-{
+{{
     "recommended_skill": "visualization_analogy",
     "confidence": 0.85,
     "reasoning": "内容涉及复杂概念，需要使用类比来帮助理解",
-    "alternatives": ["standard_tutorial", "research_mode"]
-}
+    "alternatives": ["standard_tutorial", "research_mode"],
+    "layer": "semantic"
+}}
 ```"""
             },
             {
@@ -697,9 +777,101 @@ class SkillRecommender:
 
 {analysis_info}
 
-请推荐最合适的Skill。"""
+{signal_info}
+
+请结合以上信息，推荐最合适的Skill。"""
             }
         ]
+        
+        try:
+            response = await self.llm_service.chat_completion(
+                messages=prompt,
+                task_type="high_performance",
+                temperature=0.3,
+                max_tokens=800
+            )
+            
+            result = self._parse_recommend_response(response)
+            result["source"] = "llm_fallback"
+            
+            return result
+            
+        except Exception as e:
+            logger.error(f"LLM recommendation failed: {e}")
+            return {"source": "llm_fallback_failed"}
+    
+    def _merge_results(
+        self,
+        signal_result: Dict[str, Any],
+        llm_result: Dict[str, Any]
+    ) -> Dict[str, Any]:
+        """合并信号和LLM结果"""
+        if llm_result.get("source") == "llm_fallback_failed":
+            return self._format_signal_result(signal_result)
+        
+        llm_skill = llm_result.get("recommended_skill", "")
+        llm_confidence = llm_result.get("confidence", 0)
+        
+        signal_skill = signal_result.get("skill", "")
+        
+        if signal_skill == llm_skill:
+            merged_confidence = min(
+                signal_result["confidence"] * 0.6 + llm_confidence * 0.4,
+                1.0
+            )
+            reasoning = signal_result.get("reasoning", []) + llm_result.get("reasoning", [])
+        else:
+            if llm_confidence > signal_result["confidence"]:
+                merged_skill = llm_skill
+                merged_confidence = llm_confidence
+                reasoning = [f"LLM推荐: {llm_result.get('reasoning', '')}"] + signal_result.get("reasoning", [])
+            else:
+                merged_skill = signal_skill
+                merged_confidence = signal_result["confidence"]
+                reasoning = signal_result.get("reasoning", []) + [f"LLM建议: {llm_result.get('reasoning', '')}"]
+        
+        alternatives = list(set(
+            (signal_result.get("alternatives", []) or []) +
+            (llm_result.get("alternatives", []) or [])
+        ))
+        
+        return {
+            "skill": merged_skill,
+            "confidence": merged_confidence,
+            "reasoning": reasoning[:5],
+            "signals": signal_result.get("signals", []),
+            "alternatives": alternatives[:3],
+            "layer_transition": signal_result.get("layer_transition"),
+            "source": "hybrid",
+            "signal_confidence": signal_result["confidence"],
+            "llm_confidence": llm_confidence
+        }
+    
+    def _format_signal_result(self, signal_result: Dict[str, Any]) -> Dict[str, Any]:
+        """格式化信号路由结果"""
+        reasoning = signal_result.get("reasoning", [])
+        if isinstance(reasoning, list):
+            reasoning = reasoning[:5]
+        elif isinstance(reasoning, str):
+            reasoning = [reasoning]
+        else:
+            reasoning = []
+        
+        layer_info = ""
+        layer_transition = signal_result.get("layer_transition")
+        if layer_transition:
+            layer_info = f" ({layer_transition.get('from', '?')} -> {layer_transition.get('to', '?')})"
+        
+        return {
+            "skill": signal_result.get("skill", "standard_tutorial"),
+            "confidence": signal_result.get("confidence", 0.5),
+            "reasoning": reasoning,
+            "signals": signal_result.get("signals", []),
+            "alternatives": signal_result.get("alternatives", [])[:3],
+            "layer_transition": layer_transition,
+            "source": "signal_router",
+            "layer_info": layer_info
+        }
     
     def _parse_recommend_response(self, response: str) -> Dict[str, Any]:
         """解析推荐响应"""
@@ -716,37 +888,61 @@ class SkillRecommender:
                 "recommended_skill": data.get("recommended_skill", "standard_tutorial"),
                 "confidence": data.get("confidence", 0.5),
                 "reasoning": data.get("reasoning", ""),
-                "alternatives": data.get("alternatives", ["standard_tutorial"])
+                "alternatives": data.get("alternatives", ["standard_tutorial"]),
+                "layer": data.get("layer", "foundation")
             }
         except Exception as e:
             logger.error(f"Failed to parse recommendation: {e}")
-            return self._fallback_recommendation("")
+            return {
+                "recommended_skill": "standard_tutorial",
+                "confidence": 0.3,
+                "reasoning": "解析失败，使用默认推荐",
+                "alternatives": ["standard_tutorial"],
+                "layer": "foundation"
+            }
     
-    def _fallback_recommendation(self, topic: str) -> Dict[str, Any]:
-        """回退推荐"""
-        topic_lower = topic.lower()
+    def get_skill_info(self, skill_name: str) -> Dict[str, Any]:
+        """获取技能详细信息"""
+        if skill_name not in SKILLS:
+            return {"error": f"Unknown skill: {skill_name}"}
         
-        if "warning" in topic_lower or "安全" in topic_lower or "security" in topic_lower:
-            return {
-                "recommended_skill": "warning_mode",
-                "confidence": 0.7,
-                "reasoning": "基于主题关键词推断需要警告模式",
-                "alternatives": ["standard_tutorial"]
-            }
-        if "async" in topic_lower or "并发" in topic_lower or "parallel" in topic_lower:
-            return {
-                "recommended_skill": "visualization_analogy",
-                "confidence": 0.6,
-                "reasoning": "基于主题关键词推断需要可视化类比",
-                "alternatives": ["standard_tutorial", "research_mode"]
-            }
+        config = SKILLS[skill_name]
+        return {
+            "name": skill_name,
+            "description": config.description,
+            "tone": config.tone,
+            "layer": config.layer.value,
+            "compatible_with": config.compatible_with,
+            "triggers": [
+                {"type": t.type, "value": t.value, "priority": t.priority}
+                for t in config.triggers
+            ] if config.triggers else []
+        }
+    
+    def check_skill_compatibility(
+        self,
+        current_skill: str,
+        target_skill: str
+    ) -> Dict[str, Any]:
+        """检查技能兼容性"""
+        is_compatible = check_skill_compatibility(current_skill, target_skill)
         
         return {
-            "recommended_skill": "standard_tutorial",
-            "confidence": 0.5,
-            "reasoning": "使用默认推荐",
-            "alternatives": ["warning_mode", "visualization_analogy"]
+            "current_skill": current_skill,
+            "target_skill": target_skill,
+            "compatible": is_compatible,
+            "current_layer": SKILLS.get(current_skill, {}).layer.value if current_skill in SKILLS else None,
+            "target_layer": SKILLS.get(target_skill, {}).layer.value if target_skill in SKILLS else None
         }
+    
+    def get_layer_distribution(self) -> Dict[str, int]:
+        """获取层次分布统计"""
+        distribution = {"foundation": 0, "semantic": 0, "domain": 0}
+        for skill_name, config in SKILLS.items():
+            layer = config.layer.value
+            if layer in distribution:
+                distribution[layer] += 1
+        return distribution
 
 
 class StructuredScreenplayWriter:
