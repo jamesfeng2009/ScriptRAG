@@ -36,6 +36,36 @@ from typing import (
 
 
 # ============================================================================
+# Task Stack 集成
+# ============================================================================
+
+def task_stack_reducer(current: Optional[Dict], new: Optional[Dict]) -> Dict:
+    """任务堆栈 Reducer
+    
+    功能：
+    1. 支持初始化空堆栈
+    2. 支持替换整个堆栈
+    3. 保持与 GlobalState 的兼容性
+    
+    设计考量：
+    - 使用 Optional 类型支持延迟初始化
+    - 自动创建默认配置（max_depth=3）
+    
+    Args:
+        current: 当前堆栈
+        new: 新堆栈
+        
+    Returns:
+        合并后的堆栈
+    """
+    if current is None:
+        return new or {"stack": [], "max_depth": 3}
+    if new is None:
+        return current
+    return new
+
+
+# ============================================================================
 # 自定义 Reducer
 # ============================================================================
 
@@ -221,6 +251,11 @@ class GlobalState(TypedDict):
     # 8. 最终输出 (Output - Overwrite)
     # ============================================================
     final_screenplay: Annotated[Optional[str], overwrite_reducer]
+    
+    # ============================================================
+    # 9. 任务堆栈 (Task Stack - TaskStack Reducer)
+    # ============================================================
+    task_stack: Annotated[Optional[Dict[str, Any]], task_stack_reducer]
 
 
 class InitialState(TypedDict):
@@ -307,6 +342,7 @@ def create_initial_state(
         "execution_log": [],
         "error_flag": None,
         "retry_count": 0,
+        "task_stack": None,
     }
 
 

@@ -77,7 +77,9 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
         enable_dynamic_adjustment: bool = False,
         session_manager: Optional[SessionManager] = None,
         auto_save_sessions: bool = False,
-        save_interval_steps: int = 5
+        save_interval_steps: int = 5,
+        enable_task_stack: bool = False,
+        max_task_depth: int = 3
     ):
         """
         初始化工作流编排器
@@ -92,6 +94,8 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             session_manager: 会话管理器实例（可选，用于断点续传）
             auto_save_sessions: 是否自动保存会话状态
             save_interval_steps: 自动保存间隔（步数）
+            enable_task_stack: 是否启用 Task Stack（用于嵌套任务管理，默认关闭）
+            max_task_depth: Task Stack 最大嵌套深度
         """
         self.llm_service = llm_service
         self.retrieval_service = retrieval_service
@@ -102,13 +106,16 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
         self.session_manager = session_manager
         self.auto_save_sessions = auto_save_sessions
         self.save_interval_steps = save_interval_steps
+        self.enable_task_stack = enable_task_stack
         
         self.node_factory = NodeFactory(
             llm_service=llm_service,
             retrieval_service=retrieval_service,
             parser_service=parser_service,
             summarization_service=summarization_service,
-            workspace_id=workspace_id
+            workspace_id=workspace_id,
+            use_task_stack=enable_task_stack,
+            max_task_depth=max_task_depth
         )
         
         super().__init__(self.node_factory)
@@ -125,7 +132,11 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
 
         self.graph = self._build_graph()
 
-        logger.info(f"WorkflowOrchestrator 初始化完成 (dynamic_adjustment={enable_dynamic_adjustment})")
+        logger.info(
+            f"WorkflowOrchestrator 初始化完成 "
+            f"(dynamic_adjustment={enable_dynamic_adjustment}, "
+            f"task_stack={enable_task_stack}, max_depth={max_task_depth})"
+        )
     
     def _build_graph(self) -> StateGraph:
         """

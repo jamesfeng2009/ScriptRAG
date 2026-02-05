@@ -8,6 +8,7 @@
 - **RAG 混合检索**: 结合向量搜索和关键词匹配的智能检索
 - **多 LLM 提供商支持**: OpenAI、通义千问、MiniMax、智谱 GLM，支持自动回退
 - **动态 Skill 系统**: 六种生成风格（标准教程、警告模式、可视化类比、研究模式、轻松风格、回退摘要）
+- **Task Stack 任务管理**: 支持递归任务分解和嵌套任务上下文管理，可配置最大深度
 - **事实检查机制**: 幻觉检测和防御，确保内容基于真实来源
 - **商业化就绪**: 企业级分层架构，支持多租户和水平扩展
 - **优雅降级**: 完善的错误处理和超时保护机制
@@ -106,7 +107,7 @@ src/
 │   └── orchestrator.py   # LangGraph 状态机管理
 ├── domain/              # 业务逻辑层：智能体、模型、技能
 │   ├── agents/          # 六大智能体实现
-│   │   ├── planner.py          # 规划器：生成初始大纲
+│   │   ├── task_aware_planner.py  # 规划器：生成初始大纲（支持 Task Stack）
 │   │   ├── navigator.py        # 导航器：RAG 检索
 │   │   ├── director.py         # 导演：评估和决策
 │   │   ├── pivot_manager.py    # 转向管理器：修正大纲
@@ -114,7 +115,8 @@ src/
 │   │   ├── compiler.py         # 编译器：整合最终剧本
 │   │   ├── fact_checker.py     # 事实检查器：验证内容
 │   │   └── retry_protection.py # 重试保护：防止无限循环
-│   ├── models.py        # 数据模型（SharedState、OutlineStep 等）
+│   ├── task_stack.py      # Task Stack：嵌套任务管理
+│   ├── models.py        # 数据模型（GlobalState、OutlineStep 等）
 │   └── skills.py        # Skill 系统配置
 ├── services/            # 服务层：外部服务集成
 │   ├── llm/            # LLM 服务
@@ -296,6 +298,64 @@ def test_state_consistency(state):
 - 状态一致性、混合检索完整性、幻觉检测
 - 重试限制执行、Skill 兼容性、优雅降级
 - 空检索无幻觉、最大重试边界、Token 阈值边界
+
+### 8. Task Stack 任务管理
+
+规划器智能体支持可选的 Task Stack 功能，用于管理嵌套任务和递归任务分解：
+
+```python
+# 启用 Task Stack
+factory = NodeFactory(
+    llm_service=llm_service,
+    retrieval_service=retrieval_service,
+    parser_service=parser_service,
+    summarization_service=summarization_service,
+    use_task_stack=True,      # 启用 Task Stack
+    max_task_depth=5         # 最大嵌套深度（默认 3）
+)
+
+# 或通过 Orchestrator 配置
+orchestrator = WorkflowOrchestrator(
+    llm_service=llm_service,
+    enable_task_stack=True,
+    max_task_depth=5
+)
+```
+
+**Task Stack 核心功能**：
+- **嵌套任务管理**：支持递归分解复杂任务为子任务
+- **上下文隔离**：每个任务拥有独立的上下文数据
+- **深度限制**：可配置的最大嵌套深度防止无限递归
+- **任务追溯**：支持获取当前任务、父任务、任务深度等信息
+
+**TaskStackManager API**：
+```python
+# 创建子任务
+state = planner.create_subtask(state, subtask_data)
+
+# 完成子任务（恢复父任务上下文）
+state, popped_context = planner.complete_subtask(state)
+
+# 获取当前任务
+current_task = planner.get_current_task(state)
+
+# 检查是否有父任务
+has_parent = planner.has_parent_task(state)
+
+# 获取当前深度
+depth = planner.get_task_depth(state)
+```
+
+**任务上下文结构**：
+```python
+TaskContext {
+    task_id: str           # 唯一任务标识
+    parent_id: str | None  # 父任务 ID
+    depth: int            # 当前深度（0 为主任务）
+    creation_timestamp: datetime
+    task_data: Dict[str, Any]  # 任务相关数据
+}
+```
 
 ## 技术栈
 

@@ -7,6 +7,7 @@ v2.1 风格节点函数（LangGraph Native）
 - 返回 Diff (Dict[str, Any])，LangGraph 自动合并
 - 使用 Reducer 实现追加保护
 - 完整的错误处理（使用 langgraph_error_handler）
+- 可选 Task Stack 支持（用于嵌套任务管理）
 
 日志规范：
     所有节点必须：
@@ -19,11 +20,13 @@ v2.1 风格节点函数（LangGraph Native）
     from src.domain.state_types import GlobalState
     from src.domain.agents.node_factory import NodeFactory, create_node_factory
     
-    factory = create_node_factory(
+    factory = NodeFactory(
         llm_service=llm_service,
         retrieval_service=retrieval_service,
         parser_service=parser_service,
-        summarization_service=summarization_service
+        summarization_service=summarization_service,
+        use_task_stack=True,           # 可选：启用 Task Stack
+        max_task_depth=3               # 可选：最大嵌套深度
     )
     
     workflow.add_node("planner", factory.planner_node)
@@ -34,6 +37,9 @@ v2.1 风格节点函数（LangGraph Native）
 
 错误处理文档：
     src/infrastructure/langgraph_error_handler.py
+
+Task Stack 文档：
+    src/domain/task_stack.py
 """
 
 import logging
@@ -48,6 +54,7 @@ from ..state_types import (
     create_success_log,
     get_error_message,
 )
+from ..task_stack import TaskStackManager, TaskContext
 from ...services.llm.service import LLMService
 from ...services.retrieval_service import RetrievalService
 from ...services.parser.tree_sitter_parser import IParserService
@@ -73,13 +80,16 @@ class NodeFactory:
     """节点函数工厂
     
     用于创建带有依赖注入的 v2.1 风格节点函数。
+    支持可选的 Task Stack 用于嵌套任务管理。
     
     使用示例：
         factory = NodeFactory(
             llm_service=llm_service,
             retrieval_service=retrieval_service,
             parser_service=parser_service,
-            summarization_service=summarization_service
+            summarization_service=summarization_service,
+            use_task_stack=True,           # 可选：启用 Task Stack
+            max_task_depth=3               # 可选：最大嵌套深度
         )
         
         workflow.add_node("planner", factory.planner_node)
@@ -92,14 +102,28 @@ class NodeFactory:
         retrieval_service: RetrievalService,
         parser_service: IParserService,
         summarization_service: SummarizationService,
-        workspace_id: str = ""
+        workspace_id: str = "",
+        use_task_stack: bool = False,
+        max_task_depth: int = 3
     ):
         self.llm_service = llm_service
         self.retrieval_service = retrieval_service
         self.parser_service = parser_service
         self.summarization_service = summarization_service
         self.workspace_id = workspace_id
-
+        
+        self.use_task_stack = use_task_stack
+        self.max_task_depth = max_task_depth
+        
+        if use_task_stack:
+            self.stack_manager = TaskStackManager(max_depth=max_task_depth)
+            logger.info(
+                f"NodeFactory initialized with Task Stack: "
+                f"use_task_stack=True, max_depth={max_task_depth}"
+            )
+        else:
+            self.stack_manager = None
+        
         self.fact_checker_context = FactCheckerMinimalContext()
     
     # =========================================================================
@@ -120,11 +144,13 @@ class NodeFactory:
         职责：
         - 分析用户主题和项目上下文
         - 生成包含 5-10 步的结构化大纲
+        - 可选创建 Task Stack 任务上下文
         - 返回 outline 更新（覆盖模式）
         
         数据流向：
         - 输入：user_topic, project_context
         - 输出：outline (Overwrite)
+        - 可选：task_stack（如果启用 Task Stack）
         
         Returns:
             Dict[str, Any]: Diff 更新
@@ -147,22 +173,36 @@ class NodeFactory:
             
             outline = await self._generate_outline_async(user_topic, project_context)
             
-            return {
+            result = {
                 "outline": outline,
                 "execution_log": create_success_log(
                     agent="planner",
                     action="outline_generated",
                     details={
                         "topic": user_topic,
-                        "step_count": len(outline)
+                        "step_count": len(outline),
+                        "use_task_stack": self.use_task_stack
                     }
                 )
             }
+            
+            if self.use_task_stack and self.stack_manager:
+                main_task = self._create_main_task_context(
+                    user_topic, project_context, outline
+                )
+                result = self.stack_manager.push(result, main_task)
+                logger.info(
+                    f"Task Stack: Created main task {main_task['task_id']} "
+                    f"(depth: {main_task['depth']})"
+                )
+            
+            return result
         
         except Exception as e:
             logger.error(f"Planner node error: {str(e)}", exc_info=True)
             fallback_outline = self._create_fallback_outline(user_topic)
-            return {
+            
+            result = {
                 "outline": fallback_outline,
                 "execution_log": create_error_log(
                     agent="planner",
@@ -171,6 +211,37 @@ class NodeFactory:
                     details={"topic": user_topic}
                 )
             }
+            
+            if self.use_task_stack and self.stack_manager:
+                main_task = self._create_main_task_context(
+                    user_topic, "", fallback_outline
+                )
+                result = self.stack_manager.push(result, main_task)
+            
+            return result
+    
+    def _create_main_task_context(
+        self,
+        user_topic: str,
+        project_context: str,
+        outline: List[Dict[str, Any]]
+    ) -> TaskContext:
+        """创建主任务上下文"""
+        import uuid
+        from datetime import datetime
+        
+        return TaskContext(
+            task_id=f"main_{uuid.uuid4().hex[:8]}",
+            parent_id=None,
+            depth=0,
+            creation_timestamp=datetime.now(),
+            task_data={
+                "user_topic": user_topic,
+                "project_context": project_context,
+                "outline": outline,
+                "current_step_index": 0
+            }
+        )
     
     async def _generate_outline_async(
         self,
