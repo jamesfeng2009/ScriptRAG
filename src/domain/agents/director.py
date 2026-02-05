@@ -6,6 +6,7 @@
 3. 做出决策（批准/转向）
 4. 推荐技能切换
 5. 必要时触发转向
+6. 智能跳过优化（基于质量和复杂度）
 """
 
 import logging
@@ -13,6 +14,12 @@ from typing import List, Dict, Any, Optional, Tuple
 
 from ..models import SharedState, RetrievedDocument, OutlineStep
 from ...services.llm.service import LLMService
+from ...services.optimization import (
+    QualityAssessor,
+    ComplexityBasedSkipper,
+    CacheBasedSkipper,
+    SmartSkipOptimizer
+)
 from ...infrastructure.logging import get_agent_logger
 
 
@@ -230,24 +237,76 @@ async def evaluate_and_decide(
     - 检测冲突并触发转向
     - 评估复杂度并推荐 Skill 切换
     - 在状态中设置 pivot_triggered 标志和 pivot_reason
-    
+    - 集成智能跳过优化
+
     Args:
         state: 共享状态
         llm_service: LLM 服务
-        
+
     Returns:
         更新后的共享状态
     """
     try:
-        # 获取当前步骤
         current_step = state.get_current_step()
         if not current_step:
             logger.warning("No current step to evaluate")
             return state
-        
+
         logger.info(f"Director: Evaluating step {current_step.step_id}: {current_step.description}")
-        
-        # 1. 检测冲突
+
+        skip_optimizer = SmartSkipOptimizer(
+            enable_quality_skip=True,
+            enable_complexity_skip=True,
+            enable_cache_skip=True
+        )
+
+        if state.retrieved_docs:
+            content_for_quality = str(state.retrieved_docs[0].content)[:500]
+
+            quality_decisions = skip_optimizer.evaluate_skip_decision(
+                content=content_for_quality,
+                complexity_score=None,
+                cache_key=f"director:{current_step.step_id}",
+                query=current_step.description
+            )
+
+            overall_decision = skip_optimizer.get_overall_skip_decision(quality_decisions)
+
+            if overall_decision.should_skip:
+                logger.info(
+                    f"Director: Skipping detailed evaluation - "
+                    f"reason={overall_decision.reason}, "
+                    f"confidence={overall_decision.confidence:.2f}"
+                )
+
+                state.execution_log.append({
+                    'agent': 'director',
+                    'action': 'smart_skip',
+                    'skip_reason': overall_decision.reason,
+                    'confidence': overall_decision.confidence,
+                    'details': overall_decision.details
+                })
+
+                quality_assessor = QualityAssessor()
+                quality_score = quality_assessor.assess_quality(content_for_quality)
+
+                if quality_score >= 0.9:
+                    state.pivot_triggered = False
+                    state.add_log_entry(
+                        agent_name="director",
+                        action="approved_high_quality",
+                        details={
+                            "step_id": current_step.step_id,
+                            "quality_score": quality_score,
+                            "skip_reason": overall_decision.reason
+                        }
+                    )
+                    logger.info(
+                        f"Director: High quality content (score={quality_score:.2f}), "
+                        f"approved without detailed check"
+                    )
+                    return state
+
         has_conflict, conflict_type, conflict_details = detect_conflicts(
             current_step=current_step,
             retrieved_docs=state.retrieved_docs
