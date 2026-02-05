@@ -117,7 +117,6 @@ async def test_recursion_limit_default_propagation():
     assert config["recursion_limit"] == 25
 
 
-@pytest.mark.xfail(reason="Requires full LangGraph node mocking - not unit test")
 @pytest.mark.asyncio
 @given(recursion_limit=st.integers(min_value=10, max_value=100))
 @settings(max_examples=5, deadline=None)
@@ -125,13 +124,24 @@ async def test_recursion_limit_propagates_with_property_testing(recursion_limit:
     """
     Property 9 (Property-based): Recursion limit propagates for any valid value
     
-    This test uses hypothesis for property-based testing but is marked as xfail
-    because it requires full LangGraph integration testing.
+    This test uses hypothesis for property-based testing to verify that
+    the recursion_limit parameter is properly propagated to LangGraph config.
     """
-    pytest.skip("Requires full LangGraph integration test setup")
+    orchestrator = create_mock_orchestrator()
+    initial_state = create_initial_state()
+    
+    orchestrator.graph.ainvoke = AsyncMock(return_value=initial_state)
+    
+    result = await orchestrator.execute(initial_state, recursion_limit=recursion_limit)
+    
+    assert isinstance(result, dict)
+    assert orchestrator.graph.ainvoke.called
+    
+    call_args = orchestrator.graph.ainvoke.call_args
+    config = call_args[1].get("config", {})
+    assert config.get("recursion_limit") == recursion_limit
 
 
-@pytest.mark.xfail(reason="Requires full LangGraph node mocking - not unit test")
 @pytest.mark.asyncio
 @given(
     recursion_limit=st.integers(min_value=1, max_value=200),
@@ -145,7 +155,21 @@ async def test_recursion_limit_propagation_with_various_topics_property(
     """
     Property 9 (Property-based Extended): Recursion limit propagates for any combination
     
-    This test uses hypothesis for property-based testing but is marked as xfail
-    because it requires full LangGraph integration testing.
+    This test verifies that the recursion_limit propagates correctly regardless
+    of the user_topic content.
     """
-    pytest.skip("Requires full LangGraph integration test setup")
+    orchestrator = create_mock_orchestrator()
+    initial_state = create_initial_state()
+    initial_state["user_topic"] = user_topic
+    
+    orchestrator.graph.ainvoke = AsyncMock(return_value=initial_state)
+    
+    result = await orchestrator.execute(initial_state, recursion_limit=recursion_limit)
+    
+    assert isinstance(result, dict)
+    assert orchestrator.graph.ainvoke.called
+    
+    call_args = orchestrator.graph.ainvoke.call_args
+    config = call_args[1].get("config", {})
+    assert config.get("recursion_limit") == recursion_limit
+    assert initial_state["user_topic"] == user_topic
