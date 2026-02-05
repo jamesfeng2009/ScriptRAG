@@ -147,6 +147,9 @@ class SkillDatabaseService:
 
     async def get(self, skill_name: str) -> Optional[SkillRecord]:
         """获取技能"""
+        if self._pool is None:
+            await self.connect()
+        
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow("""
                 SELECT skill_name, description, tone, compatible_with,
@@ -171,6 +174,9 @@ class SkillDatabaseService:
 
     async def get_all(self) -> List[SkillRecord]:
         """获取所有技能"""
+        if self._pool is None:
+            await self.connect()
+        
         async with self._pool.acquire() as conn:
             rows = await conn.fetch("""
                 SELECT skill_name, description, tone, compatible_with,

@@ -257,18 +257,48 @@ class LLMService:
     
     def _initialize_adapters(self):
         """初始化所有配置的适配器"""
+        def is_valid_api_key(key: str, provider: str = None) -> bool:
+            if not key:
+                return False
+            
+            key_lower = key.lower()
+            invalid_patterns = ["your-", "****", "test-", "placeholder", "<your-", "YOUR_API_KEY"]
+            
+            for pattern in invalid_patterns:
+                if pattern.lower() in key_lower:
+                    return False
+            
+            if provider == "glm" or "glm" in key_lower or "zhipu" in key_lower:
+                return len(key) >= 10
+            
+            if key_lower.startswith("sk-") and len(key) >= 20:
+                return True
+            
+            return False
+        
         for provider_name, provider_config_dict in self.config["providers"].items():
             adapter_class = self.ADAPTER_CLASSES.get(provider_name)
-            if adapter_class:
-                try:
-                    provider_config = LLMProviderConfig(**provider_config_dict)
-                    model_mapping_dict = self.config["model_mappings"][provider_name]
-                    model_mapping = ModelMapping(**model_mapping_dict)
-                    
-                    self.adapters[provider_name] = adapter_class(provider_config, model_mapping)
-                    logger.info(f"Initialized adapter for provider: {provider_name}")
-                except Exception as e:
-                    logger.error(f"Failed to initialize adapter for {provider_name}: {str(e)}")
+            if not adapter_class:
+                continue
+            
+            api_key = provider_config_dict.get("api_key")
+            if not is_valid_api_key(api_key, provider_name):
+                masked_key = str(api_key)[:10] + "..." if api_key else "None"
+                logger.info(f"Skipping provider {provider_name}: no valid API key configured (key starts with: {masked_key})")
+                continue
+            
+            try:
+                provider_config = LLMProviderConfig(**provider_config_dict)
+                model_mapping_dict = self.config["model_mappings"][provider_name]
+                model_mapping = ModelMapping(**model_mapping_dict)
+                
+                self.adapters[provider_name] = adapter_class(provider_config, model_mapping)
+                logger.info(f"Initialized adapter for provider: {provider_name}")
+            except Exception as e:
+                logger.error(f"Failed to initialize adapter for {provider_name}: {str(e)}")
+        
+        if not self.adapters:
+            logger.warning("No valid LLM adapters initialized! Please check your API keys.")
     
     def _estimate_tokens(self, messages: List[Dict[str, str]]) -> int:
         """估算消息的 token 数量

@@ -173,7 +173,7 @@ DATA_OWNERSHIP_CONFIG: Dict[str, FieldConfig] = {
     ),
     "error_flag": FieldConfig(
         owner=DataOwner.SYSTEM,
-        write_policy=WritePolicy.OWNER_ONLY,
+        write_policy=WritePolicy.SHARED_WRITE,
         required_by={"*"},
         sensitivity=ContextSensitivity.LOW,
         description="错误标记"

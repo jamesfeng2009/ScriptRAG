@@ -88,6 +88,7 @@ class Task(Base):
     rag_enable_reranking = Column(Boolean, default=True)
     error = Column(Text)
     request_data = Column(JSON, default={})
+    chat_session_id = Column(String(50), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

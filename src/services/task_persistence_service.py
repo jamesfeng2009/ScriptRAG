@@ -36,6 +36,7 @@ class TaskRecord:
         direction_changes: Optional[List[Dict[str, Any]]] = None,
         error: Optional[str] = None,
         request_data: Optional[Dict[str, Any]] = None,
+        chat_session_id: Optional[str] = None,
         created_at: Optional[datetime] = None,
         updated_at: Optional[datetime] = None
     ):
@@ -50,6 +51,7 @@ class TaskRecord:
         self.direction_changes = direction_changes or []
         self.error = error
         self.request_data = request_data or {}
+        self.chat_session_id = chat_session_id
         self.created_at = created_at or datetime.now()
         self.updated_at = updated_at or datetime.now()
     
@@ -67,6 +69,7 @@ class TaskRecord:
             "direction_changes": self.direction_changes,
             "error": self.error,
             "request_data": self.request_data,
+            "chat_session_id": self.chat_session_id,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None
         }
@@ -103,7 +106,8 @@ class TaskRecord:
             skill_history=self.skill_history,
             direction_changes=self.direction_changes,
             error=self.error,
-            request_data=self.request_data
+            request_data=self.request_data,
+            chat_session_id=self.chat_session_id
         )
 
 

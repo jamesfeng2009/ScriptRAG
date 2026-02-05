@@ -210,6 +210,8 @@ class GlobalState(TypedDict):
     # ============================================================
     user_topic: str
     project_context: str
+    current_skill: str
+    skill_history: Annotated[List[Dict[str, Any]], operator.add]
     
     # ============================================================
     # 2. 核心控制数据 (Control Plane - Overwrite)
