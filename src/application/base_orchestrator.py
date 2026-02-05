@@ -56,6 +56,7 @@ class BaseWorkflowOrchestrator:
     
     @with_error_handling(agent_name="navigator", action_name="navigate_step")
     async def _navigator_node(self, state: GlobalState) -> Dict[str, Any]:
+        """导航器节点 - 获取当前步骤信息并推进索引"""
         outline = self._get_state_value(state, "outline", [])
         current_step_index = self._get_state_value(state, "current_step_index", 0)
         
@@ -80,14 +81,23 @@ class BaseWorkflowOrchestrator:
                 }]
             }
         
-        return {
+        next_index = current_step_index + 1
+        is_done = next_index >= len(outline)
+        
+        updates = {
             "navigation": navigation,
+            "current_step_index": next_index,
             "execution_log": [{
                 "timestamp": datetime.now().isoformat(),
                 "node": "navigator",
-                "action": f"navigated to step {current_step_index}"
+                "action": f"navigated from step {current_step_index} to {next_index}"
             }]
         }
+        
+        if is_done:
+            updates["workflow_complete"] = True
+        
+        return updates
     
     @with_error_handling(agent_name="director", action_name="direct_step")
     async def _director_node(self, state: GlobalState) -> Dict[str, Any]:
@@ -197,16 +207,15 @@ class BaseWorkflowOrchestrator:
     
     @with_error_handling(agent_name="step_advancer", action_name="advance_step")
     async def _step_advancer_node(self, state: GlobalState) -> Dict[str, Any]:
-        """步骤推进器节点 - 推进到下一步，并标记工作流完成"""
+        """步骤推进器节点 - 检查工作流是否完成（索引由 navigator 推进）"""
         outline = self._get_state_value(state, "outline", [])
         current_step_index = self._get_state_value(state, "current_step_index", 0)
         skip_current_step = self._get_state_value(state, "skip_current_step", False)
         
-        is_done = current_step_index >= len(outline)
+        is_done = current_step_index >= len(outline) or skip_current_step
         
-        if skip_current_step or is_done:
+        if is_done:
             return {
-                "current_step_index": current_step_index,
                 "execution_log": [{
                     "timestamp": datetime.now().isoformat(),
                     "node": "step_advancer",
@@ -215,22 +224,13 @@ class BaseWorkflowOrchestrator:
                 "workflow_complete": True
             }
         
-        next_index = current_step_index + 1
-        is_done_after_advance = next_index >= len(outline)
-        
-        updates = {
-            "current_step_index": next_index,
+        return {
             "execution_log": [{
                 "timestamp": datetime.now().isoformat(),
                 "node": "step_advancer",
-                "action": f"advanced from step {current_step_index} to {next_index}"
+                "action": f"ready to advance - currently at step {current_step_index}"
             }]
         }
-        
-        if is_done_after_advance:
-            updates["workflow_complete"] = True
-        
-        return updates
     
     @with_error_handling(agent_name="compiler", action_name="compile_script")
     async def _compiler_node(self, state: GlobalState) -> Dict[str, Any]:

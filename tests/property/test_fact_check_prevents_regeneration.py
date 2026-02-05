@@ -3,10 +3,6 @@
 This module tests that when the mock fact_checker returns "VALID",
 fragments are not removed and regeneration loops are prevented.
 
-IMPORTANT: These tests are marked as xfail due to a known issue with
-WorkflowOrchestrator._planner_node returning a coroutine object instead of 
-a dictionary, which causes langgraph.errors.InvalidUpdateError.
-
 Feature: fix-integration-test-mock-data
 """
 
@@ -32,10 +28,6 @@ def create_mock_summarization_service():
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(
-    reason="NodeFactory incomplete: missing pivot_manager_node, retry_protection_node, etc. "
-    "Also has sync methods calling async chat_completion. This is a deeper architectural issue."
-)
 @settings(
     max_examples=3,
     deadline=None,
@@ -48,21 +40,17 @@ def create_mock_summarization_service():
 async def test_valid_fact_check_prevents_regeneration(user_topic, project_context):
     """Property 12: Valid fact check prevents regeneration
     
-    Feature: fix-integration-test-mock-data
-    
     For any workflow execution where the mock fact_checker returns "VALID",
     the state.fact_check_passed flag should be True and fragments should
     not be removed from state.fragments, preventing regeneration loops.
     
     **Validates: Requirements 4.4**
     """
-    # Create mock services with realistic data
     mock_llm = create_mock_llm_service()
     mock_retrieval = create_mock_retrieval_service()
     mock_parser = create_mock_parser_service()
     mock_summarization = create_mock_summarization_service()
     
-    # Create initial state
     initial_state = SharedState(
         user_topic=user_topic,
         project_context=project_context,
@@ -81,7 +69,6 @@ async def test_valid_fact_check_prevents_regeneration(user_topic, project_contex
         fact_check_passed=True
     )
     
-    # Create orchestrator
     orchestrator = WorkflowOrchestrator(
         llm_service=mock_llm,
         retrieval_service=mock_retrieval,
@@ -90,34 +77,27 @@ async def test_valid_fact_check_prevents_regeneration(user_topic, project_contex
         workspace_id="test-workspace"
     )
     
-    # Execute workflow with increased recursion limit
     result = await orchestrator.execute(initial_state, recursion_limit=50)
     
-    # Property: fact_check_passed should be True
     final_state = result["state"]
-    assert final_state.fact_check_passed is True, \
-        "Fact check failed when mock always returns VALID"
     
-    # Property: fragments should be present (not removed)
-    # If workflow completed successfully, there should be fragments
-    if result["success"]:
-        assert len(final_state.fragments) > 0, \
+    fact_check_passed = final_state.get("fact_check_passed")
+    assert fact_check_passed is True, \
+        f"Fact check failed when mock always returns VALID: {fact_check_passed}"
+    
+    if result.get("success"):
+        fragments = final_state.get("fragments", [])
+        assert len(fragments) > 0, \
             "No fragments found when fact check passed - they may have been removed"
         
-        # Verify fragments were not regenerated excessively
-        # Count fact_checker executions in log
+        execution_log = final_state.get("execution_log", [])
         fact_check_events = [
-            log for log in final_state.execution_log
+            log for log in execution_log
             if log.get("agent_name") == "fact_checker"
         ]
         
-        # Number of fact checks should roughly equal number of fragments
-        # (allowing for some variation due to workflow logic)
-        # If there are significantly more fact checks than fragments,
-        # it suggests regeneration loops occurred
-        num_fragments = len(final_state.fragments)
+        num_fragments = len(fragments)
         num_fact_checks = len(fact_check_events)
         
-        # Allow up to 2x fact checks per fragment (some retries are normal)
         assert num_fact_checks <= num_fragments * 2, \
             f"Too many fact checks ({num_fact_checks}) for {num_fragments} fragments - suggests regeneration loops"

@@ -256,7 +256,7 @@ async def evaluate_and_decide(
 
         skip_optimizer = SmartSkipOptimizer(
             enable_quality_skip=True,
-            enable_complexity_skip=True,
+            enable_complexity_skip=False,
             enable_cache_skip=True
         )
 
@@ -267,7 +267,7 @@ async def evaluate_and_decide(
                 content=content_for_quality,
                 complexity_score=None,
                 cache_key=f"director:{current_step.step_id}",
-                query=current_step.description
+                context=current_step.description
             )
 
             overall_decision = skip_optimizer.get_overall_skip_decision(quality_decisions)

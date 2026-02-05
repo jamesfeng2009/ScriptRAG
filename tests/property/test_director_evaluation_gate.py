@@ -19,6 +19,7 @@ from src.domain.models import (
     RetrievedDocument
 )
 from src.domain.agents.director import evaluate_and_decide
+from src.domain.skills import SKILLS
 
 
 # 自定义策略生成器
@@ -56,14 +57,7 @@ def retrieved_document_strategy(draw):
 @st.composite
 def shared_state_with_current_step_strategy(draw):
     """生成带有当前步骤的 SharedState"""
-    valid_skills = [
-        "standard_tutorial",
-        "warning_mode",
-        "visualization_analogy",
-        "research_mode",
-        "meme_style",
-        "fallback_summary"
-    ]
+    valid_skills = list(SKILLS.keys())
     
     # 生成大纲
     outline_size = draw(st.integers(min_value=1, max_value=10))

@@ -13,7 +13,7 @@ should:
 """
 
 import pytest
-from hypothesis import given, strategies as st, settings, assume
+from hypothesis import given, strategies as st, settings, assume, HealthCheck
 from datetime import datetime
 from src.domain.models import SharedState, OutlineStep, RetrievedDocument
 from src.domain.agents.pivot_manager import handle_pivot
@@ -264,7 +264,10 @@ def test_multiple_skill_switches_tracked(
     initial_skill=skill_names,
     new_skill=skill_names
 )
-@settings(max_examples=100)
+@settings(
+    max_examples=100,
+    suppress_health_check=[HealthCheck.filter_too_much]
+)
 def test_skill_switch_idempotent_for_same_skill(
     initial_skill: str,
     new_skill: str

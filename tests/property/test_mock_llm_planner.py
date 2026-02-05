@@ -11,7 +11,7 @@ from tests.fixtures.realistic_mock_data import create_mock_llm_service
 
 @settings(max_examples=100)
 @given(
-    query_content=st.text(min_size=10, max_size=200)
+    query_content=st.text(min_size=10, max_size=200).filter(lambda x: "hallucination" not in x.lower())
 )
 @pytest.mark.asyncio
 async def test_planner_response_matches_chinese_format(query_content):

@@ -3,11 +3,6 @@
 This module tests that when the mock director always returns "approved",
 the workflow never triggers a pivot, ensuring linear execution without loops.
 
-IMPORTANT: These tests are marked as xfail due to a known issue with
-mock services causing infinite recursion in the workflow execution.
-The mock services don't properly simulate the workflow termination conditions,
-causing the workflow to exceed the recursion limit.
-
 Feature: fix-integration-test-mock-data
 """
 
@@ -33,7 +28,6 @@ def create_mock_summarization_service():
 
 
 @pytest.mark.asyncio
-@pytest.mark.xfail(reason="Complex integration test requiring complete mock service configuration for full workflow execution")
 @settings(
     max_examples=3,
     deadline=None,
@@ -46,8 +40,6 @@ def create_mock_summarization_service():
 async def test_director_always_approves_prevents_pivot(user_topic, project_context):
     """Property 11: Director always approves prevents pivot
     
-    Feature: fix-integration-test-mock-data
-    
     For any workflow execution using the mock director that always returns
     "approved", the state.pivot_triggered flag should remain False throughout
     execution, preventing pivot loops.
@@ -56,13 +48,11 @@ async def test_director_always_approves_prevents_pivot(user_topic, project_conte
     """
     from src.domain.models import OutlineStep
     
-    # Create mock services with realistic data
     mock_llm = create_mock_llm_service()
     mock_retrieval = create_mock_retrieval_service()
     mock_parser = create_mock_parser_service()
     mock_summarization = create_mock_summarization_service()
     
-    # Create initial state with valid outline
     outline = [
         OutlineStep(
             step_id=0,
@@ -98,7 +88,6 @@ async def test_director_always_approves_prevents_pivot(user_topic, project_conte
         fact_check_passed=True
     )
     
-    # Create orchestrator
     orchestrator = WorkflowOrchestrator(
         llm_service=mock_llm,
         retrieval_service=mock_retrieval,
@@ -107,21 +96,19 @@ async def test_director_always_approves_prevents_pivot(user_topic, project_conte
         workspace_id="test-workspace"
     )
     
-    # Execute workflow with increased recursion limit
     result = await orchestrator.execute(initial_state, recursion_limit=50)
     
-    # Property: pivot_triggered should remain False
-    # Since mock director always returns "approved", no pivot should be triggered
     final_state = result["state"]
-    assert final_state.pivot_triggered is False, \
-        f"Pivot was triggered when director always approves. Reason: {final_state.pivot_reason}"
     
-    # Additional verification: check execution log for pivot events
+    pivot_triggered = final_state.get("pivot_triggered")
+    assert pivot_triggered is False, \
+        f"Pivot was triggered when director always approves. Reason: {final_state.get('pivot_reason')}"
+    
+    execution_log = final_state.get("execution_log", [])
     pivot_events = [
-        log for log in final_state.execution_log
+        log for log in execution_log
         if log.get("agent_name") == "pivot_manager"
     ]
     
-    # There should be no pivot manager executions
     assert len(pivot_events) == 0, \
         f"Pivot manager was executed {len(pivot_events)} times when it shouldn't have been"

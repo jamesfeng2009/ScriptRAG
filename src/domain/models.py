@@ -174,14 +174,8 @@ class SharedState(BaseModel):
     @classmethod
     def validate_current_skill(cls, v: str) -> str:
         """验证当前 Skill 有效"""
-        valid_skills = {
-            "standard_tutorial",
-            "warning_mode",
-            "visualization_analogy",
-            "research_mode",
-            "meme_style",
-            "fallback_summary"
-        }
+        from .skills import SKILLS
+        valid_skills = set(SKILLS.keys())
         if v not in valid_skills:
             raise ValueError(
                 f"无效的 Skill 模式: {v}. "
@@ -297,14 +291,8 @@ class SharedState(BaseModel):
         Raises:
             ValueError: 如果 Skill 名称无效
         """
-        valid_skills = {
-            "standard_tutorial",
-            "warning_mode",
-            "visualization_analogy",
-            "research_mode",
-            "meme_style",
-            "fallback_summary"
-        }
+        from .skills import SKILLS
+        valid_skills = set(SKILLS.keys())
         
         if new_skill not in valid_skills:
             raise ValueError(

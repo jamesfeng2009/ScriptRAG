@@ -617,9 +617,6 @@ make lint  # 如果有 Makefile
 
 ## 商业化特性
 
-### 可扩展性
-- 无状态智能体服务，支持水平扩展
-
 ### 监控和可观测性
 - Prometheus 指标收集
 - Grafana 仪表板
