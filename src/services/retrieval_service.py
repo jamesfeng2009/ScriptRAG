@@ -57,11 +57,17 @@ from .graprag_engine import GraphRAGEngine
 
 from .retrieval_quality_assessor import (
     RetrievalQualityAssessor,
-    NegativeSampleFilter,
     QualityAssessment
 )
 
 from .retrieval_isolation import RetrievalIsolation, IsolationLevel
+
+from .rag.cost_control import (
+    CostController,
+    TokenBudget,
+    ContextCompressor,
+    CostLevel
+)
 
 
 logger = logging.getLogger(__name__)
@@ -92,7 +98,12 @@ class RetrievalService:
         enhanced_cache: Optional[EnhancedRetrievalCache] = None,
         monitor: Optional[RetrievalMonitor] = None,
         enhancement_config: Optional[AdvancedRetrievalConfig] = None,
-        graprag_workspace_id: Optional[str] = None
+        graprag_workspace_id: Optional[str] = None,
+        enable_cost_control: bool = False,
+        cost_controller: Optional[CostController] = None,
+        context_compressor: Optional[ContextCompressor] = None,
+        max_tokens_per_request: int = 8000,
+        max_cost_per_day: float = 10.0
     ):
         """
         初始化检索服务
@@ -110,10 +121,16 @@ class RetrievalService:
             monitor: 监控组件
             enhancement_config: 检索增强配置
             graprag_workspace_id: GraphRAG 工作空间 ID
+            enable_cost_control: 是否启用成本控制
+            cost_controller: 成本控制器实例
+            context_compressor: 上下文压缩器实例
+            max_tokens_per_request: 每次请求最大 token 数
+            max_cost_per_day: 每日最大成本（美元）
         """
         self.vector_db = vector_db_service
         self.llm_service = llm_service
         self.config = config or RetrievalConfig()
+        self.enable_cost_control = enable_cost_control
 
         self._initialize_strategies()
         self._initialize_merger()
@@ -124,8 +141,10 @@ class RetrievalService:
         self.diversity_filter = diversity_filter or DiversityFilter()
         self.quality_monitor = quality_monitor or RetrievalQualityMonitor()
 
-        self.quality_assessor = RetrievalQualityAssessor(llm_service)
-        self.negative_filter = NegativeSampleFilter()
+        self.quality_assessor = RetrievalQualityAssessor(
+            llm_service,
+            enable_negative_filter=True
+        )
 
         self.cache = cache or RetrievalCache(CacheConfig())
         self.enhanced_cache = enhanced_cache or EnhancedRetrievalCache(EnhancedCacheConfig())
@@ -133,6 +152,11 @@ class RetrievalService:
 
         self.retrieval_isolation = RetrievalIsolation(
             max_docs_per_step=self.config.strategy.vector.top_k
+        )
+
+        self._init_cost_control(
+            cost_controller, context_compressor,
+            max_tokens_per_request, max_cost_per_day
         )
 
         self._init_enhancement_pipeline(enhancement_config, graprag_workspace_id)
@@ -198,6 +222,77 @@ class RetrievalService:
             )
 
         logger.info(f"Initialized merger: {self.merger.name}")
+
+    def _init_cost_control(
+        self,
+        cost_controller: Optional[CostController],
+        context_compressor: Optional[ContextCompressor],
+        max_tokens_per_request: int,
+        max_cost_per_day: float
+    ):
+        """初始化成本控制和上下文压缩"""
+        if not self.enable_cost_control:
+            self.cost_controller = None
+            self.context_compressor = None
+            self.token_budget = None
+            logger.info("Cost control not enabled")
+            return
+
+        self.cost_controller = cost_controller or CostController(
+            max_tokens_per_request=max_tokens_per_request,
+            max_cost_per_day=max_cost_per_day
+        )
+
+        self.context_compressor = context_compressor or ContextCompressor(
+            max_tokens=int(max_tokens_per_request * 0.5),
+            compression_ratio=0.5,
+            preserve_key_info=True
+        )
+
+        self.token_budget = TokenBudget(max_tokens=max_tokens_per_request)
+
+        logger.info(
+            f"Cost control enabled: max_tokens={max_tokens_per_request}, "
+            f"max_cost=${max_cost_per_day}/day"
+        )
+
+    async def _check_cost_budget(self, operation: str, estimated_tokens: int) -> Tuple[bool, str]:
+        """检查成本预算"""
+        if not self.enable_cost_control or not self.cost_controller:
+            return True, "Cost control disabled"
+
+        return await self.cost_controller.check_budget(estimated_tokens, operation)
+
+    def _compress_results_if_needed(
+        self,
+        query: str,
+        results: List[RetrievalResult]
+    ) -> Tuple[List[RetrievalResult], bool]:
+        """根据需要压缩检索结果"""
+        if not self.enable_cost_control or not self.context_compressor:
+            return results, False
+
+        return results, False
+
+    def get_cost_stats(self) -> Dict[str, Any]:
+        """获取成本统计"""
+        if not self.enable_cost_control or not self.cost_controller:
+            return {"enabled": False}
+
+        return {
+            "enabled": True,
+            **self.cost_controller.get_usage_stats(),
+            "context_compressor": {
+                "max_tokens": self.context_compressor.max_tokens if self.context_compressor else None,
+                "compression_ratio": self.context_compressor.compression_ratio if self.context_compressor else None
+            }
+        }
+
+    def get_cost_level(self) -> Optional[str]:
+        """获取当前成本级别"""
+        if not self.enable_cost_control or not self.cost_controller:
+            return None
+        return self.cost_controller.get_cost_level().value
 
     def _init_enhancement_pipeline(
         self,
@@ -708,7 +803,7 @@ class RetrievalService:
             (过滤后的结果列表, 被过滤的详情列表)
         """
         try:
-            filtered, filtered_details = self.negative_filter.filter_negative_samples(
+            filtered, filtered_details = self.quality_assessor.filter_negative_samples(
                 query, results, threshold
             )
             logger.info(

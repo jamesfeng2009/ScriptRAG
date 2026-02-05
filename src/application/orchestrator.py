@@ -22,6 +22,9 @@ from langgraph.graph import StateGraph, END
 
 from ..domain.state_types import GlobalState
 from ..domain.agents.node_factory import NodeFactory, create_success_log, create_error_log
+from ..domain.tools.tool_service import ToolService
+from ..domain.tools.tool_executor import ToolExecutor
+from ..domain.agents.editor_agent import EditorAgent
 from ..domain.agents.enhanced_agents import (
     RAGContentAnalyzer,
     DynamicDirector,
@@ -79,7 +82,9 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
         auto_save_sessions: bool = False,
         save_interval_steps: int = 5,
         enable_task_stack: bool = False,
-        max_task_depth: int = 3
+        max_task_depth: int = 3,
+        enable_tools: bool = False,
+        tool_max_iterations: int = 10
     ):
         """
         初始化工作流编排器
@@ -96,6 +101,8 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             save_interval_steps: 自动保存间隔（步数）
             enable_task_stack: 是否启用 Task Stack（用于嵌套任务管理，默认关闭）
             max_task_depth: Task Stack 最大嵌套深度
+            enable_tools: 是否启用工具服务（用于 Function Calling，默认关闭）
+            tool_max_iterations: 工具调用最大迭代次数
         """
         self.llm_service = llm_service
         self.retrieval_service = retrieval_service
@@ -107,6 +114,7 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
         self.auto_save_sessions = auto_save_sessions
         self.save_interval_steps = save_interval_steps
         self.enable_task_stack = enable_task_stack
+        self.enable_tools = enable_tools
         
         self.node_factory = NodeFactory(
             llm_service=llm_service,
@@ -129,13 +137,32 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
         self.collaboration_manager = CollaborationManager(llm_service)
         self.execution_tracer = AgentExecutionTracer()
         self.agent_reflection = AgentReflection(llm_service)
+        
+        if enable_tools:
+            self.tool_executor = ToolExecutor(
+                llm_service=llm_service,
+                retrieval_service=retrieval_service,
+                node_factory=self.node_factory,
+                workspace_id=workspace_id
+            )
+            self.tool_service = ToolService(
+                llm_service=llm_service,
+                tool_executor=self.tool_executor,
+                max_iterations=tool_max_iterations
+            )
+            self.editor_agent = EditorAgent(tool_service=self.tool_service)
+            logger.info(
+                f"ToolService 和 ToolExecutor 初始化完成 "
+                f"(enable_tools=True, max_iterations={tool_max_iterations})"
+            )
 
         self.graph = self._build_graph()
 
         logger.info(
             f"WorkflowOrchestrator 初始化完成 "
             f"(dynamic_adjustment={enable_dynamic_adjustment}, "
-            f"task_stack={enable_task_stack}, max_depth={max_task_depth})"
+            f"task_stack={enable_task_stack}, max_depth={max_task_depth}, "
+            f"tools={enable_tools})"
         )
     
     def _build_graph(self) -> StateGraph:
@@ -172,6 +199,9 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
         workflow.add_node("execution_tracer", self._execution_tracer_node)
         workflow.add_node("agent_reflection", self._agent_reflection_node)
         
+        if self.enable_tools:
+            workflow.add_node("editor", self._editor_node)
+        
         workflow.set_entry_point("planner")
         
         workflow.add_edge("planner", "navigator")
@@ -194,15 +224,27 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
         else:
             workflow.add_edge("navigator", "director")
             
-            workflow.add_conditional_edges(
-                "director",
-                self._route_director_decision,
-                {
-                    "pivot": "pivot_manager", 
-                    "navigate": "navigator",
-                    "write": "retry_protection"
-                }
-            )
+            if self.enable_tools:
+                workflow.add_conditional_edges(
+                    "director",
+                    self._route_director_decision_with_editor,
+                    {
+                        "pivot": "pivot_manager", 
+                        "navigate": "navigator",
+                        "write": "retry_protection",
+                        "editor": "editor"
+                    }
+                )
+            else:
+                workflow.add_conditional_edges(
+                    "director",
+                    self._route_director_decision,
+                    {
+                        "pivot": "pivot_manager", 
+                        "navigate": "navigator",
+                        "write": "retry_protection"
+                    }
+                )
         
         workflow.add_edge("pivot_manager", "navigator")
         workflow.add_edge("retry_protection", "writer")
@@ -219,6 +261,14 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             self._route_completion,
             {"continue": "navigator", "done": "compiler"}
         )
+        
+        if self.enable_tools:
+            workflow.add_edge("editor", "fact_checker")
+            workflow.add_conditional_edges(
+                "editor",
+                self._route_editor_result,
+                {"continue": "fact_checker", "done": "compiler"}
+            )
         
         workflow.add_edge("compiler", END)
         
@@ -327,6 +377,86 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             return "done"
         logger.info("route_completion: returning 'continue'")
         return "continue"
+    
+    def _route_director_decision_with_editor(self, state: GlobalState) -> str:
+        """
+        路由导演决策（包含编辑器模式）
+        
+        参数:
+            state: 当前全局状态
+            
+        返回:
+            路由目标节点标识
+        """
+        awaiting_user_input = self._get_state_value(state, "awaiting_user_input", False)
+        human_intervention = self._get_state_value(state, "human_intervention", None)
+        
+        if awaiting_user_input or human_intervention:
+            return "editor"
+        
+        return self._route_director_decision(state)
+    
+    def _route_editor_result(self, state: GlobalState) -> str:
+        """
+        路由编辑器结果
+        
+        参数:
+            state: 当前全局状态
+            
+        返回:
+            路由目标节点标识
+        """
+        requires_user_input = self._get_state_value(state, "requires_user_input", False)
+        exceeded_max_iterations = self._get_state_value(state, "exceeded_max_iterations", False)
+        
+        if requires_user_input or exceeded_max_iterations:
+            return "done"
+        return "continue"
+    
+    @with_error_handling(agent_name="editor", action_name="process_user_input")
+    async def _editor_node(self, state: GlobalState) -> Dict[str, Any]:
+        """
+        编辑器节点 - 处理用户输入和工具调用
+        
+        职责:
+            - 处理用户消息
+            - 执行工具调用
+            - 更新对话历史
+        
+        参数:
+            state: 当前全局状态
+            
+        返回:
+            状态更新字典
+        """
+        logger.info("执行编辑器节点")
+        
+        if not self.enable_tools:
+            return {"editor_response": "工具未启用"}
+        
+        user_message = self._get_state_value(state, "user_message", "")
+        chat_history = self._get_state_value(state, "chat_history", [])
+        
+        if not user_message:
+            return {
+                "awaiting_user_input": True,
+                "editor_response": "请输入您想要执行的修改或操作。"
+            }
+        
+        result = await self.editor_agent.process_message(
+            user_message=user_message,
+            state=state,
+            chat_history=chat_history,
+            include_context=True
+        )
+        
+        return {
+            "editor_response": result["response"],
+            "chat_history": result["updated_chat_history"],
+            "awaiting_user_input": result["requires_user_input"],
+            "human_intervention": state.get("human_intervention"),
+            "exceeded_max_iterations": result.get("exceeded_max_iterations", False)
+        }
     
     @with_error_handling(agent_name="rag_analyzer", action_name="analyze_content")
     async def _rag_analyzer_node(self, state: GlobalState) -> Dict[str, Any]:

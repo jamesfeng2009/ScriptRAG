@@ -384,7 +384,8 @@ class RetrievalQualityAssessor:
     def __init__(
         self,
         llm_service: Optional[LLMService] = None,
-        config: Optional[Dict[str, Any]] = None
+        config: Optional[Dict[str, Any]] = None,
+        enable_negative_filter: bool = True
     ):
         """
         初始化质量评估器
@@ -392,14 +393,20 @@ class RetrievalQualityAssessor:
         Args:
             llm_service: LLM 服务（可选，用于高级分析）
             config: 配置选项
+            enable_negative_filter: 是否启用负样本过滤
         """
         self.llm_service = llm_service
         self.config = config or {}
+        self.enable_negative_filter = enable_negative_filter
         
         self.coverage_analyzer = CoverageAnalyzer()
         self.consistency_analyzer = ConsistencyAnalyzer(llm_service)
         self.freshness_analyzer = FreshnessAnalyzer()
         self.completeness_analyzer = CompletenessAnalyzer(llm_service)
+        
+        self.negative_filter = NegativeSampleFilter(
+            llm_service=llm_service
+        ) if enable_negative_filter else None
         
         self.min_results_threshold = self.config.get('min_results_threshold', 3)
         self.min_coverage_threshold = self.config.get('min_coverage_threshold', 0.6)
@@ -513,6 +520,32 @@ class RetrievalQualityAssessor:
         )
         
         return assessment
+    
+    async def filter_negative_samples(
+        self,
+        query: str,
+        results: List[RetrievalResult],
+        threshold: Optional[float] = None
+    ) -> Tuple[List[RetrievalResult], List[RetrievalResult]]:
+        """
+        过滤负样本
+        
+        Args:
+            query: 查询文本
+            results: 检索结果列表
+            threshold: 自定义阈值
+            
+        Returns:
+            (过滤后的结果, 被过滤的结果)
+        """
+        if not self.enable_negative_filter or not self.negative_filter:
+            return results, []
+        
+        return await self.negative_filter.filter_negative_samples(
+            query=query,
+            results=results,
+            threshold=threshold
+        )
     
     def _calculate_relevance_score(
         self,
