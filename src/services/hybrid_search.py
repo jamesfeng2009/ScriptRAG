@@ -686,7 +686,6 @@ class HybridSearchPipeline:
         self,
         query: str,
         query_embedding: List[float],
-        workspace_id: str,
         top_k: int = 10,
         enable_rerank: bool = True
     ) -> Dict[str, Any]:
@@ -700,6 +699,8 @@ class HybridSearchPipeline:
                 "metadata": {...}
             }
         """
+        workspace_id = "default"
+        
         # 混合检索
         results = await self.hybrid_service.hybrid_search(
             query=query,

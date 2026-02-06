@@ -166,8 +166,8 @@ echo "数据库验证..."
 echo "========================================"
 echo ""
 echo "Chat Sessions:"
-PGPASSWORD=123456 psql -h localhost -p 5433 -U postgres -d Screenplay -t -c "SELECT id, mode, status, created_at FROM chat_sessions;" | head -5
+PGPASSWORD=123456 psql -h localhost -p 5433 -U postgres -d Screenplay -t -c "SELECT id, mode, status, created_at FROM screenplay.chat_sessions ORDER BY created_at DESC;" | head -10
 
 echo ""
 echo "Tasks:"
-PGPASSWORD=123456 psql -h localhost -p 5433 -U postgres -d Screenplay -t -c "SELECT task_id, topic, status, chat_session_id FROM screenplay.tasks;" | head -5
+PGPASSWORD=123456 psql -h localhost -p 5433 -U postgres -d Screenplay -t -c "SELECT task_id, topic, status, chat_session_id FROM screenplay.tasks ORDER BY created_at DESC;" | head -10

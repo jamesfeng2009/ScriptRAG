@@ -209,7 +209,7 @@ class PgVectorDBService(IVectorDBService):
         try:
             db_config = self._config
             if db_config is None:
-                from ..config import get_database_config
+                from ...config import get_database_config
                 db_config = get_database_config()
             
             self.engine = create_async_engine(
@@ -350,7 +350,6 @@ class PgVectorDBService(IVectorDBService):
     
     async def index_document(
         self,
-        workspace_id: str,
         file_path: str,
         content: str,
         embedding: List[float],
@@ -366,7 +365,6 @@ class PgVectorDBService(IVectorDBService):
         索引文档
         
         Args:
-            workspace_id: 工作空间 ID
             file_path: 文件路径
             content: 文档内容
             embedding: 嵌入向量
@@ -381,6 +379,8 @@ class PgVectorDBService(IVectorDBService):
         Returns:
             文档 ID
         """
+        workspace_id = "default"
+        
         if not self._initialized:
             raise RuntimeError("Database not initialized")
         

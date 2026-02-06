@@ -146,7 +146,7 @@ class TestToolExecutor:
             "fragments": [
                 {"step_id": 0, "content": "Fragment 1 content", "skill_used": "standard_tutorial"}
             ],
-            "last_retrieved_docs": [],
+            "retrieved_docs": [],
             "current_step_index": 0,
             "awaiting_user_input": False,
             "human_intervention": None

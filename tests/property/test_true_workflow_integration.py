@@ -106,7 +106,7 @@ async def test_workflow_execution_with_state_key_fix():
     Test that workflow executes correctly with the state key fix.
     
     This test does NOT mock graph.ainvoke - it actually executes the workflow.
-    The fix for last_retrieved_docs -> retrieved_docs should prevent infinite loops.
+    The fix for retrieved_docs -> retrieved_docs should prevent infinite loops.
     
     **Before fix**: This test would hang until recursion_limit (50) is reached
     **After fix**: This test should complete within reasonable time
@@ -146,7 +146,7 @@ async def test_workflow_execution_with_state_key_fix():
         print("❌ FAILED: Workflow timed out - state key fix may not be working!")
         raise AssertionError(
             "Workflow execution timed out. "
-            "This suggests the state key fix (retrieved_docs vs last_retrieved_docs) "
+            "This suggests the state key fix (retrieved_docs vs retrieved_docs) "
             "is not working correctly."
         )
 

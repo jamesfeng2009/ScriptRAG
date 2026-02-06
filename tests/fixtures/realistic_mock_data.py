@@ -320,22 +320,21 @@ def create_mock_llm_service() -> Mock:
         """Mock chat completion that returns format-appropriate responses"""
         import json
         
-        # Get the last message content to detect agent type
         last_message = messages[-1]["content"] if messages else ""
         last_message_lower = last_message.lower()
         
-        # Detect agent type from message content (order matters - check more specific patterns first)
-        
-        # Check for fact checker - check multiple patterns to detect verification requests
-        # Must have explicit verification context
-        # Also exclude director evaluation messages
         is_director_evaluation = (
-            "评估" in last_message or 
-            "evaluation" in last_message_lower or 
-            "批准" in last_message or 
-            "approve" in last_message_lower or
-            "质量" in last_message or 
-            "quality" in last_message_lower
+            "评估" in last_message and "请求" not in last_message and "请" not in last_message and "是否" not in last_message or 
+            "evaluation" in last_message_lower and "request" not in last_message_lower and "please" not in last_message_lower or
+            "批准" in last_message and "请" not in last_message and "是否" not in last_message or
+            "approve" in last_message_lower and "please" not in last_message_lower and "verify" not in last_message_lower or
+            "请评估" in last_message or
+            "please evaluate" in last_message_lower
+        )
+        
+        is_hallucination_check = (
+            "幻觉" in last_message_lower or
+            "hallucination" in last_message_lower
         )
         
         has_verification_context = (
@@ -343,12 +342,6 @@ def create_mock_llm_service() -> Mock:
             ("verify" in last_message_lower and ("consistent" in last_message_lower or "compare" in last_message_lower)) or
             ("一致性" in last_message and ("verify" in last_message_lower or "验证" in last_message)) or
             ("verify" in last_message_lower and "fragment" in last_message_lower and ("consistent" in last_message_lower or "content" in last_message_lower))
-        )
-        
-        # Also check if message is specifically about hallucination detection
-        is_hallucination_check = (
-            "幻觉" in last_message_lower or
-            "hallucination" in last_message_lower
         )
         
         if (has_verification_context or is_hallucination_check) and not is_director_evaluation:
@@ -511,7 +504,6 @@ def create_mock_retrieval_service() -> Mock:
     mock_service = Mock()
     
     async def mock_hybrid_retrieve(
-        workspace_id: str,
         query: str,
         top_k: int = 5
     ) -> List[Any]:
@@ -519,7 +511,6 @@ def create_mock_retrieval_service() -> Mock:
         return create_realistic_retrieval_results(query, top_k)
 
     async def mock_retrieve_with_strategy(
-        workspace_id: str,
         query: str,
         strategy_name: str,
         top_k: int = 5
@@ -528,7 +519,6 @@ def create_mock_retrieval_service() -> Mock:
         return create_realistic_retrieval_results(query, top_k)
 
     async def mock_vector_search(
-        workspace_id: str,
         query: str,
         top_k: int = 5
     ) -> List[Any]:
@@ -536,7 +526,6 @@ def create_mock_retrieval_service() -> Mock:
         return create_realistic_retrieval_results(query, top_k)
 
     async def mock_keyword_search(
-        workspace_id: str,
         query: str,
         top_k: int = 5
     ) -> List[Any]:

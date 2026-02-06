@@ -171,8 +171,8 @@ class TaskDatabaseService:
     def create_from_env(cls) -> "TaskDatabaseService":
         """从环境变量创建服务"""
         from sqlalchemy import create_engine, text
-        from ..config import get_database_config
-        
+        from ...config import get_database_config
+
         db_config = get_database_config()
         
         sync_engine = create_engine(db_config.url, echo=False)
@@ -233,13 +233,38 @@ class TaskDatabaseService:
                 await session.close()
     
     async def create(self, task: TaskRecord) -> TaskRecord:
-        """创建 Task 记录"""
+        """创建 Task 记录（幂等操作）- 如果已存在则忽略"""
         async with self.get_session() as session:
             entity = task.to_entity()
-            session.add(entity)
+            
+            stmt = insert(Task).values(
+                task_id=entity.task_id,
+                status=entity.status,
+                topic=entity.topic,
+                context=entity.context,
+                current_skill=entity.current_skill,
+                screenplay=entity.screenplay,
+                outline=entity.outline,
+                skill_history=entity.skill_history,
+                direction_changes=entity.direction_changes,
+                rag_analysis=entity.rag_analysis,
+                rag_top_k=entity.rag_top_k,
+                rag_similarity_threshold=entity.rag_similarity_threshold,
+                rag_enable_hybrid_search=entity.rag_enable_hybrid_search,
+                rag_enable_reranking=entity.rag_enable_reranking,
+                error=entity.error,
+                request_data=entity.request_data,
+                chat_session_id=entity.chat_session_id,
+                created_at=entity.created_at,
+                updated_at=entity.updated_at
+            ).on_conflict_do_nothing(
+                index_elements=['task_id']
+            )
+            
+            await session.execute(stmt)
             await session.commit()
         
-        logger.info(f"Task created: {task.task_id}")
+        logger.info(f"Task created (idempotent): {task.task_id}")
         return task
     
     async def get(self, task_id: str) -> Optional[TaskRecord]:
@@ -334,7 +359,12 @@ class TaskService:
         self._cache: Dict[str, TaskRecord] = {}
     
     async def create(self, task: TaskRecord) -> TaskRecord:
-        """创建 Task（双写缓存和数据库）"""
+        """创建 Task（幂等操作）- 如果已存在则忽略"""
+        existing = await self.db_service.get(task.task_id)
+        if existing:
+            logger.info(f"Task already exists (idempotent skip): {task.task_id}")
+            return existing
+        
         self._cache[task.task_id] = task
         await self.db_service.create(task)
         return task

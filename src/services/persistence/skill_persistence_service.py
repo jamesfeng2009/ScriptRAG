@@ -75,7 +75,7 @@ class SkillDatabaseService:
     @classmethod
     def create_from_env(cls) -> "SkillDatabaseService":
         """从环境变量创建服务"""
-        from ..config import get_database_config
+        from ...config import get_database_config
         db_config = get_database_config()
         return cls(
             host=db_config.host,
@@ -131,7 +131,7 @@ class SkillDatabaseService:
             logger.info("Skills table ensured")
 
     async def create(self, record: SkillRecord) -> SkillRecord:
-        """创建技能记录"""
+        """创建技能记录（幂等操作）- 如果已存在则忽略"""
         import json
         async with self._pool.acquire() as conn:
             await conn.execute("""
@@ -139,10 +139,11 @@ class SkillDatabaseService:
                 (skill_name, description, tone, compatible_with, 
                  prompt_config, is_enabled, is_default, extra_data)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                ON CONFLICT (skill_name) DO NOTHING
             """, record.skill_name, record.description, record.tone,
                 json.dumps(record.compatible_with), json.dumps(record.prompt_config), 
                 record.is_enabled, record.is_default, json.dumps(record.extra_data))
-            logger.info(f"Created skill '{record.skill_name}'")
+            logger.info(f"Created skill '{record.skill_name}' (idempotent)")
             return record
 
     async def get(self, skill_name: str) -> Optional[SkillRecord]:

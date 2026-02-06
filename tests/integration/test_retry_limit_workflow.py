@@ -111,7 +111,7 @@ def initial_state():
         project_context="Context with repeated issues",
         outline=[],
         current_step_index=0,
-        last_retrieved_docs=[],
+        retrieved_docs=[],
         fragments=[],
         current_skill="standard_tutorial",
         global_tone="professional",

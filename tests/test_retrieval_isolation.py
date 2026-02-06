@@ -95,14 +95,14 @@ class TestRetrievalIsolation:
     def test_clear_step_results(self):
         """测试清空步骤结果"""
         state = {
-            "last_retrieved_docs": [{"id": 1}, {"id": 2}],
+            "retrieved_docs": [{"id": 1}, {"id": 2}],
             "current_step_query": "test query",
             "current_step_index": 0
         }
 
         cleared = self.isolation.clear_step_results(state)
 
-        assert cleared["last_retrieved_docs"] == []
+        assert cleared["retrieved_docs"] == []
         assert cleared["current_step_query"] == ""
 
     def test_prepare_retrieval(self):
@@ -144,7 +144,7 @@ class TestContextMinimizer:
             "user_topic": "Python async",
             "project_context": "Async programming guide",
             "outline": [{"step_id": 1}, {"step_id": 2}],
-            "last_retrieved_docs": [{"id": i, "source": f"doc{i}.md"} for i in range(10)],
+            "retrieved_docs": [{"id": i, "source": f"doc{i}.md"} for i in range(10)],
             "fragments": [{"content": "fragment content", "skill_used": "python"}],
             "current_step_index": 0
         }
@@ -165,7 +165,7 @@ class TestContextMinimizer:
         """测试 Writer 上下文最小化"""
         state = {
             "user_topic": "test",
-            "last_retrieved_docs": [{"id": i, "source": f"doc{i}.md"} for i in range(10)],
+            "retrieved_docs": [{"id": i, "source": f"doc{i}.md"} for i in range(10)],
             "fragments": [],
             "current_step_index": 0
         }
@@ -185,7 +185,7 @@ class TestContextMinimizer:
             "user_topic": "async programming",
             "project_context": "guide",
             "outline": [{"step": 1}],
-            "last_retrieved_docs": [{"id": 1, "source": "doc.md", "content": "async improves I/O"}],
+            "retrieved_docs": [{"id": 1, "source": "doc.md", "content": "async improves I/O"}],
             "fragments": [{"content": "fragment", "skill_used": "python"}],
             "current_step_index": 0
         }
@@ -203,7 +203,7 @@ class TestContextMinimizer:
         """测试未知 Agent 回退到 navigator 配置"""
         state = {
             "user_topic": "test",
-            "last_retrieved_docs": [{"id": i} for i in range(15)],
+            "retrieved_docs": [{"id": i} for i in range(15)],
             "fragments": [],
             "current_step_index": 0
         }
@@ -225,7 +225,7 @@ class TestHallucinationControl:
         isolation = RetrievalIsolation(max_docs_per_step=5)
 
         state = {
-            "last_retrieved_docs": [{"id": 1, "content": "old result"}],
+            "retrieved_docs": [{"id": 1, "content": "old result"}],
             "current_step_index": 1
         }
 
@@ -253,7 +253,7 @@ class TestHallucinationControl:
             "user_topic": "test",
             "project_context": "test context",
             "outline": [{"step": i} for i in range(100)],
-            "last_retrieved_docs": [{"id": i, "content": f"doc {i}" * 100} for i in range(50)],
+            "retrieved_docs": [{"id": i, "content": f"doc {i}" * 100} for i in range(50)],
             "fragments": [{"content": f"fragment {i}" * 50} for i in range(100)],
             "execution_log": [{"action": f"log {i}"} for i in range(200)],
             "current_step_index": 0
@@ -275,7 +275,7 @@ class TestHallucinationControl:
         state = {
             "user_topic": "test",
             "project_context": "test",
-            "last_retrieved_docs": [
+            "retrieved_docs": [
                 {"id": 1, "source": "doc1.md", "citation": "[1]"},
                 {"id": 2, "source": "doc2.md", "citation": "[2]"}
             ],

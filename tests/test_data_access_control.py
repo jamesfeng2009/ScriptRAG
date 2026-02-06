@@ -54,7 +54,7 @@ class TestDataAccessControl:
     def test_sensitivity_levels(self):
         """测试敏感度级别"""
         user_topic_config = DATA_OWNERSHIP_CONFIG["user_topic"]
-        retrieved_config = DATA_OWNERSHIP_CONFIG["last_retrieved_docs"]
+        retrieved_config = DATA_OWNERSHIP_CONFIG["retrieved_docs"]
         fragments_config = DATA_OWNERSHIP_CONFIG["fragments"]
 
         assert user_topic_config.sensitivity == ContextSensitivity.LOW
@@ -79,7 +79,7 @@ class TestDataAccessControl:
         """测试敏感度报告生成"""
         state = {
             "user_topic": "test",
-            "last_retrieved_docs": [{"id": 1}, {"id": 2}, {"id": 3}],
+            "retrieved_docs": [{"id": 1}, {"id": 2}, {"id": 3}],
             "fragments": [{"id": 1}]
         }
 
@@ -91,7 +91,7 @@ class TestDataAccessControl:
 
         high_risk = report["high_risk_fields"]
         assert len(high_risk) == 1
-        assert high_risk[0]["field"] == "last_retrieved_docs"
+        assert high_risk[0]["field"] == "retrieved_docs"
         assert high_risk[0]["count"] == 3
 
     def test_list_agent_permissions(self):
@@ -282,7 +282,7 @@ class TestHallucinationControl:
     def test_retrieval_isolation_recommendation(self):
         """测试检索隔离建议"""
         state = {
-            "last_retrieved_docs": [{"id": i} for i in range(10)]
+            "retrieved_docs": [{"id": i} for i in range(10)]
         }
 
         report = DataAccessControl.get_sensitivity_report(state)

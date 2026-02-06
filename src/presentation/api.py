@@ -17,6 +17,7 @@ from ..services.llm.service import LLMService
 from ..services.retrieval_service import RetrievalService, RetrievalConfig
 from ..infrastructure.logging import configure_logging
 from ..services.persistence.task_persistence_service import TaskDatabaseService, TaskRecord, TaskService
+from ..services.persistence.chat_session_persistence_service import ChatSessionRecord
 
 
 logger = logging.getLogger(__name__)
@@ -313,7 +314,7 @@ def init_services():
         llm_service = None
     
     try:
-        from ..services.chat_session_persistence_service import ChatSessionPersistenceService
+        from ..services.persistence.chat_session_persistence_service import ChatSessionPersistenceService
         chat_session_service = ChatSessionPersistenceService.get_instance()
         logger.info("Chat session service initialized")
     except Exception as e:
@@ -488,7 +489,7 @@ async def run_generation(task_id: str, request_data: Dict[str, Any]):
         
         if chat_session_id:
             try:
-                from ..services.chat_session_persistence_service import ChatSessionPersistenceService
+                from ..services.persistence.chat_session_persistence_service import ChatSessionPersistenceService
                 chat_service = ChatSessionPersistenceService.get_instance()
                 await chat_service.connect()
                 chat_session = await chat_service.get(chat_session_id)
@@ -556,7 +557,6 @@ async def run_generation(task_id: str, request_data: Dict[str, Any]):
             retrieval_service=retrieval_service,
             parser_service=None,
             summarization_service=summarization_service,
-            workspace_id=DEFAULT_WORKSPACE,
             enable_dynamic_adjustment=request_data.get("enable_dynamic_adjustment", True)
         )
         
@@ -628,7 +628,7 @@ async def run_generation(task_id: str, request_data: Dict[str, Any]):
             
             if chat_session_id:
                 try:
-                    from ..services.chat_session_persistence_service import ChatSessionPersistenceService
+                    from ..services.persistence.chat_session_persistence_service import ChatSessionPersistenceService
                     chat_service = ChatSessionPersistenceService.get_instance()
                     await chat_service.link_task(chat_session_id, task_id)
                     logger.info(f"[RUN_GENERATION] ✅ Task 已关联到 Session: {chat_session_id} → {task_id}")
@@ -1114,72 +1114,131 @@ class SendMessageResponse(BaseModel):
 
 
 class ChatHistoryManager:
-    """对话历史管理器"""
-    
-    _sessions: Dict[str, Dict[str, Any]] = {}
-    _messages: Dict[str, List[ChatMessage]] = {}
-    _session_timestamps: Dict[str, datetime] = {}
+    """对话历史管理器 - 直接落库，不再使用内存存储"""
+
     MAX_HISTORY_LENGTH = 20
-    
+
     @classmethod
-    def create_session(cls, session_id: str, mode: str, config: Dict[str, Any]) -> Dict[str, Any]:
-        """创建新会话"""
-        session = {
+    async def create_session(cls, session_id: str, mode: str, config: Dict[str, Any]) -> Dict[str, Any]:
+        """创建新会话 - 直接落库"""
+        record = ChatSessionRecord(
+            id=session_id,
+            topic="",
+            mode=mode,
+            config=config,
+            message_history=[],
+            status="active"
+        )
+
+        if chat_session_service:
+            try:
+                await chat_session_service.create(record)
+                logger.info(f"[ChatHistoryManager] Session 已落库: {session_id}")
+            except Exception as e:
+                logger.error(f"[ChatHistoryManager] Session 落库失败: {e}")
+
+        return {
             "session_id": session_id,
             "mode": mode,
             "config": config,
             "created_at": datetime.now(),
             "message_count": 0
         }
-        cls._sessions[session_id] = session
-        cls._messages[session_id] = []
-        cls._session_timestamps[session_id] = datetime.now()
-        return session
-    
+
     @classmethod
-    def get_session(cls, session_id: str) -> Optional[Dict[str, Any]]:
-        """获取会话信息"""
-        return cls._sessions.get(session_id)
-    
+    async def get_session(cls, session_id: str) -> Optional[Dict[str, Any]]:
+        """获取会话信息 - 从库中读取"""
+        if chat_session_service:
+            try:
+                record = await chat_session_service.get(session_id)
+                if record:
+                    return {
+                        "session_id": record.id,
+                        "mode": record.mode,
+                        "config": record.config,
+                        "created_at": record.created_at,
+                        "message_count": len(record.message_history),
+                        "status": record.status
+                    }
+            except Exception as e:
+                logger.error(f"[ChatHistoryManager] 获取 Session 失败: {e}")
+
+        return None
+
     @classmethod
-    def get_history(cls, session_id: str) -> List[ChatMessage]:
-        """获取会话历史"""
-        if session_id not in cls._messages:
-            return []
-        return cls._messages[session_id]
-    
+    async def get_history(cls, session_id: str) -> List[Dict[str, Any]]:
+        """获取会话历史 - 从库中读取"""
+        if chat_session_service:
+            try:
+                record = await chat_session_service.get(session_id)
+                if record:
+                    return record.message_history
+            except Exception as e:
+                logger.error(f"[ChatHistoryManager] 获取历史失败: {e}")
+
+        return []
+
     @classmethod
-    def add_message(cls, session_id: str, role: str, content: str):
-        """添加消息"""
-        if session_id not in cls._messages:
-            cls._messages[session_id] = []
-        
-        cls._messages[session_id].append(ChatMessage(
-            role=role,
-            content=content,
-            timestamp=datetime.now()
-        ))
-        
-        if session_id in cls._sessions:
-            cls._sessions[session_id]["message_count"] += 1
-        
-        if len(cls._messages[session_id]) > cls.MAX_HISTORY_LENGTH:
-            cls._messages[session_id] = cls._messages[session_id][-cls.MAX_HISTORY_LENGTH:]
-    
+    async def add_message(cls, session_id: str, role: str, content: str):
+        """添加消息 - 直接落库"""
+        if chat_session_service:
+            try:
+                record = await chat_session_service.get(session_id)
+                if record:
+                    new_message = {
+                        "role": role,
+                        "content": content,
+                        "timestamp": datetime.now().isoformat()
+                    }
+                    record.message_history.append(new_message)
+                    if len(record.message_history) > cls.MAX_HISTORY_LENGTH:
+                        record.message_history = record.message_history[-cls.MAX_HISTORY_LENGTH:]
+                    await chat_session_service.update_message_history(session_id, record.message_history)
+                    logger.info(f"[ChatHistoryManager] 消息已落库: session={session_id}, role={role}")
+            except Exception as e:
+                logger.error(f"[ChatHistoryManager] 添加消息失败: {e}")
+
     @classmethod
-    def delete_session(cls, session_id: str):
-        """删除会话"""
-        if session_id in cls._sessions:
-            del cls._sessions[session_id]
-        if session_id in cls._messages:
-            del cls._messages[session_id]
-        if session_id in cls._session_timestamps:
-            del cls._session_timestamps[session_id]
-    
+    async def delete_session(cls, session_id: str):
+        """删除会话 - 从库中删除"""
+        if chat_session_service:
+            try:
+                await chat_session_service.delete(session_id)
+                logger.info(f"[ChatHistoryManager] Session 已删除: {session_id}")
+            except Exception as e:
+                logger.error(f"[ChatHistoryManager] 删除 Session 失败: {e}")
+
     @classmethod
-    def list_sessions(cls) -> List[Dict[str, Any]]:
-        """列出所有会话"""
-        return list(cls._sessions.values())
+    async def list_sessions(cls) -> List[Dict[str, Any]]:
+        """列出所有会话 - 从库中读取"""
+        if chat_session_service:
+            try:
+                records = await chat_session_service.list(limit=100)
+                return [
+                    {
+                        "session_id": r.id,
+                        "mode": r.mode,
+                        "config": r.config,
+                        "created_at": r.created_at,
+                        "message_count": len(r.message_history),
+                        "status": r.status
+                    }
+                    for r in records
+                ]
+            except Exception as e:
+                logger.error(f"[ChatHistoryManager] 列出 Sessions 失败: {e}")
+
+        return []
+
+    @classmethod
+    async def clear_history(cls, session_id: str):
+        """清空历史 - 更新库中记录"""
+        if chat_session_service:
+            try:
+                await chat_session_service.update_message_history(session_id, [])
+                logger.info(f"[ChatHistoryManager] 历史已清空: {session_id}")
+            except Exception as e:
+                logger.error(f"[ChatHistoryManager] 清空历史失败: {e}")
 
 
 class SimpleChatRequest(BaseModel):
@@ -1229,23 +1288,23 @@ async def simple_chat(request: SimpleChatRequest):
     - 技能通过 System Prompt 影响输出风格
     """
     session_id = request.session_id if hasattr(request, 'session_id') and request.session_id else "simple_chat"
-    
-    ChatHistoryManager.add_message(session_id, "user", request.message)
-    history = ChatHistoryManager.get_history(session_id)
-    
+
+    await ChatHistoryManager.add_message(session_id, "user", request.message)
+    history = await ChatHistoryManager.get_history(session_id)
+
     skill_prompt = ""
     if request.skill:
         if skill_service:
             skill_record = await skill_service.get(request.skill)
             if skill_record and skill_record.prompt_config:
                 skill_prompt = skill_record.prompt_config.get("system_prompt", "")
-    
+
     messages_for_llm = []
     if skill_prompt:
         messages_for_llm.append({"role": "system", "content": skill_prompt})
-    
+
     for msg in history[-10:]:
-        messages_for_llm.append({"role": msg.role, "content": msg.content})
+        messages_for_llm.append({"role": msg["role"], "content": msg["content"]})
     
     if not llm_service:
         raise HTTPException(status_code=503, detail="LLM service not available")
@@ -1257,7 +1316,7 @@ async def simple_chat(request: SimpleChatRequest):
             max_tokens=request.max_tokens or 2000
         )
         
-        ChatHistoryManager.add_message(session_id, "assistant", response_text)
+        await ChatHistoryManager.add_message(session_id, "assistant", response_text)
         
         return SimpleChatResponse(
             session_id=session_id,
@@ -1285,22 +1344,22 @@ async def agent_chat(request: AgentChatRequest):
     session_id = request.session_id or f"agent_{uuid.uuid4().hex[:8]}"
     
     if request.clear_history:
-        ChatHistoryManager.clear_history(session_id)
-    
-    ChatHistoryManager.add_message(session_id, "user", request.message)
-    history = ChatHistoryManager.get_history(session_id)
+        await ChatHistoryManager.clear_history(session_id)
+
+    await ChatHistoryManager.add_message(session_id, "user", request.message)
+    history = await ChatHistoryManager.get_history(session_id)
     
     context = ""
     if request.enable_rag and rag_service:
         try:
             rag_result = await rag_service.query(
                 question=request.message,
-                history=[{"role": m.role, "content": m.content} for m in history[-5:]]
+                history=[{"role": m["role"], "content": m["content"]} for m in history[-5:]]
             )
             context = rag_result.answer
         except Exception as e:
             logger.warning(f"RAG query failed: {e}")
-    
+
     current_skill = request.skill or "standard_tutorial"
     if skill_service and request.skill:
         skill_record = await skill_service.get(request.skill)
@@ -1308,9 +1367,9 @@ async def agent_chat(request: AgentChatRequest):
             system_prompt = skill_record.prompt_config.get("system_prompt", "")
             if system_prompt:
                 context = f"[写作风格: {request.skill}]\n{system_prompt}\n\n[参考知识]\n{context}" if context else f"[写作风格: {request.skill}]\n{system_prompt}"
-    
+
     history_text = "\n".join([
-        f"{msg.role}: {msg.content}" 
+        f"{msg['role']}: {msg['content']}"
         for msg in history[-10:]
     ])
     
@@ -1337,13 +1396,13 @@ async def agent_chat(request: AgentChatRequest):
             max_tokens=3000
         )
         
-        ChatHistoryManager.add_message(session_id, "assistant", response_text)
-        
+        await ChatHistoryManager.add_message(session_id, "assistant", response_text)
+
         if chat_session_service:
             try:
-                history = ChatHistoryManager.get_history(session_id)
+                history = await ChatHistoryManager.get_history(session_id)
                 message_history = [
-                    {"role": msg.role, "content": msg.content, "timestamp": msg.timestamp.isoformat()}
+                    {"role": msg["role"], "content": msg["content"], "timestamp": msg.get("timestamp")}
                     for msg in history
                 ]
                 await chat_session_service.update_message_history(session_id, message_history)
@@ -1370,13 +1429,13 @@ async def agent_chat(request: AgentChatRequest):
 @app.get("/chat/sessions", response_model=List[Dict[str, Any]])
 async def list_chat_sessions():
     """列出所有 Chat 会话"""
-    return ChatHistoryManager.list_sessions()
+    return await ChatHistoryManager.list_sessions()
 
 
 @app.delete("/chat/sessions/{session_id}")
 async def delete_chat_session(session_id: str):
     """删除 Chat 会话"""
-    ChatHistoryManager.delete_session(session_id)
+    await ChatHistoryManager.delete_session(session_id)
     return {"success": True, "session_id": session_id}
 
 
@@ -1400,29 +1459,14 @@ async def create_chat_session(request: CreateSessionRequest):
         "temperature": request.temperature
     }
     
-    ChatHistoryManager.create_session(session_id, request.mode, config)
-    
-    if chat_session_service:
-        try:
-            from ..services.chat_session_persistence_service import ChatSessionRecord
-            record = ChatSessionRecord(
-                id=session_id,
-                topic="",
-                mode=request.mode,
-                config=config,
-                message_history=[],
-                status="active"
-            )
-            await chat_session_service.create(record)
-            logger.info(f"Chat session persisted: {session_id}")
-        except Exception as e:
-            logger.error(f"Failed to persist chat session: {e}")
-    
+    await ChatHistoryManager.create_session(session_id, request.mode, config)
+
+    session_info = await ChatHistoryManager.get_session(session_id)
     return CreateSessionResponse(
         session_id=session_id,
         mode=request.mode,
         config=ChatSessionConfig(**config),
-        created_at=ChatHistoryManager.get_session(session_id)["created_at"],
+        created_at=session_info["created_at"] if session_info else datetime.now(),
         message_count=0
     )
 
@@ -1430,7 +1474,7 @@ async def create_chat_session(request: CreateSessionRequest):
 @app.get("/chat/sessions/{session_id}", response_model=ChatSession)
 async def get_chat_session(session_id: str):
     """获取会话信息"""
-    session = ChatHistoryManager.get_session(session_id)
+    session = await ChatHistoryManager.get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
     return ChatSession(
@@ -1445,10 +1489,18 @@ async def get_chat_session(session_id: str):
 @app.get("/chat/sessions/{session_id}/messages", response_model=List[ChatMessage])
 async def get_chat_messages(session_id: str):
     """获取会话消息历史"""
-    session = ChatHistoryManager.get_session(session_id)
+    session = await ChatHistoryManager.get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    return ChatHistoryManager.get_history(session_id)
+    raw_history = await ChatHistoryManager.get_history(session_id)
+    return [
+        ChatMessage(
+            role=msg["role"],
+            content=msg["content"],
+            timestamp=datetime.fromisoformat(msg["timestamp"]) if msg.get("timestamp") else None
+        )
+        for msg in raw_history
+    ]
 
 
 @app.post("/chat/sessions/{session_id}/messages", response_model=SendMessageResponse)
@@ -1462,45 +1514,45 @@ async def send_chat_message(
     使用会话配置的默认参数，也可临时覆盖
     """
     logger.info(f"[CHAT] 收到消息请求: session_id={session_id}, message={request.message[:50]}...")
-    
-    session = ChatHistoryManager.get_session(session_id)
+
+    session = await ChatHistoryManager.get_session(session_id)
     if not session:
         logger.warning(f"[CHAT] Session 不存在: {session_id}")
         raise HTTPException(status_code=404, detail="Session not found")
-    
+
     config = session["config"]
     mode = session["mode"]
-    
+
     logger.info(f"[CHAT] Session 配置: mode={mode}, skill={config.get('skill')}, temperature={config.get('temperature')}")
-    
-    ChatHistoryManager.add_message(session_id, "user", request.message)
-    logger.info(f"[CHAT] 用户消息已添加到内存历史: role=user, content={request.message[:50]}...")
-    
+
+    await ChatHistoryManager.add_message(session_id, "user", request.message)
+    logger.info(f"[CHAT] 用户消息已添加到历史: role=user, content={request.message[:50]}...")
+
     if chat_session_service:
         try:
-            history = ChatHistoryManager.get_history(session_id)
+            history = await ChatHistoryManager.get_history(session_id)
             message_history = [
-                {"role": msg.role, "content": msg.content, "timestamp": msg.timestamp.isoformat()}
+                {"role": msg["role"], "content": msg["content"], "timestamp": msg.get("timestamp")}
                 for msg in history
             ]
             await chat_session_service.update_message_history(session_id, message_history)
             logger.info(f"[CHAT] ✅ 用户消息已持久化到数据库: session_id={session_id}")
         except Exception as e:
             logger.error(f"[CHAT] ❌ 持久化用户消息失败: {e}")
-    
-    history = ChatHistoryManager.get_history(session_id)
-    
+
+    history = await ChatHistoryManager.get_history(session_id)
+
     effective_skill = request.skill or config.get("skill")
     effective_rag = request.enable_rag if request.enable_rag is not None else config.get("enable_rag", False)
-    
+
     logger.info(f"[CHAT] Effective parameters: skill={effective_skill}, rag={effective_rag}")
-    
+
     context = ""
     if effective_rag and rag_service:
         try:
             rag_result = await rag_service.query(
                 question=request.message,
-                history=[{"role": m.role, "content": m.content} for m in history[-5:]]
+                history=[{"role": m["role"], "content": m["content"]} for m in history[-5:]]
             )
             context = rag_result.answer
             logger.info(f"[CHAT] RAG 查询成功: context_length={len(context)}")
@@ -1517,9 +1569,9 @@ async def send_chat_message(
     
     if config.get("system_prompt"):
         context = f"{config['system_prompt']}\n\n{context}" if context else config["system_prompt"]
-    
+
     history_text = "\n".join([
-        f"{msg.role}: {msg.content}" 
+        f"{msg['role']}: {msg['content']}"
         for msg in history[-10:]
     ])
     
@@ -1549,15 +1601,15 @@ async def send_chat_message(
             max_tokens=3000
         )
         logger.info(f"[CHAT] ✅ LLM 调用成功: response_length={len(response_text)}")
-        
-        ChatHistoryManager.add_message(session_id, "assistant", response_text)
-        logger.info(f"[CHAT] 助手消息已添加到内存历史")
-        
+
+        await ChatHistoryManager.add_message(session_id, "assistant", response_text)
+        logger.info(f"[CHAT] 助手消息已添加到历史")
+
         if chat_session_service:
             try:
-                history = ChatHistoryManager.get_history(session_id)
+                history = await ChatHistoryManager.get_history(session_id)
                 message_history = [
-                    {"role": msg.role, "content": msg.content, "timestamp": msg.timestamp.isoformat()}
+                    {"role": msg["role"], "content": msg["content"], "timestamp": msg.get("timestamp")}
                     for msg in history
                 ]
                 await chat_session_service.update_message_history(session_id, message_history)
@@ -1598,20 +1650,20 @@ class ChatExportResponse(BaseModel):
 async def export_chat_history(session_id: str):
     """
     导出对话历史（用于生成剧本）
-    
+
     将对话历史转换为纯文本格式，可直接用于生成剧本的 context
     """
-    session = ChatHistoryManager.get_session(session_id)
+    session = await ChatHistoryManager.get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    
-    messages = ChatHistoryManager.get_history(session_id)
-    
+
+    messages = await ChatHistoryManager.get_history(session_id)
+
     history_text = "\n\n".join([
-        f"【{msg.role}】\n{msg.content}"
+        f"【{msg['role']}】\n{msg['content']}"
         for msg in messages
     ])
-    
+
     return ChatExportResponse(
         session_id=session_id,
         topic=session.get("config", {}).get("topic"),

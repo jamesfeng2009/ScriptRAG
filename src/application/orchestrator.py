@@ -49,6 +49,10 @@ from ..infrastructure.langgraph_error_handler import (
     with_error_handling,
 )
 from ..infrastructure.logging import get_agent_logger
+from ..services.persistence.agent_execution_persistence_service import (
+    agent_execution_service,
+    AgentExecutionRecord
+)
 from .base_orchestrator import BaseWorkflowOrchestrator
 
 
@@ -170,7 +174,60 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             f"task_stack={enable_task_stack}, max_depth={max_task_depth}, "
             f"tools={enable_tools})"
         )
-    
+
+    async def _record_agent_execution(
+        self,
+        agent_name: str,
+        node_name: str,
+        state: GlobalState,
+        updates: Dict[str, Any],
+        execution_time_ms: Optional[float] = None,
+        error: Optional[str] = None
+    ):
+        """记录 agent 执行情况到数据库"""
+        try:
+            task_id = self._get_state_value(state, "task_id", None)
+            chat_session_id = self._get_state_value(state, "chat_session_id", None)
+            current_step_index = self._get_state_value(state, "current_step_index", 0)
+            outline = self._get_state_value(state, "outline", [])
+            current_step = outline[current_step_index] if current_step_index < len(outline) else {}
+            step_id = current_step.get("step_id", None)
+
+            retry_count = self._get_state_value(state, "retrieval_retry_count", 0)
+
+            execution_id = f"exec_{uuid.uuid4().hex[:12]}"
+
+            record = AgentExecutionRecord(
+                execution_id=execution_id,
+                task_id=task_id,
+                chat_session_id=chat_session_id,
+                agent_name=agent_name,
+                node_name=node_name,
+                step_id=step_id,
+                step_index=current_step_index,
+                action=agent_name,
+                input_data={
+                    "user_topic": self._get_state_value(state, "user_topic", ""),
+                    "current_step_index": current_step_index,
+                    "retry_count": retry_count
+                },
+                output_data=updates,
+                status="error" if error else "success",
+                error_message=error,
+                execution_time_ms=execution_time_ms,
+                retry_count=retry_count,
+                extra_data={
+                    "agentic_rag_enabled": self.enable_agentic_rag,
+                    "dynamic_adjustment_enabled": self.enable_dynamic_adjustment
+                }
+            )
+
+            await agent_execution_service.create(record)
+            logger.info(f"[WorkflowOrchestrator] Agent 执行记录已落库: {agent_name} - {execution_id}")
+
+        except Exception as e:
+            logger.error(f"[WorkflowOrchestrator] Agent 执行记录落库失败: {e}")
+
     def _build_graph(self) -> StateGraph:
         """
         构建 LangGraph 状态图
@@ -534,14 +591,23 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             chat_history=chat_history,
             include_context=True
         )
-        
-        return {
+
+        updates = {
             "editor_response": result["response"],
             "chat_history": result["updated_chat_history"],
             "awaiting_user_input": result["requires_user_input"],
             "human_intervention": state.get("human_intervention"),
             "exceeded_max_iterations": result.get("exceeded_max_iterations", False)
         }
+
+        await self._record_agent_execution(
+            agent_name="editor",
+            node_name="editor",
+            state=state,
+            updates=updates
+        )
+
+        return updates
     
     @with_error_handling(agent_name="intent_parser", action_name="parse_intent")
     async def _intent_parser_node(self, state: GlobalState) -> Dict[str, Any]:
@@ -639,7 +705,14 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
                 "retry_count": retry_count
             }
         )
-        
+
+        await self._record_agent_execution(
+            agent_name="intent_parser",
+            node_name="intent_parser",
+            state=state,
+            updates=updates
+        )
+
         return updates
     
     @with_error_handling(agent_name="quality_eval", action_name="evaluate_quality")
@@ -788,7 +861,14 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
                 "suggestions_count": len(quality_evaluation.suggestions)
             }
         )
-        
+
+        await self._record_agent_execution(
+            agent_name="quality_eval",
+            node_name="quality_eval",
+            state=state,
+            updates=updates
+        )
+
         return updates
     
     @with_error_handling(agent_name="rag_analyzer", action_name="analyze_content")
@@ -848,6 +928,15 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
                 }
             )
         }
+
+        await self._record_agent_execution(
+            agent_name="rag_analyzer",
+            node_name="rag_analyzer",
+            state=state,
+            updates=updates
+        )
+
+        return updates
     
     @with_error_handling(agent_name="dynamic_director", action_name="direction_adjustment")
     async def _dynamic_director_node(self, state: GlobalState) -> Dict[str, Any]:
@@ -908,6 +997,15 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
                 }
             )
         }
+
+        await self._record_agent_execution(
+            agent_name="dynamic_director",
+            node_name="dynamic_director",
+            state=state,
+            updates=updates
+        )
+
+        return updates
     
     @with_error_handling(agent_name="skill_recommender", action_name="recommend_skill")
     async def _skill_recommender_node(self, state: GlobalState) -> Dict[str, Any]:
@@ -974,8 +1072,16 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
                 "reasoning": reasoning
             }
         ))
-        
+
         updates["execution_log"] = logs
+
+        await self._record_agent_execution(
+            agent_name="skill_recommender",
+            node_name="skill_recommender",
+            state=state,
+            updates=updates
+        )
+
         return updates
     
     @with_error_handling(agent_name="planner", action_name="generate_outline")
@@ -1007,7 +1113,14 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
                 step_id=None,
                 reason="generate_outline"
             )
-        
+
+        await self._record_agent_execution(
+            agent_name="planner",
+            node_name="planner",
+            state=state,
+            updates=updates
+        )
+
         return updates
     
     @with_error_handling(agent_name="navigator", action_name="retrieve_content")
@@ -1035,7 +1148,7 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
         retry_count = self._get_state_value(state, "retrieval_retry_count", 0)
         
         if current_step_index >= len(outline):
-            return {
+            updates = {
                 "workflow_complete": True,
                 "execution_log": [{
                     "timestamp": datetime.now().isoformat(),
@@ -1043,6 +1156,13 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
                     "action": f"navigation complete - all {len(outline)} steps processed"
                 }]
             }
+            await self._record_agent_execution(
+                agent_name="navigator",
+                node_name="navigator",
+                state=state,
+                updates=updates
+            )
+            return updates
         
         intent_obj = None
         if current_intent and isinstance(current_intent, dict):
@@ -1091,7 +1211,14 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
                 "enhanced_query": enhanced_query,
                 "execution_log": updated_state.execution_log
             }
-        
+
+        await self._record_agent_execution(
+            agent_name="navigator",
+            node_name="navigator",
+            state=state,
+            updates=updates
+        )
+
         return updates
     
     @with_error_handling(agent_name="director", action_name="evaluate_and_decide")
@@ -1111,8 +1238,17 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             状态更新字典
         """
         logger.info("执行导演节点")
-        
-        return await self.node_factory.director_node(state)
+
+        updates = await self.node_factory.director_node(state)
+
+        await self._record_agent_execution(
+            agent_name="director",
+            node_name="director",
+            state=state,
+            updates=updates
+        )
+
+        return updates
     
     @with_error_handling(agent_name="pivot_manager", action_name="handle_pivot")
     async def _pivot_manager_node(self, state: GlobalState) -> Dict[str, Any]:
@@ -1131,8 +1267,17 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             状态更新字典
         """
         logger.info("执行转向管理器节点")
-        
-        return await self.node_factory.pivot_manager_node(state)
+
+        updates = await self.node_factory.pivot_manager_node(state)
+
+        await self._record_agent_execution(
+            agent_name="pivot_manager",
+            node_name="pivot_manager",
+            state=state,
+            updates=updates
+        )
+
+        return updates
     
     @with_error_handling(agent_name="retry_protection", action_name="check_retry_limit")
     async def _retry_protection_node(self, state: GlobalState) -> Dict[str, Any]:
@@ -1151,8 +1296,17 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             状态更新字典
         """
         logger.info("执行重试保护节点")
-        
-        return await self.node_factory.retry_protection_node(state)
+
+        updates = await self.node_factory.retry_protection_node(state)
+
+        await self._record_agent_execution(
+            agent_name="retry_protection",
+            node_name="retry_protection",
+            state=state,
+            updates=updates
+        )
+
+        return updates
     
     @with_error_handling(agent_name="writer", action_name="generate_fragment")
     async def _writer_node(self, state: GlobalState) -> Dict[str, Any]:
@@ -1171,8 +1325,17 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             状态更新字典（包含 fragments 和 execution_log）
         """
         logger.info("执行编剧节点")
-        
-        return await self.node_factory.writer_node(state)
+
+        updates = await self.node_factory.writer_node(state)
+
+        await self._record_agent_execution(
+            agent_name="writer",
+            node_name="writer",
+            state=state,
+            updates=updates
+        )
+
+        return updates
     
     @with_error_handling(agent_name="fact_checker", action_name="verify_fragment")
     async def _fact_checker_node(self, state: GlobalState) -> Dict[str, Any]:
@@ -1191,8 +1354,17 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             状态更新字典
         """
         logger.info("执行事实检查器节点")
-        
-        return await self.node_factory.fact_checker_node(state)
+
+        updates = await self.node_factory.fact_checker_node(state)
+
+        await self._record_agent_execution(
+            agent_name="fact_checker",
+            node_name="fact_checker",
+            state=state,
+            updates=updates
+        )
+
+        return updates
     
     def _step_advancer_node(self, state: GlobalState) -> Dict[str, Any]:
         old_index = self._get_state_value(state, "current_step_index", 0)
@@ -1250,8 +1422,17 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             状态更新字典
         """
         logger.info("执行编译器节点")
-        
-        return await self.node_factory.compiler_node(state)
+
+        updates = await self.node_factory.compiler_node(state)
+
+        await self._record_agent_execution(
+            agent_name="compiler",
+            node_name="compiler",
+            state=state,
+            updates=updates
+        )
+
+        return updates
     
     async def execute(
         self,
@@ -1351,7 +1532,16 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
 
         except Exception as e:
             logger.error(f"协作管理失败: {str(e)}")
-            return {"collaboration_error": str(e)}
+            updates = {"collaboration_error": str(e)}
+
+            await self._record_agent_execution(
+                agent_name="collaboration_manager",
+                node_name="collaboration_manager",
+                state=state,
+                updates=updates
+            )
+
+            return updates
 
     @with_error_handling(agent_name="execution_tracer", action_name="trace_execution")
     async def _execution_tracer_node(self, state: GlobalState) -> Dict[str, Any]:
@@ -1389,7 +1579,16 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
 
         except Exception as e:
             logger.error(f"执行追踪失败: {str(e)}")
-            return {"tracing_error": str(e)}
+            updates = {"tracing_error": str(e)}
+
+            await self._record_agent_execution(
+                agent_name="execution_tracer",
+                node_name="execution_tracer",
+                state=state,
+                updates=updates
+            )
+
+            return updates
     
     @with_error_handling(agent_name="agent_reflection", action_name="agent_reflection")
     async def _agent_reflection_node(self, state: GlobalState) -> Dict[str, Any]:
@@ -1407,12 +1606,30 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
                 failure_context=state.get("last_error", {}),
                 state=state
             )
-            
-            return {
+
+            updates = {
                 "reflection_result": reflection_result,
                 "strategy_adjustment": reflection_result.get("adjustments", {}) if reflection_result else {}
             }
-            
+
+            await self._record_agent_execution(
+                agent_name="agent_reflection",
+                node_name="agent_reflection",
+                state=state,
+                updates=updates
+            )
+
+            return updates
+
         except Exception as e:
             logger.error(f"Agent 反思失败: {str(e)}")
-            return {"reflection_error": str(e)}
+            updates = {"reflection_error": str(e)}
+
+            await self._record_agent_execution(
+                agent_name="agent_reflection",
+                node_name="agent_reflection",
+                state=state,
+                updates=updates
+            )
+
+            return updates

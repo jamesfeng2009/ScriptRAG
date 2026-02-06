@@ -30,7 +30,7 @@ def create_initial_state(user_topic: str, project_context: str = None, **extra_f
         "project_context": project_context or f"Context for {user_topic}",
         "outline": [],
         "fragments": [],
-        "last_retrieved_docs": [],
+        "retrieved_docs": [],
         "execution_log": [],
         "current_step_index": 0,
         "error_flag": None,
@@ -124,7 +124,7 @@ async def test_orchestrator_initial_state_structure():
     assert "project_context" in initial_state
     assert "outline" in initial_state
     assert "fragments" in initial_state
-    assert "last_retrieved_docs" in initial_state
+    assert "retrieved_docs" in initial_state
     assert "execution_log" in initial_state
     assert "current_step_index" in initial_state
     assert "error_flag" in initial_state

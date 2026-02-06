@@ -115,3 +115,27 @@ class LLMCallLog(Base):
     response_preview = Column(Text, nullable=True)
     extra_data = Column(JSON, default={})
     created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)
+
+
+class AgentExecution(Base):
+    """Agent 执行记录实体（用于追踪每个 agent 的执行情况）"""
+    __tablename__ = 'agent_executions'
+    __table_args__ = {'schema': 'screenplay'}
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    execution_id = Column(String(36), nullable=False, index=True)
+    task_id = Column(String(36), nullable=True, index=True)
+    chat_session_id = Column(String(50), nullable=True, index=True)
+    agent_name = Column(String(50), nullable=False, index=True)
+    node_name = Column(String(50), nullable=False)
+    step_id = Column(String(50), nullable=True)
+    step_index = Column(Integer, nullable=True)
+    action = Column(String(100), nullable=True)
+    input_data = Column(JSON, nullable=True)
+    output_data = Column(JSON, nullable=True)
+    status = Column(String(20), nullable=False, default='success')
+    error_message = Column(Text, nullable=True)
+    execution_time_ms = Column(Float, nullable=True)
+    retry_count = Column(Integer, default=0)
+    extra_data = Column(JSON, default={})
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), index=True)

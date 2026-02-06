@@ -20,13 +20,7 @@ from src.domain.entities import Base
 config = context.config
 
 # 从环境变量读取数据库配置
-DATABASE_URL = (
-    f"postgresql+asyncpg://{os.getenv('POSTGRES_USER', 'postgres')}:"
-    f"{os.getenv('POSTGRES_PASSWORD', '123456')}@"
-    f"{os.getenv('POSTGRES_HOST', 'localhost')}:"
-    f"{os.getenv('POSTGRES_PORT', 5432)}/"
-    f"{os.getenv('POSTGRES_DB', 'term_sheet_db')}"
-)
+DATABASE_URL = "postgresql+asyncpg://postgres:123456@localhost:5433/Screenplay"
 config.set_main_option("sqlalchemy.url", DATABASE_URL)
 
 # Interpret the config file for Python logging

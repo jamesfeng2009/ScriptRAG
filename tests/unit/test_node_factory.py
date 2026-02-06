@@ -122,7 +122,7 @@ class TestPlannerNode:
             "outline": [],
             "current_step_index": 0,
             "fragments": [],
-            "last_retrieved_docs": [],
+            "retrieved_docs": [],
             "director_feedback": None,
             "execution_log": [],
             "error_flag": None,
@@ -151,7 +151,7 @@ class TestPlannerNode:
             "outline": [],
             "current_step_index": 0,
             "fragments": [],
-            "last_retrieved_docs": [],
+            "retrieved_docs": [],
             "director_feedback": None,
             "execution_log": [],
             "error_flag": None,
@@ -191,7 +191,7 @@ class TestNavigatorNode:
             "outline": [{"title": "第一步", "description": "描述"}],
             "current_step_index": 0,
             "fragments": [],
-            "last_retrieved_docs": [],
+            "retrieved_docs": [],
             "director_feedback": None,
             "execution_log": [],
             "error_flag": None,
@@ -200,8 +200,8 @@ class TestNavigatorNode:
 
         result = await factory.navigator_node(state)
 
-        assert "last_retrieved_docs" in result
-        assert len(result["last_retrieved_docs"]) > 0
+        assert "retrieved_docs" in result
+        assert len(result["retrieved_docs"]) > 0
 
     @pytest.mark.asyncio
     async def test_navigator_node_boundary_error(self):
@@ -219,7 +219,7 @@ class TestNavigatorNode:
             "outline": [{"title": "第一步"}],
             "current_step_index": 5,
             "fragments": [],
-            "last_retrieved_docs": [],
+            "retrieved_docs": [],
             "director_feedback": None,
             "execution_log": [],
             "error_flag": None,
@@ -250,7 +250,7 @@ class TestStepAdvancerNode:
             "outline": [{"title": "第一步"}, {"title": "第二步"}],
             "current_step_index": 0,
             "fragments": [],
-            "last_retrieved_docs": [],
+            "retrieved_docs": [],
             "director_feedback": None,
             "execution_log": [],
             "error_flag": None,
@@ -277,7 +277,7 @@ class TestStepAdvancerNode:
             "outline": [{"title": "第一步"}],
             "current_step_index": 0,
             "fragments": [],
-            "last_retrieved_docs": [],
+            "retrieved_docs": [],
             "director_feedback": None,
             "execution_log": [],
             "error_flag": None,
@@ -314,7 +314,7 @@ class TestDirectorNode:
             "outline": [],
             "current_step_index": 0,
             "fragments": [],
-            "last_retrieved_docs": [{"id": "doc1", "content": "测试"}],
+            "retrieved_docs": [{"id": "doc1", "content": "测试"}],
             "director_feedback": None,
             "execution_log": [],
             "error_flag": None,
@@ -351,7 +351,7 @@ class TestWriterNode:
             "outline": [{"title": "第一步"}],
             "current_step_index": 0,
             "fragments": [],
-            "last_retrieved_docs": [{"id": "doc1", "content": "参考内容"}],
+            "retrieved_docs": [{"id": "doc1", "content": "参考内容"}],
             "director_feedback": {"decision": "write"},
             "execution_log": [],
             "error_flag": None,

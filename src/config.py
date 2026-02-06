@@ -11,24 +11,16 @@ load_dotenv(override=True)
 @dataclass
 class DatabaseConfig:
     """数据库配置"""
-    host: str
-    port: int
-    database: str
-    user: str
-    password: str
+    host: str = "localhost"
+    port: int = 5433
+    database: str = "Screenplay"
+    user: str = "postgres"
+    password: str = "123456"
     echo: bool = False
     
     @classmethod
     def from_env(cls) -> "DatabaseConfig":
-        """从环境变量加载数据库配置"""
-        return cls(
-            host=os.getenv('POSTGRES_HOST', 'localhost'),
-            port=int(os.getenv('POSTGRES_PORT', 5433)),
-            database=os.getenv('POSTGRES_DB', 'Screenplay'),
-            user=os.getenv('POSTGRES_USER', 'postgres'),
-            password=os.getenv('POSTGRES_PASSWORD', '123456'),
-            echo=os.getenv('DATABASE_ECHO', 'false').lower() == 'true'
-        )
+        return cls()
     
     @property
     def url(self) -> str:

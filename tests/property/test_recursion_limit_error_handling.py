@@ -27,7 +27,7 @@ def create_mock_orchestrator():
         "retrieval_service": Mock(),
         "parser_service": Mock(),
         "summarization_service": Mock(),
-        "workspace_id": "test_workspace"
+        
     }
     return WorkflowOrchestrator(**mock_services)
 
@@ -39,7 +39,7 @@ def create_initial_state():
         "project_context": "Testing recursion limit error handling",
         "outline": [],
         "fragments": [],
-        "last_retrieved_docs": [],
+        "retrieved_docs": [],
         "execution_log": [],
         "current_step_index": 0,
         "error_flag": None,
@@ -129,7 +129,7 @@ async def test_execute_returns_global_state_dict():
         "project_context",
         "outline",
         "fragments",
-        "last_retrieved_docs",
+        "retrieved_docs",
         "execution_log",
         "current_step_index",
         "error_flag",

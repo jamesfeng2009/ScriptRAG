@@ -30,7 +30,7 @@ class TestMigrationBasics:
             "outline": [],
             "current_step_index": 0,
             "fragments": [],
-            "last_retrieved_docs": [],
+            "retrieved_docs": [],
             "director_feedback": None,
             "execution_log": [],
             "error_flag": None,

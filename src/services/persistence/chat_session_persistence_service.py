@@ -98,7 +98,7 @@ class ChatSessionPersistenceService:
             logger.info("ChatSessionPersistenceService disconnected")
     
     async def create(self, record: ChatSessionRecord) -> ChatSessionRecord:
-        """创建 Chat Session"""
+        """创建 Chat Session（幂等操作）- 如果已存在则忽略"""
         if not self._pool:
             await self.connect()
         
@@ -107,6 +107,7 @@ class ChatSessionPersistenceService:
                 """
                 INSERT INTO screenplay.chat_sessions (id, topic, mode, config, message_history, related_task_id, status, created_at, updated_at)
                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                ON CONFLICT (id) DO NOTHING
                 """,
                 record.id,
                 record.topic,
@@ -119,7 +120,7 @@ class ChatSessionPersistenceService:
                 record.updated_at or datetime.now()
             )
         
-        logger.info(f"ChatSession created: {record.id}")
+        logger.info(f"ChatSession created (idempotent): {record.id}")
         return record
     
     async def get(self, session_id: str) -> Optional[ChatSessionRecord]:
@@ -147,6 +148,32 @@ class ChatSessionPersistenceService:
             created_at=row["created_at"],
             updated_at=row["updated_at"]
         )
+    
+    async def list(self, limit: int = 100, offset: int = 0) -> List[ChatSessionRecord]:
+        """列出所有会话"""
+        if not self._pool:
+            await self.connect()
+        
+        async with self._pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT * FROM screenplay.chat_sessions ORDER BY created_at DESC LIMIT $1 OFFSET $2",
+                limit, offset
+            )
+        
+        return [
+            ChatSessionRecord(
+                id=row["id"],
+                topic=row["topic"] or "",
+                mode=row["mode"],
+                config=row["config"] if isinstance(row["config"], dict) else json.loads(row["config"]) if row["config"] else {},
+                message_history=row["message_history"] if isinstance(row["message_history"], list) else json.loads(row["message_history"]) if row["message_history"] else [],
+                related_task_id=row["related_task_id"],
+                status=row["status"] or "active",
+                created_at=row["created_at"],
+                updated_at=row["updated_at"]
+            )
+            for row in rows
+        ]
     
     async def update_message_history(
         self,

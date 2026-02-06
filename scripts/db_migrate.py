@@ -38,11 +38,11 @@ def check_database_connection():
         
         async def test_connection():
             conn = await asyncpg.connect(
-                host=os.getenv('POSTGRES_HOST', 'localhost'),
-                port=int(os.getenv('POSTGRES_PORT', 5432)),
-                user=os.getenv('POSTGRES_USER', 'postgres'),
-                password=os.getenv('POSTGRES_PASSWORD', 'postgres'),
-                database=os.getenv('POSTGRES_DB', 'screenplay_system')
+                host="localhost",
+                port=5433,
+                user="postgres",
+                password="123456",
+                database="Screenplay"
             )
             await conn.close()
             return True

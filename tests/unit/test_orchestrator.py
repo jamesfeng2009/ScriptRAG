@@ -19,8 +19,7 @@ def mock_services():
         "llm_service": Mock(),
         "retrieval_service": Mock(),
         "parser_service": Mock(),
-        "summarization_service": Mock(),
-        "workspace_id": "test_workspace"
+        "summarization_service": Mock()
     }
 
 
@@ -50,7 +49,7 @@ async def test_execute_accepts_recursion_limit_parameter(orchestrator, initial_s
         "project_context": initial_state.project_context,
         "outline": [],
         "fragments": [],
-        "last_retrieved_docs": [],
+        "retrieved_docs": [],
         "execution_log": [],
         "current_step_index": 0,
         "error_flag": None,
@@ -80,7 +79,7 @@ async def test_execute_default_recursion_limit_is_25(orchestrator, initial_state
         "project_context": initial_state.project_context,
         "outline": [],
         "fragments": [],
-        "last_retrieved_docs": [],
+        "retrieved_docs": [],
         "execution_log": [],
         "current_step_index": 0,
         "error_flag": None,
@@ -110,7 +109,7 @@ async def test_execute_passes_recursion_limit_to_langgraph(orchestrator, initial
         "project_context": initial_state.project_context,
         "outline": [],
         "fragments": [],
-        "last_retrieved_docs": [],
+        "retrieved_docs": [],
         "execution_log": [],
         "current_step_index": 0,
         "error_flag": None,
