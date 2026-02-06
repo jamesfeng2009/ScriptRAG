@@ -622,7 +622,7 @@ def example_usage():
         docs = retrieve_documents(outline[step_index])
         
         return {
-            "last_retrieved_docs": docs,
+            "retrieved_docs": docs,
             "execution_log": create_success_log(
                 agent="navigator",
                 action="retrieve_completed",

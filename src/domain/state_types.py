@@ -184,7 +184,7 @@ class GlobalState(TypedDict):
     │    保护：operator.add 实现物理级追加保护                     │
     ├─────────────────────────────────────────────────────────────┤
     │ 4. 临时交互数据 (Transient - Overwrite)                     │
-    │    last_retrieved_docs, director_feedback                   │
+    │    retrieved_docs, director_feedback                   │
     │    特点：每次节点流转时覆盖，仅供当次使用                    │
     │    保护：overwrite_reducer                                  │
     ├─────────────────────────────────────────────────────────────┤
@@ -227,7 +227,7 @@ class GlobalState(TypedDict):
     # ============================================================
     # 4. 临时交互数据 (Transient - Overwrite)
     # ============================================================
-    last_retrieved_docs: Annotated[List[Dict[str, Any]], overwrite_reducer]
+    retrieved_docs: Annotated[List[Dict[str, Any]], overwrite_reducer]
     director_feedback: Annotated[Optional[Dict[str, Any]], overwrite_reducer]
     fact_check_passed: Annotated[Optional[bool], overwrite_reducer]
     
@@ -339,7 +339,7 @@ def create_initial_state(
         "outline": [],
         "current_step_index": 0,
         "fragments": [],
-        "last_retrieved_docs": [],
+        "retrieved_docs": [],
         "director_feedback": None,
         "execution_log": [],
         "error_flag": None,

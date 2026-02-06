@@ -12,6 +12,20 @@ import logging
 from typing import List, Dict, Any, Optional, Tuple
 from pydantic import BaseModel
 
+from .interfaces import (
+    IService,
+    IServiceStatus,
+    IRetrievalService,
+    IRetrievalStrategy,
+    IQueryResult,
+    IDocument
+)
+from .errors import (
+    RetrievalServiceError,
+    create_error_context,
+    ErrorSeverity
+)
+
 from .database.vector_db import IVectorDBService
 from .llm.service import LLMService
 from .query_expansion import QueryExpansion, QueryOptimizer
@@ -53,9 +67,9 @@ from .advanced_retrieval import (
     AdvancedRetrievalResult
 )
 
-from .graprag_engine import GraphRAGEngine
+from .knowledge.graprag_engine import GraphRAGEngine
 
-from .retrieval_quality_assessor import (
+from .quality.retrieval_quality_assessor import (
     RetrievalQualityAssessor,
     QualityAssessment
 )
@@ -73,7 +87,7 @@ from .rag.cost_control import (
 logger = logging.getLogger(__name__)
 
 
-class RetrievalService:
+class RetrievalService(IRetrievalService):
     """
     检索服务
 
@@ -83,6 +97,8 @@ class RetrievalService:
     - 查询扩展和重排序
     - 自定义关键词标记支持
     - 高级检索增强（查询改写、Cross-Encoder精排、悬崖截断、GraphRAG多跳）
+
+    实现 IRetrievalService 接口
     """
 
     def __init__(
@@ -262,6 +278,134 @@ class RetrievalService:
             return True, "Cost control disabled"
 
         return await self.cost_controller.check_budget(estimated_tokens, operation)
+
+    @property
+    def status(self) -> IServiceStatus:
+        """获取服务状态"""
+        return IServiceStatus.HEALTHY
+
+    async def health_check(self) -> bool:
+        """健康检查"""
+        try:
+            if self.vector_db is not None:
+                return True
+            return False
+        except Exception:
+            return False
+
+    async def retrieve(
+        self,
+        query: str,
+        strategy: IRetrievalStrategy = IRetrievalStrategy.AUTO,
+        top_k: int = 10,
+        workspace_id: str = "default",
+        **kwargs
+    ) -> IQueryResult:
+        """
+        执行检索
+
+        Args:
+            query: 查询字符串
+            strategy: 检索策略
+            top_k: 返回结果数量
+            workspace_id: 工作空间 ID
+            **kwargs: 其他参数
+
+        Returns:
+            IQueryResult: 查询结果
+        """
+        strategy_map = {
+            IRetrievalStrategy.VECTOR: "vector_search",
+            IRetrievalStrategy.KEYWORD: "keyword_search",
+            IRetrievalStrategy.HYBRID: "hybrid_search",
+            IRetrievalStrategy.AUTO: None
+        }
+
+        strategy_name = strategy_map.get(strategy)
+
+        results = await self.hybrid_retrieve(
+            workspace_id=workspace_id,
+            query=query,
+            top_k=top_k,
+            strategy_name=strategy_name,
+            **kwargs
+        )
+
+        documents = []
+        for r in results:
+            doc = IDocument(
+                id=r.doc_id,
+                content=r.content,
+                metadata=r.metadata or {},
+                score=r.score
+            )
+            documents.append(doc)
+
+        return IQueryResult(
+            documents=documents,
+            query=query,
+            total_count=len(documents),
+            execution_time_ms=0.0
+        )
+
+    async def retrieve_with_filter(
+        self,
+        query: str,
+        filters: Dict[str, Any],
+        top_k: int = 10,
+        workspace_id: str = "default",
+        **kwargs
+    ) -> IQueryResult:
+        """
+        带过滤条件的检索
+
+        Args:
+            query: 查询字符串
+            filters: 过滤条件
+            top_k: 返回结果数量
+            workspace_id: 工作空间 ID
+            **kwargs: 其他参数
+
+        Returns:
+            IQueryResult: 查询结果
+        """
+        kwargs["filters"] = filters
+        return await self.retrieve(
+            query=query,
+            top_k=top_k,
+            workspace_id=workspace_id,
+            **kwargs
+        )
+
+    async def batch_retrieve(
+        self,
+        queries: List[str],
+        top_k: int = 10,
+        workspace_id: str = "default",
+        **kwargs
+    ) -> List[IQueryResult]:
+        """
+        批量检索
+
+        Args:
+            queries: 查询列表
+            top_k: 返回结果数量
+            workspace_id: 工作空间 ID
+            **kwargs: 其他参数
+
+        Returns:
+            List[IQueryResult]: 结果列表
+        """
+        results = []
+        for query in queries:
+            result = await self.retrieve(
+                query=query,
+                top_k=top_k,
+                workspace_id=workspace_id,
+                **kwargs
+            )
+            results.append(result)
+        return results
 
     def _compress_results_if_needed(
         self,
@@ -448,9 +592,23 @@ class RetrievalService:
             logger.info(f"Hybrid retrieval returned {len(final_results)} results")
             return final_results
 
-        except Exception as e:
-            logger.error(f"Hybrid retrieval failed: {str(e)}")
+        except RetrievalServiceError:
             raise
+        except Exception as e:
+            error_ctx = create_error_context(
+                service_name="RetrievalService",
+                operation="hybrid_retrieve",
+                workspace_id=workspace_id,
+                query=query
+            )
+            logger.error(f"Hybrid retrieval failed: {str(e)}")
+            raise RetrievalServiceError(
+                message=f"Hybrid retrieval failed: {str(e)}",
+                error_code="HYBRID_RETRIEVAL_ERROR",
+                severity=ErrorSeverity.HIGH,
+                context=error_ctx,
+                cause=e
+            ) from e
 
     def _optimize_query(self, query: str) -> str:
         """优化查询"""

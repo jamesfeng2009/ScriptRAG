@@ -5,10 +5,9 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime
 from uuid import uuid4
 
-from sqlalchemy import text, select, insert, update, delete
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from src.utils.database_utils import build_db_url
 

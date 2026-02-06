@@ -6,7 +6,7 @@ from typing import List, Optional, Dict, Any
 from datetime import datetime
 import asyncpg
 
-from ..domain.skills import SkillConfig, SKILLS
+from src.domain.skills import SkillConfig, SKILLS
 
 logger = logging.getLogger(__name__)
 

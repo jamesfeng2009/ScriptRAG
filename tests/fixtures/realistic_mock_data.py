@@ -339,12 +339,10 @@ def create_mock_llm_service() -> Mock:
         )
         
         has_verification_context = (
-            ("验证" in last_message) or
-            ("verify" in last_message_lower) or
-            ("一致性" in last_message) or
-            ("consistent" in last_message_lower) or
-            ("比较" in last_message) or
-            ("compare" in last_message_lower)
+            (("验证" in last_message) and ("一致性" in last_message or "compare" in last_message_lower)) or
+            ("verify" in last_message_lower and ("consistent" in last_message_lower or "compare" in last_message_lower)) or
+            ("一致性" in last_message and ("verify" in last_message_lower or "验证" in last_message)) or
+            ("verify" in last_message_lower and "fragment" in last_message_lower and ("consistent" in last_message_lower or "content" in last_message_lower))
         )
         
         # Also check if message is specifically about hallucination detection
@@ -377,6 +375,46 @@ def create_mock_llm_service() -> Mock:
                 }
                 for doc in docs
             ])
+
+        elif task_type == "lightweight":
+            import json
+            return json.dumps({
+                "primary_intent": "了解 Python 异步编程的基本概念和使用方法",
+                "keywords": ["async", "await", "asyncio", "异步编程", "Python", "协程"],
+                "search_sources": ["rag"],
+                "confidence": 0.95,
+                "alternative_intents": [],
+                "intent_type": "informational",
+                "language": "zh"
+            })
+
+        elif "primary_intent" in last_message.lower() or "关键词" in last_message:
+            import json
+            return json.dumps({
+                "primary_intent": "了解 Python 异步编程的基本概念和使用方法",
+                "keywords": ["async", "await", "asyncio", "异步编程", "Python", "协程"],
+                "search_sources": ["rag"],
+                "confidence": 0.95,
+                "alternative_intents": [],
+                "intent_type": "informational",
+                "language": "zh"
+            })
+
+        # Check for writer (longer, more detailed response)
+        elif task_type == "writer":
+            # Writer agent - return longer, more detailed response
+            return """Python异步编程是现代软件开发中的重要技术，它允许开发者编写高效的并发代码而不会阻塞主线程。通过使用`async`和`await`关键字，我们可以将耗时的IO操作（如网络请求、数据库查询）转换为非阻塞操作，从而显著提升应用程序的性能和响应速度。
+
+在实际项目中，`asyncio`模块提供了强大的工具来处理异步操作。例如，`run_with_timeout()`函数展示了如何使用`asyncio.wait_for()`来为协程设置超时限制，这对于防止程序无限期等待外部资源至关重要。当执行外部API调用或数据库查询时，设置合理的超时时间可以避免因网络问题或服务不可用导致的程序卡死。
+
+`gather_with_concurrency()`函数是另一个重要的异步工具，它通过使用`asyncio.Semaphore`来限制并发任务的数量。这种模式在处理大量并发请求时特别有用，例如网页抓取或批量API调用。通过控制同时执行的任务数量，我们可以避免对目标服务器造成过大压力，同时充分利用系统资源。
+
+异步上下文管理器（如示例中的`AsyncContextManager`类）提供了一种优雅的方式来管理资源，如数据库连接、网络连接等。通过实现`__aenter__`和`__aexit__`方法，我们可以确保资源在使用后正确释放，即使发生异常也能保证资源的清理工作得到执行。`retry_async`装饰器则为异步函数提供了自动重试机制，这对于处理暂时性故障（如网络抖动）非常有帮助。"""
+
+        # Check for fact_check task type
+        elif task_type == "fact_check":
+            # Fact checker - always return VALID to prevent regeneration loops (需求 4.4)
+            return "VALID"
         
         # Check for planner first (most specific with "生成大纲")
         if "生成大纲" in last_message or ("outline" in last_message_lower and "generate" in last_message_lower):
@@ -479,10 +517,37 @@ def create_mock_retrieval_service() -> Mock:
     ) -> List[Any]:
         """Mock hybrid retrieval that returns realistic code examples"""
         return create_realistic_retrieval_results(query, top_k)
-    
-    # Set up the mock
+
+    async def mock_retrieve_with_strategy(
+        workspace_id: str,
+        query: str,
+        strategy_name: str,
+        top_k: int = 5
+    ) -> List[Any]:
+        """Mock retrieve with strategy for navigator compatibility"""
+        return create_realistic_retrieval_results(query, top_k)
+
+    async def mock_vector_search(
+        workspace_id: str,
+        query: str,
+        top_k: int = 5
+    ) -> List[Any]:
+        """Mock vector search"""
+        return create_realistic_retrieval_results(query, top_k)
+
+    async def mock_keyword_search(
+        workspace_id: str,
+        query: str,
+        top_k: int = 5
+    ) -> List[Any]:
+        """Mock keyword search"""
+        return create_realistic_retrieval_results(query, top_k)
+
     mock_service.hybrid_retrieve = AsyncMock(side_effect=mock_hybrid_retrieve)
-    
+    mock_service.retrieve_with_strategy = AsyncMock(side_effect=mock_retrieve_with_strategy)
+    mock_service.vector_search = AsyncMock(side_effect=mock_vector_search)
+    mock_service.keyword_search = AsyncMock(side_effect=mock_keyword_search)
+
     return mock_service
 
 
@@ -575,4 +640,17 @@ def create_mock_parser_service() -> Mock:
     # Set up the mock
     mock_service.parse = Mock(side_effect=mock_parse)
     
+    return mock_service
+
+
+def create_mock_summarization_service() -> Mock:
+    """Create mock summarization service for testing
+    
+    Returns mock summarization service that returns False for check_size
+    (indicating content is within limits).
+    """
+    from unittest.mock import Mock
+    
+    mock_service = Mock()
+    mock_service.check_size = Mock(return_value=False)
     return mock_service

@@ -2,7 +2,7 @@
 
 import pytest
 import asyncio
-from src.services.skill_persistence_service import (
+from src.services.persistence.skill_persistence_service import (
     SkillRecord,
     SkillDatabaseService,
     SkillService

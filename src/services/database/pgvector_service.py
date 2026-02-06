@@ -66,7 +66,7 @@ from src.services.database.vector_db import (
     IVectorDBService,
     VectorSearchResult
 )
-from src.services.document_chunker import SmartChunker, Chunk
+from src.services.documents.document_chunker import SmartChunker
 from src.utils.database_utils import build_db_url
 
 logger = logging.getLogger(__name__)

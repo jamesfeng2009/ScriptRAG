@@ -677,7 +677,7 @@ class AgentExecutionTracer:
         
         keys_to_keep = [
             "current_step_index", "outline_length", "workflow_complete",
-            "last_retrieved_docs_count", "director_feedback",
+            "retrieved_docs_count", "director_feedback",
             "fact_check_passed", "content_length"
         ]
         

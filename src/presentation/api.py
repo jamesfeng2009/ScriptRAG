@@ -15,9 +15,8 @@ from ..domain.state_types import GlobalState
 from ..application.orchestrator import WorkflowOrchestrator
 from ..services.llm.service import LLMService
 from ..services.retrieval_service import RetrievalService, RetrievalConfig
-from ..services.summarization_service import SummarizationService
 from ..infrastructure.logging import configure_logging
-from ..services.task_persistence_service import TaskDatabaseService, TaskRecord, TaskService
+from ..services.persistence.task_persistence_service import TaskDatabaseService, TaskRecord, TaskService
 
 
 logger = logging.getLogger(__name__)
@@ -535,7 +534,7 @@ async def run_generation(task_id: str, request_data: Dict[str, Any]):
             "current_step_index": 0,
             "fragments": [],
             "execution_log": [],
-            "last_retrieved_docs": [],
+            "retrieved_docs": [],
             "director_feedback": None,
             "fact_check_passed": True,
             "error_flag": None,

@@ -11,7 +11,7 @@ import logging
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 
-from src.config import get_database_config, get_llm_config
+from src.config import get_database_config
 from src.services.database.postgres import PostgresService
 from src.services.llm.service import LLMService
 from src.services.reranker import MultiFactorReranker

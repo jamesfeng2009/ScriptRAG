@@ -1,22 +1,72 @@
-"""服务层 - LLM 适配器、数据库服务、解析服务
+"""
+服务层 - LLM 适配器、数据库服务、解析服务
 
-检索增强模块：
-- query_rewriter: 查询意图消歧和复杂查询分解（增强版：缓存+意图分类）
-- query_expansion: 使用 LLM 进行查询扩展
-- hybrid_search: 混合检索（向量 + BM25）
-- cross_encoder_reranker: Cross-Encoder 和 MMR 重排序
-- adaptive_threshold: 自适应阈值和悬崖边缘截止
-- enhanced_parent_retriever: 小到大的检索与上下文合并
-- graprag_engine: GraphRAG 多跳检索引擎
-- advanced_retrieval: 高级检索流水线（查询改写、混合检索、CrossEncoder、GraphRAG）
-- retrieval_quality_assessor: 检索质量评估（覆盖度、一致性、新鲜度、完整性）
-- hallucination_detection: 幻觉检测完善（细粒度检测+预防+修复）
-- session_manager: 会话状态持久化（断点续传）
-- enhanced_cache: 增强检索缓存（多级缓存+预热）
+组织结构：
+├── core/               # 核心服务（LLM、检索、RAG、会话）
+├── retrieval/          # 检索相关（策略、合并、阈值）
+├── knowledge/          # 知识处理（分块、索引、知识图谱）
+├── quality/            # 质量保障（幻觉检测、质量评估）
+├── cache/              # 缓存服务
+├── monitoring/         # 监控服务
+├── database/           # 数据库服务
+├── llm/               # LLM 服务
+├── rag/               # RAG 服务
+├── parser/             # 解析服务
+├── optimization/       # 优化服务
+└── interfaces.py       # 服务接口定义
 """
 
 from .llm.service import LLMService
 
+# ============== Service Interfaces (服务接口) ==============
+from .interfaces import (
+    IDocument,
+    IQueryResult,
+    IRetrievalStrategy,
+    IServiceStatus,
+    IRetrievalService,
+    ILLMService,
+    IRAGService,
+    ICacheService,
+    IStorageService,
+    IMonitoringService,
+)
+
+# ============== Service Errors (服务错误) ==============
+from .errors import (
+    ServiceError,
+    ServiceErrorContext,
+    ErrorSeverity,
+    ErrorCategory,
+    RetrievalServiceError,
+    LLMServiceError,
+    RAGServiceError,
+    CacheServiceError,
+    SessionServiceError,
+    StorageServiceError,
+    ValidationError,
+    create_error_context,
+)
+
+# ============== Mock Services (Mock 服务 - 用于测试) ==============
+from .mocks import (
+    MockRetrievalService,
+    MockLLMService,
+    MockRAGService,
+    MockCacheService,
+    MockStorageService,
+    MockMonitoringService,
+    MockDocument,
+    MockQueryResult,
+    create_mock_services,
+)
+
+# ============== Core Services (核心服务) ==============
+from .retrieval_service import RetrievalService
+from .rag.rag_service import RAGService
+from .core.summarization_service import SummarizationService
+
+# ============== Retrieval Enhancement (检索增强) ==============
 from .query_rewriter import (
     QueryRewriter,
     QueryContext,
@@ -51,14 +101,23 @@ from .retrieval.adaptive_threshold import (
     CliffEdgeCutoff
 )
 
-from .enhanced_parent_retriever import (
+from .retrieval.strategies import RetrievalResult, RetrievalStrategy
+from .retrieval.mergers import ResultMerger
+from .retrieval.config import RetrievalConfig
+from .retrieval.strategies import IVectorDBService
+
+from .reranker import MultiFactorReranker
+
+from .documents.enhanced_parent_retriever import (
     EnhancedParentDocumentRetriever,
     SmallToBigRetrievalPipeline,
     MergedContext,
     MergeConfig
 )
 
-from .graprag_engine import (
+from .documents.parent_document_retriever import ParentDocumentRetriever
+
+from .knowledge.graprag_engine import (
     GraphRAGEngine,
     DocumentDependencyGraph,
     GraphTraversalEngine,
@@ -81,9 +140,14 @@ from .advanced_retrieval import (
     EnhancementResult
 )
 
-from .retrieval_service import RetrievalService
+# ============== Knowledge Processing (知识处理) ==============
+from .documents.document_chunker import SmartChunker, Chunk
+from .documents.document_chunks_service import DocumentChunksService
+from .documents.document_persistence_service import DocumentService as DocumentPersistenceService
+from .knowledge.knowledge_graph_service import KnowledgeGraphService, KnowledgeNodeModel as Entity, KnowledgeRelationModel as Relation
 
-from .retrieval_quality_assessor import (
+# ============== Quality Assurance (质量保障) ==============
+from .quality.retrieval_quality_assessor import (
     RetrievalQualityAssessor,
     NegativeSampleFilter,
     QualityAssessment,
@@ -93,7 +157,7 @@ from .retrieval_quality_assessor import (
     CompletenessAnalyzer
 )
 
-from .hallucination_detection import (
+from .quality.hallucination_detection import (
     GranularHallucinationDetector,
     HallucinationClassifier,
     HallucinationPrevention,
@@ -106,23 +170,89 @@ from .hallucination_detection import (
     CodeEntity
 )
 
-from .session_manager import (
-    SessionManager,
-    SessionState,
-    SessionConfig,
-    InMemorySessionStore
+# ============== Cache & Storage (缓存与存储) ==============
+from .cache.enhanced_cache import (
+    EnhancedRetrievalCache,
+    EnhancedCacheConfig,
+    CacheStats,
+    RewriteResultCacheEntry
 )
 
-from .retrieval.config import RetrievalConfig
-from .retrieval.strategies import RetrievalResult, RetrievalStrategy
-from .retrieval.mergers import ResultMerger
-from .retrieval.strategies import IVectorDBService
+from .documents.incremental_storage import (
+    IncrementalStorageOptimizer,
+    DeltaState,
+    StateDiffCalculator
+)
+
+# ============== Session & Persistence (会话与持久化) ==============
+from .persistence.chat_session_persistence_service import (
+    ChatSessionPersistenceService,
+    ChatSessionRecord
+)
+
+from .persistence.task_persistence_service import TaskService as TaskPersistenceService
+from .persistence.skill_persistence_service import SkillService as SkillPersistenceService
+from .retrieval_logs_service import RetrievalLogsService
+from .llm_call_logger import LLMCallLogger
+
+# ============== Skill & Routing (技能与路由) ==============
+from .persistence.skill_routing_service import SkillRoutingService
+from .rag.skill_aware_rag import SkillAwareRAGService as SkillAwareRAG
+
+# ============== API & Monitoring (API与监控) ==============
+from .api_usage_stats_service import APIUsageStatsService
+
+from .monitoring.retrieval_monitor import RetrievalMonitor
+from .monitoring.skill_monitoring import SkillMonitor as SkillMonitoringService
+
+# ============== Utility Services (工具服务) ==============
+from .retrieval_isolation import RetrievalIsolation
 
 __all__ = [
-    # LLM
+    # ============== Interfaces (接口) ==============
+    "IDocument",
+    "IQueryResult",
+    "IRetrievalStrategy",
+    "IServiceStatus",
+    "IRetrievalService",
+    "ILLMService",
+    "IRAGService",
+    "ICacheService",
+    "IStorageService",
+    "IMonitoringService",
+
+    # ============== Errors (错误) ==============
+    "ServiceError",
+    "ServiceErrorContext",
+    "ErrorSeverity",
+    "ErrorCategory",
+    "RetrievalServiceError",
+    "LLMServiceError",
+    "RAGServiceError",
+    "CacheServiceError",
+    "SessionServiceError",
+    "StorageServiceError",
+    "ValidationError",
+    "create_error_context",
+
+    # ============== Mock Services (Mock 服务) ==============
+    "MockRetrievalService",
+    "MockLLMService",
+    "MockRAGService",
+    "MockCacheService",
+    "MockStorageService",
+    "MockMonitoringService",
+    "MockDocument",
+    "MockQueryResult",
+    "create_mock_services",
+
+    # ============== Core (核心) ==============
     "LLMService",
-    
-    # 查询处理
+    "RetrievalService",
+    "RAGService",
+    "SummarizationService",
+
+    # ============== Retrieval Enhancement ==============
     "QueryRewriter",
     "QueryContext",
     "RewriteResult",
@@ -131,34 +261,30 @@ __all__ = [
     "RewriteCacheEntry",
     "QueryExpansion",
     "QueryOptimizer",
-    
-    # 混合搜索
     "HybridSearchService",
     "HybridSearchConfig",
     "RRFEngine",
     "BM25KeywordSearch",
     "FusionResult",
-    
-    # 重排序
     "CrossEncoderReranker",
     "MMMReranker",
     "RerankingPipeline",
     "RerankConfig",
     "RerankResult",
-    
-    # 自适应阈值
     "AdaptiveThresholdStrategy",
     "AdaptiveThresholdConfig",
     "ThresholdAnalysisResult",
     "CliffEdgeCutoff",
-    
-    # 父文档检索
+    "RetrievalResult",
+    "RetrievalStrategy",
+    "ResultMerger",
+    "RetrievalConfig",
+    "IVectorDBService",
+    "MultiFactorReranker",
     "EnhancedParentDocumentRetriever",
     "SmallToBigRetrievalPipeline",
     "MergedContext",
     "MergeConfig",
-    
-    # GraphRAG
     "GraphRAGEngine",
     "DocumentDependencyGraph",
     "GraphTraversalEngine",
@@ -167,19 +293,25 @@ __all__ = [
     "GraphEdge",
     "NodeType",
     "RelationType",
-    
-    # 高级检索流水线
     "AdvancedRetrievalPipeline",
     "AdvancedPipelineBuilder",
     "AdvancedRetrievalConfig",
     "AdvancedRetrievalResult",
-    # 向后兼容别名
     "RetrievalEnhancementPipeline",
     "RetrievalPipelineBuilder",
     "EnhancementConfig",
     "EnhancementResult",
-    
-    # 质量评估
+
+    # ============== Knowledge ==============
+    "SmartChunker",
+    "Chunk",
+    "DocumentChunksService",
+    "DocumentPersistenceService",
+    "KnowledgeGraphService",
+    "Entity",
+    "Relation",
+
+    # ============== Quality ==============
     "RetrievalQualityAssessor",
     "NegativeSampleFilter",
     "QualityAssessment",
@@ -187,8 +319,6 @@ __all__ = [
     "ConsistencyAnalyzer",
     "FreshnessAnalyzer",
     "CompletenessAnalyzer",
-    
-    # 幻觉检测
     "GranularHallucinationDetector",
     "HallucinationClassifier",
     "HallucinationPrevention",
@@ -200,25 +330,33 @@ __all__ = [
     "FragmentHallucinationResult",
     "CodeEntity",
 
-    # 会话管理
-    "SessionManager",
-    "SessionState",
-    "SessionConfig",
-    "InMemorySessionStore",
-
-    # 增强缓存
+    # ============== Cache & Storage ==============
     "EnhancedRetrievalCache",
     "EnhancedCacheConfig",
     "CacheStats",
     "RewriteResultCacheEntry",
+    "IncrementalStorageOptimizer",
+    "DeltaState",
+    "StateDiffCalculator",
 
-    # 主服务
-    "RetrievalService",
-    
-    # 通用类型
-    "RetrievalResult",
-    "RetrievalStrategy",
-    "ResultMerger",
-    "RetrievalConfig",
-    "IVectorDBService",
+    # ============== Session & Persistence ==============
+    "ChatSessionPersistenceService",
+    "ChatSessionRecord",
+    "TaskPersistenceService",
+    "SkillPersistenceService",
+    "RetrievalLogsService",
+    "LLMCallLogger",
+
+    # ============== Skill & Routing ==============
+    "SkillRoutingService",
+    "SkillAwareRAG",
+
+    # ============== API & Monitoring ==============
+    "APIUsageStatsService",
+    "RetrievalMonitor",
+    "SkillMonitoringService",
+
+    # ============== Utility ==============
+    "RetrievalIsolation",
+    "ParentDocumentRetriever",
 ]

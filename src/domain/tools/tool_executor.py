@@ -171,7 +171,7 @@ class ToolExecutor:
             )
         
         step = outline[parsed.outline_index]
-        retrieved_docs = state.get("last_retrieved_docs", [])
+        retrieved_docs = state.get("retrieved_docs", [])
         
         fragment_content = await self.node_factory._generate_fragment_content(
             step=step,
@@ -305,7 +305,7 @@ class ToolExecutor:
             )
         
         step = outline[parsed.step_index]
-        retrieved_docs = state.get("last_retrieved_docs", [])
+        retrieved_docs = state.get("retrieved_docs", [])
         
         new_content = await self.node_factory._generate_fragment_content(
             step=step,
@@ -392,7 +392,7 @@ class ToolExecutor:
         content = result.get("content", {})
         
         if tool_name == TOOL_RETRIEVE and "documents" in content:
-            state["last_retrieved_docs"] = content["documents"]
+            state["retrieved_docs"] = content["documents"]
         
         elif tool_name == TOOL_WRITE_FRAGMENT and "fragment" in content:
             fragments = state.get("fragments", [])

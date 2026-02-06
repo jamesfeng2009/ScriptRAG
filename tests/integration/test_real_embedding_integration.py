@@ -29,12 +29,12 @@ load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file_
 
 from src.services.llm.service import LLMService
 from src.services.database.pgvector_service import PgVectorDBService
-from src.services.parent_document_retriever import (
+from src.services.documents.parent_document_retriever import (
     ParentDocumentStore,
     ParentDocumentRetriever,
     ParentDocumentType
 )
-from src.services.document_chunker import SmartChunker
+from src.services.documents.document_chunker import SmartChunker
 
 
 def create_llm_service():

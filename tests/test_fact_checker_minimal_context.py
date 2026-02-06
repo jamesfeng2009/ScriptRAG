@@ -18,6 +18,10 @@ from src.domain.agents.fact_checker_minimal_context import (
     FactCheckerMinimalContext,
     VerificationScope,
 )
+from src.domain.agents.fact_checker import (
+    build_verification_messages,
+    parse_verification_response
+)
 
 
 class TestFactCheckerMinimalContext:
@@ -33,7 +37,7 @@ class TestFactCheckerMinimalContext:
             "user_topic": "Python async",
             "project_context": "async guide",
             "outline": [{"step": 1}, {"step": 2}],
-            "last_retrieved_docs": [
+            "retrieved_docs": [
                 {"id": 1, "source": "doc1.md", "content": "async improves I/O", "citation": "[1]"},
                 {"id": 2, "source": "doc2.md", "content": "async/await syntax", "citation": "[2]"}
             ],
@@ -90,7 +94,7 @@ class TestFactCheckerMinimalContext:
     def test_extract_retrieved_docs_for_verification(self):
         """测试提取验证用检索文档"""
         state = {
-            "last_retrieved_docs": [
+            "retrieved_docs": [
                 {"id": 1, "source": "doc1.md", "content": "content 1", "citation": "[1]"},
                 {"id": 2, "source": "doc2.md", "content": "content 2", "citation": "[2]"},
                 {"id": 3, "source": "doc3.md", "content": "content 3", "citation": "[3]"}
@@ -106,7 +110,7 @@ class TestFactCheckerMinimalContext:
     def test_extract_retrieved_docs_limit(self):
         """测试限制文档数量"""
         state = {
-            "last_retrieved_docs": [
+            "retrieved_docs": [
                 {"id": i, "source": f"doc{i}.md", "content": f"content {i}"}
                 for i in range(10)
             ]
@@ -118,20 +122,20 @@ class TestFactCheckerMinimalContext:
 
     def test_extract_retrieved_docs_empty(self):
         """测试空检索结果"""
-        state = {"last_retrieved_docs": []}
+        state = {"retrieved_docs": []}
 
         docs = self.handler.extract_retrieved_docs_for_verification(state)
 
         assert len(docs) == 0
 
-    def test_format_sources_for_verification(self):
+    def test_format_sources_summary(self):
         """测试格式化源文档"""
         retrieved_docs = [
             {"source": "doc1.md", "content": "async improves I/O performance", "citation": "[1]"},
             {"source": "doc2.md", "content": "async/await syntax overview", "citation": "[2]"}
         ]
 
-        formatted = self.handler.format_sources_for_verification(retrieved_docs)
+        formatted = self.handler.format_sources_summary(retrieved_docs)
 
         assert "[1] doc1.md:" in formatted
         assert "[2] doc2.md:" in formatted
@@ -139,32 +143,31 @@ class TestFactCheckerMinimalContext:
 
     def test_format_sources_empty(self):
         """测试格式化空源文档"""
-        formatted = self.handler.format_sources_for_verification([])
+        formatted = self.handler.format_sources_summary([])
 
         assert "无检索文档" in formatted
 
-    def test_create_verification_prompt(self):
-        """测试创建验证提示"""
+    def test_create_verification_messages(self):
+        """测试创建验证消息"""
         fragment_content = "Use async to improve I/O performance"
         retrieved_docs = [
             {"source": "doc1.md", "content": "async improves I/O", "citation": "[1]"}
         ]
 
-        messages = self.handler.create_verification_prompt(
+        messages = self.handler.create_verification_messages(
             fragment_content=fragment_content,
-            retrieved_docs=retrieved_docs,
-            verification_scope=VerificationScope.DEFAULT_SCOPE
+            retrieved_docs=retrieved_docs
         )
 
         assert len(messages) == 2
         assert messages[0]["role"] == "system"
         assert messages[1]["role"] == "user"
         assert "async improves I/O" in messages[1]["content"]
-        assert "待验证的片段内容" in messages[1]["content"]
+        assert "生成的片段内容" in messages[1]["content"]
 
     def test_parse_verification_result_valid(self):
         """测试解析有效结果"""
-        result = self.handler.parse_verification_result("VALID")
+        result = parse_verification_response("VALID")
 
         assert result[0] is True
         assert result[1] == []
@@ -175,7 +178,7 @@ class TestFactCheckerMinimalContext:
 - 幻觉: 函数 async_handler 未在源文档中找到
 - 幻觉: 参数 timeout 类型错误"""
 
-        is_valid, hallucinations = self.handler.parse_verification_result(response)
+        is_valid, hallucinations = parse_verification_response(response)
 
         assert is_valid is False
         assert len(hallucinations) == 2
@@ -185,7 +188,7 @@ class TestFactCheckerMinimalContext:
         """测试解析无法解析的结果"""
         response = "Some unclear response"
 
-        is_valid, hallucinations = self.handler.parse_verification_result(response)
+        is_valid, hallucinations = parse_verification_response(response)
 
         assert is_valid is True
         assert hallucinations == []
@@ -232,7 +235,7 @@ class TestVerificationScope:
             "project_context": "context",
             "current_step_query": "query",
             "fragments": [{"id": 1}, {"id": 2}, {"id": 3}],
-            "last_retrieved_docs": [{"id": i} for i in range(10)],
+            "retrieved_docs": [{"id": i} for i in range(10)],
             "outline": [{"step": 1}, {"step": 2}],
             "current_step_index": 1
         }
@@ -241,7 +244,7 @@ class TestVerificationScope:
         filtered = VerificationScope.apply_scope(scope, state)
 
         assert len(filtered["fragments"]) == 1
-        assert len(filtered["last_retrieved_docs"]) == 3
+        assert len(filtered["retrieved_docs"]) == 3
         assert "current_step" in filtered
 
     def test_apply_scope_with_history_access(self):
@@ -250,7 +253,7 @@ class TestVerificationScope:
             "user_topic": "test",
             "project_context": "context",
             "fragments": [{"id": 1}, {"id": 2}],
-            "last_retrieved_docs": [{"id": 1}],
+            "retrieved_docs": [{"id": 1}],
             "outline": [{"step": 1}, {"step": 2}],
             "current_step_index": 0
         }
@@ -276,7 +279,7 @@ class TestHallucinationControlIntegration:
 
         state = {
             "user_topic": "test",
-            "last_retrieved_docs": [{"id": 1, "content": "current"}],
+            "retrieved_docs": [{"id": 1, "content": "current"}],
             "fragments": [{"content": "current fragment"}],
             "current_step_index": 5,
             "execution_log": [{"action": "old error", "step": 0}],
@@ -296,7 +299,7 @@ class TestHallucinationControlIntegration:
 
         state = {
             "user_topic": "test",
-            "last_retrieved_docs": [{"id": 1, "content": "step 1 result"}],
+            "retrieved_docs": [{"id": 1, "content": "step 1 result"}],
             "fragments": [{"content": "step 1 fragment"}],
             "current_step_index": 1
         }
@@ -314,7 +317,7 @@ class TestHallucinationControlIntegration:
             "user_topic": "Python async",
             "project_context": "comprehensive guide",
             "outline": [{"step": i} for i in range(50)],
-            "last_retrieved_docs": [{"id": i, "content": f"doc {i}" * 100} for i in range(20)],
+            "retrieved_docs": [{"id": i, "content": f"doc {i}" * 100} for i in range(20)],
             "fragments": [{"content": f"fragment {i}" * 50} for i in range(100)],
             "execution_log": [{"action": f"log {i}"} for i in range(500)],
             "current_step_index": 10
@@ -347,7 +350,7 @@ class TestEdgeCases:
 
         state = {
             "user_topic": None,
-            "last_retrieved_docs": [None, {"content": "valid"}],
+            "retrieved_docs": [None, {"content": "valid"}],
             "fragments": [{"content": None, "fact_check_passed": False}]
         }
 

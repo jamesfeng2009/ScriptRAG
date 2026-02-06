@@ -21,8 +21,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from collections import Counter
 
-from .retrieval.strategies import RetrievalResult
-from .llm.service import LLMService
+from ..retrieval.strategies import RetrievalResult
+from ..llm.service import LLMService
 
 logger = logging.getLogger(__name__)
 

@@ -43,7 +43,7 @@ from datetime import datetime
 from .llm.service import LLMService
 from .database.vector_db import IVectorDBService
 
-from .query_rewriter import QueryRewriter, QueryContext
+from .query_rewriter import QueryRewriter
 from .query_expansion import QueryExpansion
 
 from .hybrid_search import (
@@ -62,9 +62,9 @@ from .cross_encoder_reranker import (
 
 from .retrieval.adaptive_threshold import AdaptiveThresholdStrategy, AdaptiveThresholdConfig
 
-from .enhanced_parent_retriever import EnhancedParentDocumentRetriever, SmallToBigRetrievalPipeline
+from .documents.enhanced_parent_retriever import EnhancedParentDocumentRetriever, SmallToBigRetrievalPipeline
 
-from .graprag_engine import GraphRAGEngine
+from .knowledge.graprag_engine import GraphRAGEngine
 
 from .retrieval.strategies import RetrievalResult
 

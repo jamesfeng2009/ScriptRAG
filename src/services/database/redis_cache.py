@@ -13,11 +13,9 @@ import hashlib
 import sys
 from pathlib import Path
 from typing import Optional, Any, Dict, List
-from datetime import timedelta
 import redis.asyncio as redis
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
-from config import get_redis_config, RedisConfig
 
 
 logger = logging.getLogger(__name__)

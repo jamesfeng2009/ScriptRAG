@@ -17,7 +17,7 @@ from typing import List, Dict, Any, Optional, Tuple
 
 from ..models import SharedState, ScreenplayFragment, RetrievedDocument
 from ...services.llm.service import LLMService
-from ...services.hallucination_detection import (
+from ...services.quality.hallucination_detection import (
     GranularHallucinationDetector,
     HallucinationClassifier,
     HallucinationPrevention,
@@ -35,6 +35,82 @@ from ...infrastructure.error_handler import (
 
 logger = logging.getLogger(__name__)
 agent_logger = get_agent_logger(__name__)
+
+
+def build_verification_messages(
+    fragment_content: str,
+    sources_summary: str
+) -> List[Dict[str, str]]:
+    """
+    构建事实检查的验证消息
+
+    Args:
+        fragment_content: 片段内容
+        sources_summary: 源文档摘要
+
+    Returns:
+        格式化的消息列表
+    """
+    return [
+        {
+            "role": "system",
+            "content": (
+                "你是一个事实检查专家。你的任务是验证生成的内容是否与提供的源文档一致。\n"
+                "请仔细检查以下内容：\n"
+                "1. 代码示例是否存在于源文档中\n"
+                "2. 函数名、类名、参数名是否准确\n"
+                "3. 技术细节是否与源文档匹配\n"
+                "4. 是否有编造的信息（幻觉）\n\n"
+                "如果发现幻觉，请列出具体的幻觉内容。\n"
+                "如果内容完全基于源文档，请回答 'VALID'。\n"
+                "如果发现幻觉，请回答 'INVALID' 并列出幻觉，格式为：\n"
+                "INVALID\n"
+                "- 幻觉1: 描述\n"
+                "- 幻觉2: 描述\n"
+            )
+        },
+        {
+            "role": "user",
+            "content": (
+                f"源文档内容:\n{sources_summary}\n\n"
+                f"生成的片段内容:\n{fragment_content}\n\n"
+                f"请验证生成的片段是否与源文档一致："
+            )
+        }
+    ]
+
+
+def parse_verification_response(response_text: str) -> Tuple[bool, List[str]]:
+    """
+    解析事实检查的响应
+
+    Args:
+        response_text: LLM 响应文本
+
+    Returns:
+        (is_valid, hallucinations) 元组
+    """
+    response_text = response_text.strip()
+
+    if response_text.startswith("VALID"):
+        return True, []
+
+    elif response_text.startswith("INVALID"):
+        hallucinations = []
+        lines = response_text.split('\n')
+
+        for line in lines[1:]:
+            line = line.strip()
+            if line.startswith('-') or line.startswith('•'):
+                hallucination = line.lstrip('-•').strip()
+                if hallucination:
+                    hallucinations.append(hallucination)
+
+        return False, hallucinations
+
+    else:
+        logger.warning(f"Cannot parse verification result: {response_text[:100]}")
+        return True, []
 
 
 async def verify_fragment(
@@ -72,81 +148,22 @@ async def verify_fragment(
             f"源文档 {i+1} ({doc.source}):\n{doc.content[:1000]}..."
             for i, doc in enumerate(retrieved_docs[:5])  # 最多使用前 5 个文档
         ])
-        
+
         # 构建验证提示
-        messages = [
-            {
-                "role": "system",
-                "content": (
-                    "你是一个事实检查专家。你的任务是验证生成的内容是否与提供的源文档一致。\n"
-                    "请仔细检查以下内容：\n"
-                    "1. 代码示例是否存在于源文档中\n"
-                    "2. 函数名、类名、参数名是否准确\n"
-                    "3. 技术细节是否与源文档匹配\n"
-                    "4. 是否有编造的信息（幻觉）\n\n"
-                    "如果发现幻觉，请列出具体的幻觉内容。\n"
-                    "如果内容完全基于源文档，请回答 'VALID'。\n"
-                    "如果发现幻觉，请回答 'INVALID' 并列出幻觉，格式为：\n"
-                    "INVALID\n"
-                    "- 幻觉1: 描述\n"
-                    "- 幻觉2: 描述\n"
-                )
-            },
-            {
-                "role": "user",
-                "content": (
-                    f"源文档内容:\n{sources_summary}\n\n"
-                    f"生成的片段内容:\n{fragment.content}\n\n"
-                    f"请验证生成的片段是否与源文档一致："
-                )
-            }
-        ]
-        
+        messages = build_verification_messages(fragment.content, sources_summary)
+
         # 调用 LLM 进行验证
         logger.info(f"Fact Checker: Verifying fragment for step {fragment.step_id}")
-        
+
         response = await llm_service.chat_completion(
             messages=messages,
             task_type="high_performance",  # 事实检查使用高性能模型
             temperature=0.1,  # 低温度以获得更确定的结果
             max_tokens=1000
         )
-        
+
         # 解析响应
-        response_text = response.strip()
-        
-        logger.info(f"Fact Checker: LLM response: {response_text[:100]}")
-        
-        if response_text.startswith("VALID"):
-            logger.info(f"Fact Checker: Fragment for step {fragment.step_id} is valid")
-            return True, []
-        
-        elif response_text.startswith("INVALID"):
-            # 提取幻觉列表
-            hallucinations = []
-            lines = response_text.split('\n')
-            
-            for line in lines[1:]:  # 跳过第一行 "INVALID"
-                line = line.strip()
-                if line.startswith('-') or line.startswith('•'):
-                    # 移除列表标记
-                    hallucination = line.lstrip('-•').strip()
-                    if hallucination:
-                        hallucinations.append(hallucination)
-            
-            logger.warning(
-                f"Fact Checker: Fragment for step {fragment.step_id} contains "
-                f"{len(hallucinations)} hallucinations"
-            )
-            
-            return False, hallucinations
-        
-        else:
-            # 无法解析响应，使用启发式方法
-            logger.warning(
-                f"Fact Checker: Unable to parse LLM response, using heuristic method"
-            )
-            return _heuristic_verification(fragment, retrieved_docs)
+        return parse_verification_response(response)
     
     except Exception as e:
         logger.error(f"Fact Checker verification failed: {str(e)}")

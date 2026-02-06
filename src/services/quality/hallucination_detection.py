@@ -42,7 +42,7 @@ from typing import Any, Callable, Dict, List, Optional, Pattern, Set, Tuple
 from difflib import SequenceMatcher
 from urllib.parse import urlparse
 
-from ..services.llm.service import LLMService
+from ..llm.service import LLMService
 
 logger = logging.getLogger(__name__)
 

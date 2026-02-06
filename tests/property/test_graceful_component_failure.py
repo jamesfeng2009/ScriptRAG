@@ -32,7 +32,7 @@ from src.infrastructure.error_handler import (
 )
 from src.services.llm.service import LLMService
 from src.services.retrieval_service import RetrievalService
-from src.services.summarization_service import SummarizationService
+from src.services.core.summarization_service import SummarizationService
 from src.domain.agents.fact_checker import verify_fragment_node
 from src.domain.agents.writer import generate_fragment
 

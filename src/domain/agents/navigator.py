@@ -20,7 +20,7 @@ from ..state_types import GlobalState
 from ..models import RetrievedDocument, IntentAnalysis, OutlineStep
 from ...services.retrieval_service import RetrievalService
 from ...services.parser.tree_sitter_parser import IParserService
-from ...services.summarization_service import SummarizationService
+from ...services.core.summarization_service import SummarizationService
 from ...services.optimization import (
     SmartSkipOptimizer,
     CacheBasedSkipper,

@@ -10,9 +10,9 @@ import logging
 from typing import Optional, Dict, Any
 from pydantic import BaseModel
 
-from .llm.service import LLMService
-from .parser.tree_sitter_parser import ParsedCode
-from ..infrastructure.error_handler import (
+from ..llm.service import LLMService
+from ..parser.tree_sitter_parser import ParsedCode
+from ...infrastructure.error_handler import (
     SummarizerError,
     handle_component_errors
 )

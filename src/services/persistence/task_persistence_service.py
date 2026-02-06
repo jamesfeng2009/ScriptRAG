@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sess
 from sqlalchemy.pool import NullPool
 from sqlalchemy.dialects.postgresql import insert
 
-from ..domain.entities import Base, Task
+from src.domain.entities import Base, Task
 
 logger = logging.getLogger(__name__)
 

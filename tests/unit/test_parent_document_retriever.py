@@ -13,14 +13,14 @@ import os
 import shutil
 from pathlib import Path
 
-from src.services.parent_document_retriever import (
+from src.services.documents.parent_document_retriever import (
     ParentDocumentStore,
     ParentDocumentRetriever,
     ParentDocumentType,
     ParentDocument,
     ChildChunk,
 )
-from src.services.document_chunker import (
+from src.services.documents.document_chunker import (
     SmartChunker,
     FileType,
     Chunk,

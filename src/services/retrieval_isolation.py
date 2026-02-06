@@ -58,7 +58,7 @@ class RetrievalIsolation:
     3. 提供最小化上下文给 FactChecker
 
     与 GlobalState 的交互：
-    - 写入：last_retrieved_docs（每步覆盖）
+    - 写入：retrieved_docs（每步覆盖）
     - 隔离：retrieval_history（Agent 不可见）
     """
 
@@ -170,7 +170,7 @@ class RetrievalIsolation:
             最小化上下文
         """
         step_index = state.get("current_step_index", 0)
-        retrieved_docs = state.get("last_retrieved_docs", [])
+        retrieved_docs = state.get("retrieved_docs", [])
 
         sources = []
         citations = []
@@ -208,7 +208,7 @@ class RetrievalIsolation:
         Returns:
             最小化上下文
         """
-        retrieved_docs = state.get("last_retrieved_docs", [])
+        retrieved_docs = state.get("retrieved_docs", [])
 
         sources = []
         for doc in retrieved_docs:
@@ -236,7 +236,7 @@ class RetrievalIsolation:
             清空后的状态
         """
         new_state = state.copy()
-        new_state["last_retrieved_docs"] = []
+        new_state["retrieved_docs"] = []
         new_state["current_step_query"] = ""
 
         logger.debug(
@@ -341,7 +341,7 @@ class ContextMinimizer:
         else:
             minimized["current_step"] = {}
 
-        retrieved_docs = state.get("last_retrieved_docs", [])
+        retrieved_docs = state.get("retrieved_docs", [])
         if isinstance(retrieved_docs, list):
             minimized["retrieved_docs"] = retrieved_docs[:config["max_docs"]]
             minimized["doc_count"] = len(minimized["retrieved_docs"])

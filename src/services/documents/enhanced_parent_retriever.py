@@ -26,7 +26,7 @@ from .parent_document_retriever import (
     ParentDocumentType
 )
 
-from .retrieval.strategies import RetrievalResult
+from ..retrieval.strategies import RetrievalResult
 
 logger = logging.getLogger(__name__)
 

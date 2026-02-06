@@ -19,6 +19,10 @@ from datetime import datetime
 
 from ...services.retrieval_isolation import ContextMinimizer
 from ...infrastructure.logging import get_agent_logger
+from .fact_checker import (
+    build_verification_messages,
+    parse_verification_response
+)
 
 
 logger = logging.getLogger(__name__)
@@ -120,7 +124,7 @@ class FactCheckerMinimalContext:
         Returns:
             过滤后的检索文档列表
         """
-        retrieved_docs = state.get("last_retrieved_docs", [])
+        retrieved_docs = state.get("retrieved_docs", [])
 
         if not retrieved_docs:
             logger.info("No retrieved docs for verification - research mode or missing retrieval")
@@ -150,18 +154,18 @@ class FactCheckerMinimalContext:
         max_docs = 3
         return filtered_docs[:max_docs]
 
-    def format_sources_for_verification(
+    def format_sources_summary(
         self,
         retrieved_docs: List[Dict[str, Any]]
     ) -> str:
         """
-        格式化源文档用于验证提示
+        格式化源文档摘要
 
         Args:
             retrieved_docs: 检索文档列表
 
         Returns:
-            格式化的源文档字符串
+            格式化的源文档摘要字符串
         """
         if not retrieved_docs:
             return "（无检索文档）"
@@ -179,94 +183,23 @@ class FactCheckerMinimalContext:
 
         return "\n\n".join(sources_summary)
 
-    def create_verification_prompt(
+    def create_verification_messages(
         self,
         fragment_content: str,
-        retrieved_docs: List[Dict[str, Any]],
-        verification_scope: Dict[str, Any]
+        retrieved_docs: List[Dict[str, Any]]
     ) -> List[Dict[str, str]]:
         """
-        创建验证提示
-
-        设计原则：
-        - 提示 FactChecker 只验证当前片段
-        - 不提及其他历史片段
-        - 要求标注来源
+        创建验证消息
 
         Args:
             fragment_content: 片段内容
-            retrieved_docs: 检索文档
-            verification_scope: 验证范围配置
+            retrieved_docs: 检索文档列表
 
         Returns:
             格式化的消息列表
         """
-        sources_formatted = self.format_sources_for_verification(retrieved_docs)
-
-        system_message = """你是一个事实检查专家。你的任务是验证生成的内容是否与提供的源文档一致。
-
-验证原则：
-1. 只验证当前片段与源文档的一致性
-2. 不要假设其他片段的内容（每个片段独立验证）
-3. 检查代码示例是否存在于源文档中
-4. 检查函数名、类名、参数名是否准确
-5. 检查技术细节是否与源文档匹配
-
-输出格式：
-- 如果内容完全基于源文档，回答 'VALID'
-- 如果发现幻觉，回答 'INVALID' 并列出幻觉，每个幻觉格式为：`- 幻觉: 描述`
-
-注意：
-- 最多检查前 5 个源文档
-- 如果源文档不足以验证某个陈述，明确说明"""
-
-        user_message = f"""源文档内容:
-{sources_formatted}
-
-待验证的片段内容:
-{fragment_content}
-
-请验证生成的片段是否与源文档一致："""
-
-        return [
-            {"role": "system", "content": system_message},
-            {"role": "user", "content": user_message}
-        ]
-
-    def parse_verification_result(
-        self,
-        response_text: str
-    ) -> Tuple[bool, List[str]]:
-        """
-        解析验证结果
-
-        Args:
-            response_text: LLM 响应文本
-
-        Returns:
-            (is_valid, hallucinations)
-        """
-        response_text = response_text.strip()
-
-        if response_text.startswith("VALID"):
-            return True, []
-
-        elif response_text.startswith("INVALID"):
-            hallucinations = []
-            lines = response_text.split('\n')
-
-            for line in lines[1:]:
-                line = line.strip()
-                if line.startswith('- ') or line.startswith('• '):
-                    hallucination = line[2:].strip()
-                    if hallucination:
-                        hallucinations.append(hallucination)
-
-            return False, hallucinations
-
-        else:
-            logger.warning(f"Cannot parse verification result: {response_text[:100]}")
-            return True, []
+        sources_summary = self.format_sources_summary(retrieved_docs)
+        return build_verification_messages(fragment_content, sources_summary)
 
     def create_verification_record(
         self,
@@ -378,12 +311,12 @@ class VerificationScope:
             else:
                 filtered_state["fragments"] = []
 
-        retrieved_docs = state.get("last_retrieved_docs", [])
+        retrieved_docs = state.get("retrieved_docs", [])
         if isinstance(retrieved_docs, list):
             max_docs = scope.get("max_retrieval_docs", 3)
-            filtered_state["last_retrieved_docs"] = retrieved_docs[:max_docs]
+            filtered_state["retrieved_docs"] = retrieved_docs[:max_docs]
         else:
-            filtered_state["last_retrieved_docs"] = []
+            filtered_state["retrieved_docs"] = []
 
         outline = state.get("outline", [])
         if isinstance(outline, list) and scope.get("can_access_history"):

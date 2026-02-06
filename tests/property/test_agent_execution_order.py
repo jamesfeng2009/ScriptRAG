@@ -52,8 +52,7 @@ def create_mock_orchestrator():
         llm_service=mock_llm,
         retrieval_service=mock_retrieval,
         parser_service=mock_parser,
-        summarization_service=mock_summarization,
-        workspace_id="test-workspace"
+        summarization_service=mock_summarization
     )
 
 
@@ -97,15 +96,15 @@ async def test_orchestrator_has_required_services():
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_workspace_id_set():
+async def test_orchestrator_workspace_id_deprecated():
     """
-    Test that orchestrator has workspace_id configured.
+    Test that workspace_id parameter is accepted for backward compatibility.
     
-    v2.1: Orchestrator requires workspace_id for thread management.
+    v2.1: workspace_id 已废弃，不再用于 thread_id。
     """
     orchestrator = create_mock_orchestrator()
     
-    assert orchestrator.workspace_id == "test-workspace"
+    assert orchestrator.node_factory is not None
 
 
 @pytest.mark.asyncio

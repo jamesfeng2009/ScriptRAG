@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
-from src.services.graprag_engine import (
+from src.services.knowledge.graprag_engine import (
     GraphRAGEngine,
     DocumentDependencyGraph,
     GraphTraversalEngine,

@@ -16,6 +16,7 @@ v2.1 架构变更：
 """
 
 import logging
+import uuid
 from datetime import datetime
 from typing import Dict, Any, Optional
 from langgraph.graph import StateGraph, END
@@ -43,8 +44,7 @@ from ..domain.agents.navigator import retrieve_content
 from ..services.llm.service import LLMService
 from ..services.retrieval_service import RetrievalService
 from ..services.parser.tree_sitter_parser import IParserService
-from ..services.summarization_service import SummarizationService
-from ..services.session_manager import SessionManager
+from ..services.core.summarization_service import SummarizationService
 from ..infrastructure.langgraph_error_handler import (
     with_error_handling,
 )
@@ -83,12 +83,9 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
         retrieval_service: RetrievalService,
         parser_service: IParserService,
         summarization_service: SummarizationService,
-        workspace_id: str,
+        workspace_id: str = "",  # 已废弃，保留参数兼容
         enable_dynamic_adjustment: bool = False,
         enable_agentic_rag: bool = True,
-        session_manager: Optional[SessionManager] = None,
-        auto_save_sessions: bool = False,
-        save_interval_steps: int = 5,
         enable_task_stack: bool = False,
         max_task_depth: int = 3,
         enable_tools: bool = False,
@@ -103,12 +100,9 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             retrieval_service: 检索服务实例
             parser_service: 解析服务实例
             summarization_service: 摘要服务实例
-            workspace_id: 工作空间 ID
+            workspace_id: 已废弃，保留用于向后兼容
             enable_dynamic_adjustment: 是否启用动态方向调整（默认关闭以保持兼容性）
             enable_agentic_rag: 是否启用 Agentic RAG（默认启用：意图解析 + 质量评估）
-            session_manager: 会话管理器实例（可选，用于断点续传）
-            auto_save_sessions: 是否自动保存会话状态
-            save_interval_steps: 自动保存间隔（步数）
             enable_task_stack: 是否启用 Task Stack（用于嵌套任务管理，默认关闭）
             max_task_depth: Task Stack 最大嵌套深度
             enable_tools: 是否启用工具服务（用于 Function Calling，默认关闭）
@@ -119,7 +113,6 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
         self.retrieval_service = retrieval_service
         self.parser_service = parser_service
         self.summarization_service = summarization_service
-        self.workspace_id = workspace_id
         self.enable_dynamic_adjustment = enable_dynamic_adjustment
         self.enable_agentic_rag = enable_agentic_rag
         self.max_retrieval_retries = max_retrieval_retries
@@ -129,7 +122,6 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             retrieval_service=retrieval_service,
             parser_service=parser_service,
             summarization_service=summarization_service,
-            workspace_id=workspace_id,
             use_task_stack=enable_task_stack,
             max_task_depth=max_task_depth
         )
@@ -638,7 +630,7 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
         
         updates["execution_log"] = create_success_log(
             agent="intent_parser",
-            action_name="parse_intent",
+            action="parse_intent",
             details={
                 "step_id": current_step.get("step_id"),
                 "query": query[:100],
@@ -706,7 +698,7 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
                 },
                 "execution_log": create_success_log(
                     agent="quality_eval",
-                    action_name="evaluate_quality",
+                    action="evaluate_quality",
                     details={
                         "step_id": current_step.get("step_id"),
                         "doc_count": 0,
@@ -783,7 +775,7 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
         
         updates["execution_log"] = create_success_log(
             agent="quality_eval",
-            action_name="evaluate_quality",
+            action="evaluate_quality",
             details={
                 "step_id": current_step.get("step_id"),
                 "doc_count": len(retrieved_docs),
@@ -850,7 +842,7 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             "director_feedback": {"rag_analysis": rag_analysis},
             "execution_log": create_success_log(
                 agent="rag_analyzer",
-                action_name="analyze_content",
+                action="analyze_content",
                 details={
                     "step_id": current_step.get("step_id"),
                     "content_types": analysis.content_types,
@@ -911,7 +903,7 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             },
             "execution_log": create_success_log(
                 agent="dynamic_director",
-                action_name="direction_adjustment",
+                action="direction_adjustment",
                 details={
                     "adjustment_type": adjustment.adjustment_type.value if adjustment else "no_change",
                     "reason": adjustment.reason if adjustment else "",
@@ -977,7 +969,7 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
         
         logs.append(create_success_log(
             agent="skill_recommender",
-            action_name="recommend_skill",
+            action="recommend_skill",
             details={
                 "step_id": current_step.get("step_id"),
                 "recommended_skill": recommended_skill,
@@ -1268,122 +1260,46 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
     async def execute(
         self,
         initial_state: Dict[str, Any],
-        session_id: Optional[str] = None,
         recursion_limit: int = 25
     ) -> Dict[str, Any]:
         """
         执行工作流
 
-        支持断点续传功能：
-        1. 如果提供了 session_id，尝试恢复之前的会话状态
-        2. 执行过程中自动保存会话状态（如果启用）
-        3. 执行完成后保存最终状态
-
         参数:
             initial_state: 初始状态字典
-            session_id: 会话 ID（用于恢复之前的会话）
             recursion_limit: 递归限制（默认25）
 
         返回:
-            包含success、session_id和最终状态的字典
-
-        使用示例:
-            # 启动新会话
-            result = await orchestrator.execute(initial_state)
-            print(f"Session ID: {result['session_id']}")
-
-            # 恢复之前的会话
-            restored = await orchestrator.execute(
-                initial_state,
-                session_id=result['session_id']
-            )
+            包含 success 和最终状态的字典
         """
-        current_session_id = session_id
-
+        thread_id = f"run_{uuid.uuid4().hex[:8]}"
+        
         try:
-            if current_session_id and self.session_manager:
-                restored_state = await self.session_manager.load_session(current_session_id)
-                if restored_state:
-                    logger.info(f"从会话 {current_session_id} 恢复，继续执行")
-                    initial_state = restored_state
-                    initial_state["resumed_from_session"] = current_session_id
-                else:
-                    logger.warning(f"会话 {current_session_id} 不存在，将创建新会话")
-                    current_session_id = None
-
             logger.info(f"开始执行工作流，recursion_limit={recursion_limit}")
             logger.info(f"Agentic RAG 模式: {self.enable_agentic_rag}")
 
             config = {
                 "recursion_limit": recursion_limit,
                 "configurable": {
-                    "thread_id": self.workspace_id
+                    "thread_id": thread_id
                 }
             }
 
             final_state = await self.graph.ainvoke(initial_state, config=config)
 
-            if self.session_manager and current_session_id:
-                await self.session_manager.save_session(
-                    current_session_id,
-                    final_state,
-                    self.workspace_id
-                )
-
             logger.info("工作流执行完成")
             return {
                 "success": True,
-                "session_id": current_session_id,
                 "state": final_state
             }
 
         except Exception as e:
             logger.error(f"工作流执行失败: {str(e)}")
-
-            if self.session_manager and current_session_id:
-                try:
-                    await self.session_manager.save_session(
-                        current_session_id,
-                        initial_state,
-                        self.workspace_id
-                    )
-                    logger.info(f"已保存失败状态到会话 {current_session_id}")
-                except Exception as save_error:
-                    logger.error(f"保存失败状态失败: {str(save_error)}")
-
             return {
                 "success": False,
-                "session_id": current_session_id,
                 "error": str(e),
                 "state": initial_state
             }
-
-    async def save_checkpoint(
-        self,
-        state: Dict[str, Any],
-        session_id: str
-    ) -> bool:
-        """
-        保存检查点
-
-        用于在执行过程中手动保存状态。
-
-        Args:
-            state: 当前状态
-            session_id: 会话 ID
-
-        Returns:
-            是否保存成功
-        """
-        if not self.session_manager:
-            logger.warning("未配置 session_manager，无法保存检查点")
-            return False
-
-        return await self.session_manager.save_session(
-            session_id,
-            state,
-            self.workspace_id
-        )
     
     async def execute_streaming(self, initial_state: Dict[str, Any]):
         """

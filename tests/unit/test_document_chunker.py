@@ -14,7 +14,7 @@ import pytest
 import tempfile
 import os
 from pathlib import Path
-from src.services.document_chunker import (
+from src.services.documents.document_chunker import (
     SmartChunker,
     EncodingDetector,
     BinaryDetector,

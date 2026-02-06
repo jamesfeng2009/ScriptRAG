@@ -7,7 +7,7 @@ are in tests/integration/test_skill_service_integration.py
 import pytest
 from unittest.mock import AsyncMock, MagicMock
 from datetime import datetime
-from src.services.skill_persistence_service import (
+from src.services.persistence.skill_persistence_service import (
     SkillRecord,
     SkillDatabaseService,
     SkillService

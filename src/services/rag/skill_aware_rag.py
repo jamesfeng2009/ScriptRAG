@@ -17,13 +17,10 @@ from datetime import datetime
 from src.domain.skills import (
     SkillConfig,
     SKILLS,
-    default_skill_manager,
 )
 from src.domain.skill_router import ContentAnalysis
-from src.services.skill_routing_service import (
+from src.services.persistence.skill_routing_service import (
     SkillRoutingService,
-    RoutingContext,
-    RoutingResult,
     ContextEnricher,
     create_routing_service,
     default_routing_service,

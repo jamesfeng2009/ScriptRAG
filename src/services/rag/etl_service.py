@@ -15,7 +15,7 @@ from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 
 from src.config import get_database_config, get_llm_config
-from src.services.document_chunker import SmartChunker, create_smart_chunker
+from src.services.documents.document_chunker import SmartChunker, create_smart_chunker
 from src.services.database.postgres import PostgresService
 from src.services.rag.document_repository import (
     DocumentRepository,

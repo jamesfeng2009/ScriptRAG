@@ -20,8 +20,8 @@ from src.domain.skills import SKILLS
 from src.presentation.api import (
     ChatHistoryManager,
 )
-from src.services.task_persistence_service import TaskRecord
-from src.services.chat_session_persistence_service import (
+from src.services.persistence.task_persistence_service import TaskRecord
+from src.services.persistence.chat_session_persistence_service import (
     ChatSessionPersistenceService,
     ChatSessionRecord,
 )

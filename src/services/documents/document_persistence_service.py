@@ -358,8 +358,6 @@ def _create_chunker(llm_service=None):
     Returns:
         SmartChunker 实例
     """
-    from .document_chunker import SmartChunker
-
     return SmartChunker(
         llm_service=llm_service,
         enable_contextual_enrichment=llm_service is not None,

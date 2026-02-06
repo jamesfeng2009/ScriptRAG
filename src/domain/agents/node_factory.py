@@ -58,7 +58,7 @@ from ..task_stack import TaskStackManager, TaskContext
 from ...services.llm.service import LLMService
 from ...services.retrieval_service import RetrievalService
 from ...services.parser.tree_sitter_parser import IParserService
-from ...services.summarization_service import SummarizationService
+from ...services.core.summarization_service import SummarizationService
 from ...services.retrieval_isolation import ContextMinimizer
 from ...domain.agents.fact_checker_minimal_context import FactCheckerMinimalContext
 from ...domain.agents.director import detect_conflicts
@@ -320,7 +320,7 @@ class NodeFactory:
     @DataAccessControl.agent_access(
         agent_name="navigator",
         reads={"outline", "current_step_index", "project_context"},
-        writes={"last_retrieved_docs", "execution_log"},
+        writes={"retrieved_docs", "execution_log"},
         description="检索相关文档 - 根据当前步骤检索参考资料"
     )
     @with_error_handling(agent_name="navigator", action_name="retrieve", error_category=ErrorCategory.RETRIEVAL)
@@ -330,12 +330,12 @@ class NodeFactory:
         
         职责：
         - 根据当前步骤检索相关文档
-        - 将检索结果写入 last_retrieved_docs（覆盖）
+        - 将检索结果写入 retrieved_docs（覆盖）
         - 记录执行日志
         
         数据流向：
         - 输入：current_step_index, outline, project_context
-        - 输出：last_retrieved_docs (Overwrite)
+        - 输出：retrieved_docs (Overwrite)
         
         Returns:
             Dict[str, Any]: Diff 更新
@@ -374,24 +374,61 @@ class NodeFactory:
             docs_as_dicts = []
             for i, doc in enumerate(retrieved_docs):
                 if isinstance(doc, dict):
+                    content = doc.get("content", "")
+                    source = doc.get("source", doc.get("file_path", ""))
+                    
+                    if self.summarization_service and self.summarization_service.check_size(content):
+                        try:
+                            summarized = await self.summarization_service.summarize_document(
+                                content=content,
+                                file_path=source
+                            )
+                            content = summarized.summary
+                            doc["metadata"] = doc.get("metadata", {})
+                            doc["metadata"]["summarized"] = True
+                            doc["metadata"]["original_size"] = summarized.original_size
+                            doc["metadata"]["summary_length"] = len(content)
+                            logger.info(f"Navigator: Summarized {source} ({summarized.original_size} -> {len(content)} chars)")
+                        except Exception as e:
+                            logger.warning(f"Navigator: Failed to summarize {source}: {e}")
+                    
                     docs_as_dicts.append({
                         "id": doc.get("id", str(i)),
-                        "content": doc.get("content", ""),
-                        "source": doc.get("source", doc.get("file_path", "")),
+                        "content": content,
+                        "source": source,
                         "score": doc.get("score", doc.get("similarity", 0.0)),
                         "metadata": doc.get("metadata", {})
                     })
                 else:
+                    doc_content = getattr(doc, 'content', "")
+                    source = getattr(doc, 'file_path', getattr(doc, 'source', ""))
+                    
+                    if self.summarization_service and self.summarization_service.check_size(doc_content):
+                        try:
+                            summarized = await self.summarization_service.summarize_document(
+                                content=doc_content,
+                                file_path=source
+                            )
+                            doc_content = summarized.summary
+                            setattr(doc, 'content', doc_content)
+                            setattr(doc, 'metadata', getattr(doc, 'metadata', {}))
+                            doc.metadata["summarized"] = True
+                            doc.metadata["original_size"] = summarized.original_size
+                            doc.metadata["summary_length"] = len(doc_content)
+                            logger.info(f"Navigator: Summarized {source} ({summarized.original_size} -> {len(doc_content)} chars)")
+                        except Exception as e:
+                            logger.warning(f"Navigator: Failed to summarize {source}: {e}")
+                    
                     docs_as_dicts.append({
-                        "id": getattr(doc, "id", str(i)),
-                        "content": getattr(doc, "content", ""),
-                        "source": getattr(doc, "file_path", getattr(doc, "source", "")),
-                        "score": getattr(doc, "similarity", getattr(doc, "score", 0.0)),
-                        "metadata": getattr(doc, "metadata", {})
+                        "id": getattr(doc, 'id', str(i)),
+                        "content": doc_content,
+                        "source": source,
+                        "score": getattr(doc, 'similarity', getattr(doc, 'score', 0.0)),
+                        "metadata": getattr(doc, 'metadata', {})
                     })
             
             return {
-                "last_retrieved_docs": docs_as_dicts,
+                "retrieved_docs": docs_as_dicts,
                 "execution_log": create_success_log(
                     agent="navigator",
                     action="retrieve_completed",
@@ -452,7 +489,7 @@ class NodeFactory:
             ]
             
             return {
-                "last_retrieved_docs": docs_as_dicts,
+                "retrieved_docs": docs_as_dicts,
                 "execution_log": create_success_log(
                     agent="navigator",
                     action="retrieve_completed",
@@ -505,7 +542,7 @@ class NodeFactory:
 
     @DataAccessControl.agent_access(
         agent_name="director",
-        reads={"outline", "fragments", "current_step_index", "last_retrieved_docs"},
+        reads={"outline", "fragments", "current_step_index", "retrieved_docs"},
         writes={"director_feedback", "execution_log"},
         description="评估方向 - 分析内容质量并提供反馈"
     )
@@ -521,14 +558,14 @@ class NodeFactory:
         - 返回结构化反馈
         
         数据流向：
-        - 输入：last_retrieved_docs, current_step_index, outline
+        - 输入：retrieved_docs, current_step_index, outline
         - 输出：director_feedback (Overwrite), pivot_triggered, pivot_reason
         
         Returns:
             Dict[str, Any]: Diff 更新
         """
         try:
-            retrieved_docs = state.get("last_retrieved_docs", [])
+            retrieved_docs = state.get("retrieved_docs", [])
             step_index = state.get("current_step_index", 0)
             outline = state.get("outline", [])
             
@@ -603,33 +640,58 @@ class NodeFactory:
                 }
             
             quality_score = self._evaluate_retrieval_quality(retrieved_docs)
+            retry_count = state.get("retrieval_retry_count", 0)
+            max_retries = 2
             
             if quality_score < 0.5:
-                feedback = {
-                    "decision": "retry",
-                    "reason": f"检索质量不足（分数：{quality_score:.2f}），需要补充检索",
-                    "confidence": quality_score,
-                    "suggested_skill": None,
-                    "trigger_retrieval": True,
-                    "metadata": {
-                        "quality_score": quality_score,
-                        "doc_count": len(retrieved_docs),
-                        "retry_reason": "low_quality"
-                    }
-                }
-                
-                return {
-                    "director_feedback": feedback,
-                    "execution_log": create_success_log(
-                        agent="director",
-                        action="retry_triggered",
-                        details={
-                            "step_index": step_index,
+                if retry_count < max_retries:
+                    feedback = {
+                        "decision": "retry",
+                        "reason": f"检索质量不足（分数：{quality_score:.2f}），需要补充检索",
+                        "confidence": quality_score,
+                        "suggested_skill": None,
+                        "trigger_retrieval": True,
+                        "metadata": {
                             "quality_score": quality_score,
-                            "reason": feedback["reason"]
+                            "doc_count": len(retrieved_docs),
+                            "retry_reason": "low_quality"
                         }
-                    )
-                }
+                    }
+                    
+                    return {
+                        "director_feedback": feedback,
+                        "execution_log": create_success_log(
+                            agent="director",
+                            action="retry_triggered",
+                            details={
+                                "step_index": step_index,
+                                "quality_score": quality_score,
+                                "reason": feedback["reason"]
+                            }
+                        )
+                    }
+                else:
+                    feedback = {
+                        "decision": "continue",
+                        "reason": f"已达到最大重试次数 ({max_retries})，使用现有检索结果继续",
+                        "confidence": quality_score,
+                        "suggested_skill": None,
+                        "metadata": {
+                            "quality_score": quality_score,
+                            "doc_count": len(retrieved_docs),
+                            "retry_reason": "max_retries_reached"
+                        }
+                    }
+                    log_details = {
+                        "step_index": step_index,
+                        "quality_score": quality_score,
+                        "retry_count": retry_count,
+                        "reason": "使用现有结果继续"
+                    }
+                    return {
+                        "director_feedback": feedback,
+                        "execution_log": create_success_log("director", "max_retries_reached", log_details)
+                    }
             
             elif quality_score < 0.7:
                 feedback = {
@@ -704,7 +766,7 @@ class NodeFactory:
 
     @DataAccessControl.agent_access(
         agent_name="writer",
-        reads={"outline", "current_step_index", "last_retrieved_docs", "director_feedback", "current_skill"},
+        reads={"outline", "current_step_index", "retrieved_docs", "director_feedback", "current_skill"},
         writes={"fragments", "execution_log"},
         description="生成剧本片段 - 根据步骤和检索内容生成剧本"
     )
@@ -719,7 +781,7 @@ class NodeFactory:
         - 记录执行日志
         
         数据流向：
-        - 输入：current_step_index, outline, last_retrieved_docs, director_feedback
+        - 输入：current_step_index, outline, retrieved_docs, director_feedback
         - 输出：fragments (Append Only ⭐)
         
         Returns:
@@ -779,7 +841,7 @@ class NodeFactory:
             else:
                 step_title = getattr(current_step, "title", f"步骤 {step_index}")
             
-            retrieved_docs = state.get("last_retrieved_docs", [])
+            retrieved_docs = state.get("retrieved_docs", [])
             current_skill = state.get("current_skill", "standard_tutorial")
             
             logger.info(f"Writer: Generating fragment for step {step_index}")
@@ -1061,7 +1123,7 @@ class NodeFactory:
 
     @DataAccessControl.agent_access(
         agent_name="fact_checker",
-        reads={"fragments", "last_retrieved_docs"},
+        reads={"fragments", "retrieved_docs"},
         writes={"fragments", "execution_log"},
         description="事实检查 - 验证片段内容与源文档一致性"
     )

@@ -98,7 +98,7 @@ DATA_OWNERSHIP_CONFIG: Dict[str, FieldConfig] = {
         sensitivity=ContextSensitivity.MEDIUM,
         description="剧本大纲"
     ),
-    "last_retrieved_docs": FieldConfig(
+    "retrieved_docs": FieldConfig(
         owner=DataOwner.NAVIGATOR,
         write_policy=WritePolicy.OWNER_ONLY,
         required_by={"director", "writer", "fact_checker", "pivot_manager"},
