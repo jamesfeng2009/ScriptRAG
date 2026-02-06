@@ -85,9 +85,8 @@ async def test_hallucination_detected_by_fact_checker(
         llm_service=mock_llm_service_with_hallucination,
         retrieval_service=mock_retrieval_service,
         parser_service=mock_parser_service,
-        summarization_service=mock_summarization_service,
-        workspace_id="test-workspace"
-    )
+        summarization_service=mock_summarization_service
+            )
     
     # Execute workflow with increased recursion limit
     result = await orchestrator.execute(initial_state, recursion_limit=500)
@@ -127,9 +126,8 @@ async def test_regeneration_triggered_on_hallucination(
         llm_service=mock_llm_service_with_hallucination,
         retrieval_service=mock_retrieval_service,
         parser_service=mock_parser_service,
-        summarization_service=mock_summarization_service,
-        workspace_id="test-workspace"
-    )
+        summarization_service=mock_summarization_service
+            )
     
     # Execute workflow with increased recursion limit
     result = await orchestrator.execute(initial_state, recursion_limit=500)
@@ -170,9 +168,8 @@ async def test_workflow_completes_after_regeneration(
         llm_service=mock_llm_service_with_hallucination,
         retrieval_service=mock_retrieval_service,
         parser_service=mock_parser_service,
-        summarization_service=mock_summarization_service,
-        workspace_id="test-workspace"
-    )
+        summarization_service=mock_summarization_service
+            )
     
     # Execute workflow with increased recursion limit
     result = await orchestrator.execute(initial_state, recursion_limit=100)
@@ -223,9 +220,8 @@ async def test_fact_checker_validation_logged(
         llm_service=mock_llm_service_with_hallucination,
         retrieval_service=mock_retrieval_service,
         parser_service=mock_parser_service,
-        summarization_service=mock_summarization_service,
-        workspace_id="test-workspace"
-    )
+        summarization_service=mock_summarization_service
+            )
     
     # Execute workflow with increased recursion limit
     result = await orchestrator.execute(initial_state, recursion_limit=500)
@@ -262,9 +258,8 @@ async def test_retry_count_incremented_on_hallucination(
         llm_service=mock_llm_service_with_hallucination,
         retrieval_service=mock_retrieval_service,
         parser_service=mock_parser_service,
-        summarization_service=mock_summarization_service,
-        workspace_id="test-workspace"
-    )
+        summarization_service=mock_summarization_service
+            )
     
     # Execute workflow with increased recursion limit
     result = await orchestrator.execute(initial_state, recursion_limit=100)
@@ -310,9 +305,8 @@ async def test_no_hallucinated_content_in_final_screenplay(
         llm_service=mock_llm_service_with_hallucination,
         retrieval_service=mock_retrieval_service,
         parser_service=mock_parser_service,
-        summarization_service=mock_summarization_service,
-        workspace_id="test-workspace"
-    )
+        summarization_service=mock_summarization_service
+            )
     
     # Execute workflow with increased recursion limit
     result = await orchestrator.execute(initial_state, recursion_limit=100)
@@ -347,9 +341,8 @@ async def test_fact_checker_compares_with_retrieved_docs(
         llm_service=mock_llm_service_with_hallucination,
         retrieval_service=mock_retrieval_service,
         parser_service=mock_parser_service,
-        summarization_service=mock_summarization_service,
-        workspace_id="test-workspace"
-    )
+        summarization_service=mock_summarization_service
+            )
     
     # Execute workflow with increased recursion limit
     result = await orchestrator.execute(initial_state, recursion_limit=500)
@@ -384,9 +377,8 @@ async def test_multiple_hallucinations_handled(
         llm_service=mock_llm_service_with_hallucination,
         retrieval_service=mock_retrieval_service,
         parser_service=mock_parser_service,
-        summarization_service=mock_summarization_service,
-        workspace_id="test-workspace"
-    )
+        summarization_service=mock_summarization_service
+            )
     
     # Execute workflow with increased recursion limit
     result = await orchestrator.execute(initial_state, recursion_limit=500)

@@ -131,9 +131,8 @@ class TestToolExecutor:
         return ToolExecutor(
             llm_service=llm_service,
             retrieval_service=retrieval_service,
-            node_factory=node_factory,
-            workspace_id="test-workspace"
-        )
+            node_factory=node_factory
+                    )
 
     @pytest.fixture
     def sample_state(self):

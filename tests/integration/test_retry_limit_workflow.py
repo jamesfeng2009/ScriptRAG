@@ -144,9 +144,8 @@ async def test_retry_limit_enforced_after_max_attempts(
         llm_service=mock_llm_service_with_repeated_conflicts,
         retrieval_service=mock_retrieval_service,
         parser_service=mock_parser_service,
-        summarization_service=mock_summarization_service,
-        workspace_id="test-workspace"
-    )
+        summarization_service=mock_summarization_service
+            )
     
     # Execute workflow with increased recursion limit
     result = await orchestrator.execute(initial_state, recursion_limit=100)
@@ -189,9 +188,8 @@ async def test_forced_degradation_skips_step(
         llm_service=mock_llm_service_with_repeated_conflicts,
         retrieval_service=mock_retrieval_service,
         parser_service=mock_parser_service,
-        summarization_service=mock_summarization_service,
-        workspace_id="test-workspace"
-    )
+        summarization_service=mock_summarization_service
+            )
     
     # Execute workflow with increased recursion limit
     result = await orchestrator.execute(initial_state, recursion_limit=100)
@@ -233,9 +231,8 @@ async def test_workflow_continues_after_skip(
         llm_service=mock_llm_service_with_repeated_conflicts,
         retrieval_service=mock_retrieval_service,
         parser_service=mock_parser_service,
-        summarization_service=mock_summarization_service,
-        workspace_id="test-workspace"
-    )
+        summarization_service=mock_summarization_service
+            )
     
     # Execute workflow with increased recursion limit
     result = await orchestrator.execute(initial_state, recursion_limit=100)
@@ -277,9 +274,8 @@ async def test_retry_attempts_logged(
         llm_service=mock_llm_service_with_repeated_conflicts,
         retrieval_service=mock_retrieval_service,
         parser_service=mock_parser_service,
-        summarization_service=mock_summarization_service,
-        workspace_id="test-workspace"
-    )
+        summarization_service=mock_summarization_service
+            )
     
     # Execute workflow with increased recursion limit
     result = await orchestrator.execute(initial_state, recursion_limit=500)
@@ -313,9 +309,8 @@ async def test_placeholder_fragment_for_skipped_step(
         llm_service=mock_llm_service_with_repeated_conflicts,
         retrieval_service=mock_retrieval_service,
         parser_service=mock_parser_service,
-        summarization_service=mock_summarization_service,
-        workspace_id="test-workspace"
-    )
+        summarization_service=mock_summarization_service
+            )
     
     # Execute workflow with increased recursion limit
     result = await orchestrator.execute(initial_state, recursion_limit=100)
@@ -355,9 +350,8 @@ async def test_no_infinite_loop_on_repeated_conflicts(
         llm_service=mock_llm_service_with_repeated_conflicts,
         retrieval_service=mock_retrieval_service,
         parser_service=mock_parser_service,
-        summarization_service=mock_summarization_service,
-        workspace_id="test-workspace"
-    )
+        summarization_service=mock_summarization_service
+            )
     
     # Execute workflow with timeout to detect infinite loops
     import asyncio
@@ -403,9 +397,8 @@ async def test_retry_count_incremented_correctly(
         llm_service=mock_llm_service_with_repeated_conflicts,
         retrieval_service=mock_retrieval_service,
         parser_service=mock_parser_service,
-        summarization_service=mock_summarization_service,
-        workspace_id="test-workspace"
-    )
+        summarization_service=mock_summarization_service
+            )
     
     # Execute workflow with increased recursion limit
     result = await orchestrator.execute(initial_state, recursion_limit=500)
@@ -441,9 +434,8 @@ async def test_degradation_action_logged(
         llm_service=mock_llm_service_with_repeated_conflicts,
         retrieval_service=mock_retrieval_service,
         parser_service=mock_parser_service,
-        summarization_service=mock_summarization_service,
-        workspace_id="test-workspace"
-    )
+        summarization_service=mock_summarization_service
+            )
     
     # Execute workflow with increased recursion limit
     result = await orchestrator.execute(initial_state, recursion_limit=500)
@@ -483,9 +475,8 @@ async def test_final_screenplay_produced_despite_skips(
         llm_service=mock_llm_service_with_repeated_conflicts,
         retrieval_service=mock_retrieval_service,
         parser_service=mock_parser_service,
-        summarization_service=mock_summarization_service,
-        workspace_id="test-workspace"
-    )
+        summarization_service=mock_summarization_service
+            )
     
     # Execute workflow with increased recursion limit
     result = await orchestrator.execute(initial_state, recursion_limit=100)

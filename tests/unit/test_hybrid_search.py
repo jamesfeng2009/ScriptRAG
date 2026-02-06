@@ -379,8 +379,7 @@ class TestHybridSearchPipeline:
         result = await pipeline.search(
             query="test",
             query_embedding=[0.1] * 384,
-            workspace_id="test_workspace",
-            top_k=5
+                        top_k=5
         )
         
         assert "results" in result

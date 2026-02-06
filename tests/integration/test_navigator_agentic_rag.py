@@ -73,13 +73,12 @@ class TestNavigatorBasicRetrieval:
             retrieval_service=retrieval_service,
             parser_service=parser_service,
             summarization_service=summarization_service,
-            workspace_id="test-workspace",
-            enable_parallel=False,
+                        enable_parallel=False,
             enable_quality_eval=False
         )
         
-        assert len(result_state["retrieved_docs"]) == 1
-        assert result_state["retrieved_docs"][0]["source"] == "src/async_demo.py"
+        assert len(result_state.retrieved_docs) == 1
+        assert result_state.retrieved_docs[0].source == "src/async_demo.py"
         assert quality_evaluation is None
         
         retrieval_service.hybrid_retrieve.assert_called_once()
@@ -117,13 +116,12 @@ class TestNavigatorBasicRetrieval:
             retrieval_service=retrieval_service,
             parser_service=parser_service,
             summarization_service=summarization_service,
-            workspace_id="test-workspace",
-            enable_parallel=False,
+                        enable_parallel=False,
             enable_quality_eval=False,
             intent=intent
         )
         
-        assert len(result_state["retrieved_docs"]) == 1
+        assert len(result_state.retrieved_docs) == 1
         
         retrieval_service.hybrid_retrieve.assert_called_once()
         call_args = retrieval_service.hybrid_retrieve.call_args
@@ -143,12 +141,11 @@ class TestNavigatorBasicRetrieval:
             retrieval_service=retrieval_service,
             parser_service=parser_service,
             summarization_service=summarization_service,
-            workspace_id="test-workspace",
-            enable_parallel=False,
+                        enable_parallel=False,
             enable_quality_eval=False
         )
         
-        assert len(result_state["retrieved_docs"]) == 0
+        assert len(result_state.retrieved_docs) == 0
         assert quality_evaluation is None
     
     @pytest.mark.asyncio
@@ -178,12 +175,11 @@ class TestNavigatorBasicRetrieval:
             retrieval_service=retrieval_service,
             parser_service=parser_service,
             summarization_service=summarization_service,
-            workspace_id="test-workspace",
-            enable_parallel=True,
+                        enable_parallel=True,
             enable_quality_eval=False
         )
         
-        assert len(result_state["retrieved_docs"]) >= 0
+        assert len(result_state.retrieved_docs) >= 0
 
 
 class TestNavigatorWithQualityEvaluation:
@@ -271,8 +267,7 @@ class TestNavigatorWithQualityEvaluation:
                 retrieval_service=retrieval_service,
                 parser_service=parser_service,
                 summarization_service=summarization_service,
-                workspace_id="test-workspace",
-                enable_parallel=False,
+                                enable_parallel=False,
                 enable_quality_eval=True,
                 llm_service=llm_service
             )
@@ -334,8 +329,7 @@ class TestNavigatorWithQualityEvaluation:
                 retrieval_service=retrieval_service,
                 parser_service=parser_service,
                 summarization_service=summarization_service,
-                workspace_id="test-workspace",
-                enable_parallel=False,
+                                enable_parallel=False,
                 enable_quality_eval=True,
                 llm_service=llm_service,
                 intent=intent
@@ -371,12 +365,11 @@ class TestNavigatorEdgeCases:
             retrieval_service=retrieval_service,
             parser_service=parser_service,
             summarization_service=summarization_service,
-            workspace_id="test-workspace",
-            enable_parallel=False,
+                        enable_parallel=False,
             enable_quality_eval=False
         )
         
-        assert result_state["current_step_index"] == 1
+        assert result_state.current_step_index == 1
         assert quality_evaluation is None
         
         retrieval_service.hybrid_retrieve.assert_not_called()
@@ -405,14 +398,13 @@ class TestNavigatorEdgeCases:
             retrieval_service=retrieval_service,
             parser_service=parser_service,
             summarization_service=summarization_service,
-            workspace_id="test-workspace",
-            enable_parallel=False,
+                        enable_parallel=False,
             enable_quality_eval=False
         )
         
-        assert len(result_state["retrieved_docs"]) == 0
+        assert len(result_state.retrieved_docs) == 0
         assert quality_evaluation is None
-        assert len(result_state["execution_log"]) > 0
+        assert len(result_state.execution_log) > 0
 
 
 class TestSmartRetrieveContent:
@@ -448,8 +440,7 @@ class TestSmartRetrieveContent:
             retrieval_service=retrieval_service,
             parser_service=parser_service,
             summarization_service=summarization_service,
-            workspace_id="test-workspace",
-            enable_quality_eval=False
+                        enable_quality_eval=False
         )
         
         assert quality_evaluation is None
@@ -504,9 +495,8 @@ class TestSmartRetrieveContent:
                 retrieval_service=retrieval_service,
                 parser_service=parser_service,
                 summarization_service=summarization_service,
-                workspace_id="test-workspace",
-                enable_quality_eval=False
+                                enable_quality_eval=False
             )
             
-            assert len(result_state["retrieved_docs"]) >= 0
+            assert len(result_state.retrieved_docs) >= 0
         assert quality_evaluation is None

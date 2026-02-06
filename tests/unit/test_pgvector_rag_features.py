@@ -447,8 +447,7 @@ class TestPgVectorDBService:
         """测试索引文档 - 未初始化"""
         with pytest.raises(RuntimeError, match="Database not initialized"):
             await self.service.index_document(
-                workspace_id="test",
-                file_path="test.py",
+                                file_path="test.py",
                 content="test content",
                 embedding=[0.1] * 1024
             )

@@ -71,15 +71,13 @@ async def test_orchestrator_initialization(mock_services):
         llm_service=mock_services["llm_service"],
         retrieval_service=mock_services["retrieval_service"],
         parser_service=mock_services["parser_service"],
-        summarization_service=mock_services["summarization_service"],
-        workspace_id="test-workspace"
+        summarization_service=mock_services["summarization_service"]
     )
     
     # Verify orchestrator is initialized
     assert orchestrator is not None
     assert orchestrator.graph is not None
     assert orchestrator.llm_service == mock_services["llm_service"]
-    assert orchestrator.workspace_id == "test-workspace"
 
 
 @pytest.mark.asyncio
@@ -90,8 +88,7 @@ async def test_graph_compilation(mock_services):
         llm_service=mock_services["llm_service"],
         retrieval_service=mock_services["retrieval_service"],
         parser_service=mock_services["parser_service"],
-        summarization_service=mock_services["summarization_service"],
-        workspace_id="test-workspace"
+        summarization_service=mock_services["summarization_service"]
     )
     
     # Verify graph is compiled
@@ -111,9 +108,8 @@ async def test_director_routing_pivot(mock_services, simple_state):
         llm_service=mock_services["llm_service"],
         retrieval_service=mock_services["retrieval_service"],
         parser_service=mock_services["parser_service"],
-        summarization_service=mock_services["summarization_service"],
-        workspace_id="test-workspace"
-    )
+        summarization_service=mock_services["summarization_service"]
+            )
     
     # Set pivot triggered
     simple_state.pivot_triggered = True
@@ -133,9 +129,8 @@ async def test_director_routing_write(mock_services, simple_state):
         llm_service=mock_services["llm_service"],
         retrieval_service=mock_services["retrieval_service"],
         parser_service=mock_services["parser_service"],
-        summarization_service=mock_services["summarization_service"],
-        workspace_id="test-workspace"
-    )
+        summarization_service=mock_services["summarization_service"]
+            )
     
     # No pivot triggered
     simple_state.pivot_triggered = False
@@ -154,9 +149,8 @@ async def test_fact_check_routing_invalid(mock_services, simple_state):
         llm_service=mock_services["llm_service"],
         retrieval_service=mock_services["retrieval_service"],
         parser_service=mock_services["parser_service"],
-        summarization_service=mock_services["summarization_service"],
-        workspace_id="test-workspace"
-    )
+        summarization_service=mock_services["summarization_service"]
+            )
     
     # Set fact check failed
     simple_state.fact_check_passed = False
@@ -175,9 +169,8 @@ async def test_completion_routing_continue(mock_services, simple_state):
         llm_service=mock_services["llm_service"],
         retrieval_service=mock_services["retrieval_service"],
         parser_service=mock_services["parser_service"],
-        summarization_service=mock_services["summarization_service"],
-        workspace_id="test-workspace"
-    )
+        summarization_service=mock_services["summarization_service"]
+            )
     
     # Add multiple steps
     simple_state.outline = [
@@ -201,9 +194,8 @@ async def test_completion_routing_done(mock_services, simple_state):
         llm_service=mock_services["llm_service"],
         retrieval_service=mock_services["retrieval_service"],
         parser_service=mock_services["parser_service"],
-        summarization_service=mock_services["summarization_service"],
-        workspace_id="test-workspace"
-    )
+        summarization_service=mock_services["summarization_service"]
+            )
     
     # Set to after last step (current_step_index >= len(outline) means done)
     simple_state.outline = [
@@ -230,9 +222,8 @@ async def test_simple_workflow_execution(mock_services, simple_state):
         llm_service=mock_services["llm_service"],
         retrieval_service=mock_services["retrieval_service"],
         parser_service=mock_services["parser_service"],
-        summarization_service=mock_services["summarization_service"],
-        workspace_id="test-workspace"
-    )
+        summarization_service=mock_services["summarization_service"]
+            )
     
     # Verify orchestrator is initialized
     assert orchestrator is not None

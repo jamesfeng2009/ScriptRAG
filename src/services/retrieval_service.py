@@ -298,7 +298,6 @@ class RetrievalService(IRetrievalService):
         query: str,
         strategy: IRetrievalStrategy = IRetrievalStrategy.AUTO,
         top_k: int = 10,
-        workspace_id: str = "default",
         **kwargs
     ) -> IQueryResult:
         """
@@ -308,7 +307,6 @@ class RetrievalService(IRetrievalService):
             query: 查询字符串
             strategy: 检索策略
             top_k: 返回结果数量
-            workspace_id: 工作空间 ID
             **kwargs: 其他参数
 
         Returns:
@@ -324,7 +322,6 @@ class RetrievalService(IRetrievalService):
         strategy_name = strategy_map.get(strategy)
 
         results = await self.hybrid_retrieve(
-            workspace_id=workspace_id,
             query=query,
             top_k=top_k,
             strategy_name=strategy_name,
@@ -353,7 +350,6 @@ class RetrievalService(IRetrievalService):
         query: str,
         filters: Dict[str, Any],
         top_k: int = 10,
-        workspace_id: str = "default",
         **kwargs
     ) -> IQueryResult:
         """
@@ -363,7 +359,6 @@ class RetrievalService(IRetrievalService):
             query: 查询字符串
             filters: 过滤条件
             top_k: 返回结果数量
-            workspace_id: 工作空间 ID
             **kwargs: 其他参数
 
         Returns:
@@ -373,7 +368,6 @@ class RetrievalService(IRetrievalService):
         return await self.retrieve(
             query=query,
             top_k=top_k,
-            workspace_id=workspace_id,
             **kwargs
         )
 
@@ -381,7 +375,6 @@ class RetrievalService(IRetrievalService):
         self,
         queries: List[str],
         top_k: int = 10,
-        workspace_id: str = "default",
         **kwargs
     ) -> List[IQueryResult]:
         """
@@ -390,7 +383,6 @@ class RetrievalService(IRetrievalService):
         Args:
             queries: 查询列表
             top_k: 返回结果数量
-            workspace_id: 工作空间 ID
             **kwargs: 其他参数
 
         Returns:
@@ -401,7 +393,6 @@ class RetrievalService(IRetrievalService):
             result = await self.retrieve(
                 query=query,
                 top_k=top_k,
-                workspace_id=workspace_id,
                 **kwargs
             )
             results.append(result)
@@ -527,7 +518,6 @@ class RetrievalService(IRetrievalService):
 
     async def hybrid_retrieve(
         self,
-        workspace_id: str,
         query: str,
         top_k: Optional[int] = None,
         strategy_name: Optional[str] = None,
@@ -538,7 +528,6 @@ class RetrievalService(IRetrievalService):
         混合检索（使用配置的策略和合并算法）
 
         Args:
-            workspace_id: 工作空间 ID
             query: 查询文本
             top_k: 返回结果数量
             strategy_name: 使用的检索策略（默认使用配置的主策略）
@@ -549,13 +538,13 @@ class RetrievalService(IRetrievalService):
             检索结果列表
         """
         final_top_k = top_k or self.config.strategy.vector.top_k
+        workspace_id = "default"
 
         try:
             optimized_query = self._optimize_query(query)
             expanded_queries = self._expand_query(optimized_query)
 
             results_by_strategy = await self._search_all_strategies(
-                workspace_id=workspace_id,
                 query=optimized_query,
                 expanded_queries=expanded_queries,
                 top_k=final_top_k * 2,
@@ -598,7 +587,6 @@ class RetrievalService(IRetrievalService):
             error_ctx = create_error_context(
                 service_name="RetrievalService",
                 operation="hybrid_retrieve",
-                workspace_id=workspace_id,
                 query=query
             )
             logger.error(f"Hybrid retrieval failed: {str(e)}")
@@ -625,13 +613,13 @@ class RetrievalService(IRetrievalService):
 
     async def _search_all_strategies(
         self,
-        workspace_id: str,
         query: str,
         expanded_queries: List[str],
         top_k: int,
         **kwargs
     ) -> Dict[str, List[RetrievalResult]]:
         """并行执行所有策略的检索"""
+        workspace_id = "default"
         results_by_strategy: Dict[str, List[RetrievalResult]] = {}
 
         for strategy_name, strategy in self.strategies.items():
@@ -643,7 +631,6 @@ class RetrievalService(IRetrievalService):
                 strategy_results = await strategy.search(
                     query=query,
                     query_embedding=query_embedding[0],
-                    workspace_id=workspace_id,
                     top_k=top_k,
                     custom_markers=self.config.custom_markers,
                     **kwargs
@@ -722,7 +709,6 @@ class RetrievalService(IRetrievalService):
 
     async def retrieve_with_strategy(
         self,
-        workspace_id: str,
         query: str,
         strategy_name: str,
         top_k: Optional[int] = None,
@@ -735,6 +721,7 @@ class RetrievalService(IRetrievalService):
             return []
 
         final_top_k = top_k or self.config.strategy.vector.top_k
+        workspace_id = "default"
 
         try:
             query_embedding = await self.llm_service.embedding([query])
@@ -744,7 +731,6 @@ class RetrievalService(IRetrievalService):
             results = await strategy.search(
                 query=query,
                 query_embedding=query_embedding[0],
-                workspace_id=workspace_id,
                 top_k=final_top_k,
                 custom_markers=self.config.custom_markers,
                 **kwargs
@@ -818,7 +804,6 @@ class RetrievalService(IRetrievalService):
 
     async def enhanced_retrieve(
         self,
-        workspace_id: str,
         query: str,
         top_k: int = 10,
         use_enhancement: bool = True,
@@ -836,7 +821,6 @@ class RetrievalService(IRetrievalService):
         6. GraphRAG 多跳扩展（可选）
 
         Args:
-            workspace_id: 工作空间 ID
             query: 查询文本
             top_k: 返回结果数量
             use_enhancement: 是否使用增强流水线
@@ -846,11 +830,10 @@ class RetrievalService(IRetrievalService):
             检索结果列表
         """
         if not use_enhancement or not self.enhancement_pipeline:
-            return await self.hybrid_retrieve(workspace_id, query, top_k, **kwargs)
+            return await self.hybrid_retrieve(query=query, top_k=top_k, **kwargs)
 
         try:
             result: AdvancedRetrievalResult = await self.enhancement_pipeline.enhanced_retrieve(
-                workspace_id=workspace_id,
                 query=query,
                 top_k=top_k,
                 filters=kwargs.get("filters")
@@ -977,7 +960,6 @@ class RetrievalService(IRetrievalService):
 
     async def enhanced_retrieve_with_quality(
         self,
-        workspace_id: str,
         query: str,
         top_k: int = 10,
         enable_quality_check: bool = True,
@@ -995,7 +977,6 @@ class RetrievalService(IRetrievalService):
         4. 返回结果和评估报告
 
         Args:
-            workspace_id: 工作空间 ID
             query: 查询文本
             top_k: 返回结果数量
             enable_quality_check: 是否启用质量评估
@@ -1007,7 +988,6 @@ class RetrievalService(IRetrievalService):
             包含结果和评估信息的字典
         """
         result = await self.enhanced_retrieve(
-            workspace_id=workspace_id,
             query=query,
             top_k=top_k,
             **kwargs

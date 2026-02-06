@@ -58,8 +58,7 @@ class TestOrchestratorAgenticRAGNodes:
             retrieval_service=mock_services["retrieval_service"],
             parser_service=mock_services["parser_service"],
             summarization_service=mock_services["summarization_service"],
-            workspace_id="test-workspace",
-            enable_agentic_rag=True,
+                        enable_agentic_rag=True,
             max_retrieval_retries=2
         )
         
@@ -76,8 +75,7 @@ class TestOrchestratorAgenticRAGNodes:
             retrieval_service=mock_services["retrieval_service"],
             parser_service=mock_services["parser_service"],
             summarization_service=mock_services["summarization_service"],
-            workspace_id="test-workspace",
-            enable_agentic_rag=False
+                        enable_agentic_rag=False
         )
         
         assert orchestrator.enable_agentic_rag is False
@@ -123,8 +121,7 @@ class TestIntentParserNode:
             retrieval_service=mock_services["retrieval_service"],
             parser_service=mock_services["parser_service"],
             summarization_service=mock_services["summarization_service"],
-            workspace_id="test-workspace",
-            enable_agentic_rag=True
+                        enable_agentic_rag=True
         )
         
         state = {
@@ -154,8 +151,7 @@ class TestIntentParserNode:
             retrieval_service=mock_services["retrieval_service"],
             parser_service=mock_services["parser_service"],
             summarization_service=mock_services["summarization_service"],
-            workspace_id="test-workspace",
-            enable_agentic_rag=True
+                        enable_agentic_rag=True
         )
         
         state = {
@@ -209,8 +205,7 @@ class TestQualityEvalNode:
             retrieval_service=mock_services["retrieval_service"],
             parser_service=mock_services["parser_service"],
             summarization_service=mock_services["summarization_service"],
-            workspace_id="test-workspace",
-            enable_agentic_rag=True
+                        enable_agentic_rag=True
         )
         
         state = {
@@ -257,8 +252,7 @@ class TestQualityEvalNode:
             retrieval_service=mock_services["retrieval_service"],
             parser_service=mock_services["parser_service"],
             summarization_service=mock_services["summarization_service"],
-            workspace_id="test-workspace",
-            enable_agentic_rag=True
+                        enable_agentic_rag=True
         )
         
         state = {
@@ -294,8 +288,7 @@ class TestQualityEvalRouting:
             retrieval_service=mock_services["retrieval_service"],
             parser_service=mock_services["parser_service"],
             summarization_service=mock_services["summarization_service"],
-            workspace_id="test-workspace",
-            enable_agentic_rag=True,
+                        enable_agentic_rag=True,
             max_retrieval_retries=2
         )
     
@@ -412,8 +405,7 @@ class TestNavigatorNodeWithAgenticRAG:
             retrieval_service=mock_services["retrieval_service"],
             parser_service=mock_services["parser_service"],
             summarization_service=mock_services["summarization_service"],
-            workspace_id="test-workspace",
-            enable_agentic_rag=True
+                        enable_agentic_rag=True
         )
         
         state = {
@@ -449,8 +441,7 @@ class TestNavigatorNodeWithAgenticRAG:
             retrieval_service=mock_services["retrieval_service"],
             parser_service=mock_services["parser_service"],
             summarization_service=mock_services["summarization_service"],
-            workspace_id="test-workspace",
-            enable_agentic_rag=True
+                        enable_agentic_rag=True
         )
         
         state = {
@@ -495,8 +486,7 @@ class TestOrchestratorGraphBuilding:
             retrieval_service=mock_services["retrieval_service"],
             parser_service=mock_services["parser_service"],
             summarization_service=mock_services["summarization_service"],
-            workspace_id="test-workspace",
-            enable_agentic_rag=True
+                        enable_agentic_rag=True
         )
         
         assert orchestrator.graph is not None
@@ -508,8 +498,7 @@ class TestOrchestratorGraphBuilding:
             retrieval_service=mock_services["retrieval_service"],
             parser_service=mock_services["parser_service"],
             summarization_service=mock_services["summarization_service"],
-            workspace_id="test-workspace",
-            enable_agentic_rag=False
+                        enable_agentic_rag=False
         )
         
         assert orchestrator.graph is not None
@@ -521,8 +510,7 @@ class TestOrchestratorGraphBuilding:
             retrieval_service=mock_services["retrieval_service"],
             parser_service=mock_services["parser_service"],
             summarization_service=mock_services["summarization_service"],
-            workspace_id="test-workspace",
-            enable_agentic_rag=True,
+                        enable_agentic_rag=True,
             enable_dynamic_adjustment=True
         )
         

@@ -486,8 +486,7 @@ class TestNavigatorIntegration:
             state=mock_state,
             retrieval_service=mock_retrieval_service,
             query="test query",
-            workspace_id="test_workspace",
-            top_k=5
+                        top_k=5
         )
 
         assert result is not None

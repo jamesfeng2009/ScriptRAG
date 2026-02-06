@@ -34,12 +34,26 @@ logger = logging.getLogger(__name__)
 agent_logger = get_agent_logger(__name__)
 
 
+def _get_state_value(state: Any, key: str, default: Any = None) -> Any:
+    """安全地从状态中获取值，支持字典和 Pydantic 模型"""
+    if isinstance(state, dict):
+        return state.get(key, default)
+    return getattr(state, key, default)
+
+
+def _set_state_value(state: Any, key: str, value: Any) -> None:
+    """安全地设置状态值，支持字典和 Pydantic 模型"""
+    if isinstance(state, dict):
+        state[key] = value
+    else:
+        setattr(state, key, value)
+
+
 async def retrieve_content(
     state: GlobalState,
     retrieval_service: RetrievalService,
     parser_service: IParserService,
     summarization_service: SummarizationService,
-    workspace_id: str,
     enable_parallel: bool = True,
     enable_quality_eval: bool = True,
     llm_service: Optional[Any] = None,
@@ -59,7 +73,6 @@ async def retrieve_content(
         retrieval_service: 检索服务
         parser_service: 解析服务
         summarization_service: 摘要服务
-        workspace_id: 工作空间 ID
         enable_parallel: 是否启用并行检索（默认启用）
         enable_quality_eval: 是否启用质量评估（默认启用，Agentic RAG 核心能力）
         llm_service: LLM 服务（用于质量评估，可选）
@@ -68,8 +81,8 @@ async def retrieve_content(
     Returns:
         tuple: (更新后的全局状态, 质量评估结果)
     """
-    current_step_index = state.get("current_step_index", 0)
-    outline = state.get("outline", [])
+    current_step_index = _get_state_value(state, "current_step_index", 0)
+    outline = _get_state_value(state, "outline", [])
     
     if current_step_index >= len(outline):
         logger.warning("No more steps to process")
@@ -104,20 +117,22 @@ async def retrieve_content(
         f"(original: {query[:50]}...)"
     )
     
-    if enable_parallel:
-        retrieval_results = await _parallel_retrieve(
-            state=state,
-            retrieval_service=retrieval_service,
-            query=enhanced_query,
-            workspace_id=workspace_id,
-            top_k=5
-        )
-    else:
-        retrieval_results = await retrieval_service.hybrid_retrieve(
-            workspace_id=workspace_id,
-            query=enhanced_query,
-            top_k=5
-        )
+    try:
+        if enable_parallel:
+            retrieval_results = await _parallel_retrieve(
+                state=state,
+                retrieval_service=retrieval_service,
+                query=enhanced_query,
+                top_k=5
+            )
+        else:
+            retrieval_results = await retrieval_service.hybrid_retrieve(
+                query=enhanced_query,
+                top_k=5
+            )
+    except Exception as e:
+        logger.error(f"Retrieval failed: {str(e)}")
+        retrieval_results = []
     
     retrieved_docs = []
     quality_evaluation: Optional[QualityEvaluation] = None
@@ -133,7 +148,21 @@ async def retrieve_content(
             confidence_scores=[]
         )
         
-        state["retrieved_docs"] = []
+        _set_state_value(state, "retrieved_docs", [])
+        
+        log_entry = {
+            'agent': 'navigator',
+            'action': 'retrieve_content',
+            'step_id': current_step.step_id,
+            'num_results': 0,
+            'sources': [],
+            'retrieval_method': 'parallel' if enable_parallel else 'hybrid',
+            'enhanced_query': enhanced_query,
+            'original_query': query,
+            'status': 'no_results'
+        }
+        _set_state_value(state, "execution_log", _get_state_value(state, "execution_log", []) + [log_entry])
+        
         return state, None
     
     retrieved_docs = await _parallel_process_results(
@@ -167,7 +196,7 @@ async def retrieve_content(
             f"needs_refinement={quality_evaluation.needs_refinement}"
         )
     
-    state["retrieved_docs"] = retrieved_docs
+    _set_state_value(state, "retrieved_docs", retrieved_docs)
     
     logger.info(f"Navigator: Retrieved {len(retrieved_docs)} documents for step {current_step.step_id}")
     
@@ -209,7 +238,7 @@ async def retrieve_content(
             'needs_refinement': quality_evaluation.needs_refinement
         }
     
-    state["execution_log"] = state.get("execution_log", []) + [log_entry]
+    _set_state_value(state, "execution_log", _get_state_value(state, "execution_log", []) + [log_entry])
     
     return state, quality_evaluation
 
@@ -218,7 +247,6 @@ async def _parallel_retrieve(
     state: GlobalState,
     retrieval_service: RetrievalService,
     query: str,
-    workspace_id: str,
     top_k: int = 5
 ) -> List:
     """
@@ -231,28 +259,27 @@ async def _parallel_retrieve(
         state: 全局状态 (GlobalState)
         retrieval_service: 检索服务
         query: 查询文本
-        workspace_id: 工作空间 ID
         top_k: 返回结果数量
 
     Returns:
         合并的检索结果列表
     """
     cache_skipper = CacheBasedSkipper()
-    cache_key = f"retrieval:{workspace_id}:{hash(query)}"
+    cache_key = f"retrieval:default:{hash(query)}"
 
     skip_decision = cache_skipper.should_skip_processing(cache_key, min_hits_for_skip=2)
 
     if skip_decision.should_skip:
         logger.info(f"Skipping redundant retrieval for: {query[:50]}... "
                    f"(confidence: {skip_decision.confidence:.2f}, reason: {skip_decision.reason})")
-        retrieved_docs = state.get("retrieved_docs", [])
+        retrieved_docs = _get_state_value(state, "retrieved_docs", [])
         if retrieved_docs:
             return []
         return []
 
     async def vector_search():
         return await retrieval_service.retrieve_with_strategy(
-            workspace_id=workspace_id,
+            workspace_id="default",
             query=query,
             strategy_name="vector_search",
             top_k=top_k
@@ -260,7 +287,7 @@ async def _parallel_retrieve(
 
     async def keyword_search():
         return await retrieval_service.retrieve_with_strategy(
-            workspace_id=workspace_id,
+            workspace_id="default",
             query=query,
             strategy_name="keyword_search",
             top_k=top_k
@@ -453,7 +480,6 @@ async def smart_retrieve_content(
     retrieval_service: RetrievalService,
     parser_service: IParserService,
     summarization_service: SummarizationService,
-    workspace_id: str,
     enable_quality_eval: bool = True,
     llm_service: Optional[Any] = None,
     intent: Optional[IntentAnalysis] = None
@@ -472,7 +498,6 @@ async def smart_retrieve_content(
         retrieval_service: 检索服务
         parser_service: 解析服务
         summarization_service: 摘要服务
-        workspace_id: 工作空间 ID
         enable_quality_eval: 是否启用质量评估（默认启用）
         llm_service: LLM 服务（用于质量评估，可选）
         intent: 意图分析结果（由 intent_parser 节点提供）
@@ -486,7 +511,7 @@ async def smart_retrieve_content(
         enable_cache_skip=True
     )
 
-    retrieved_docs = state.get("retrieved_docs", [])
+    retrieved_docs = _get_state_value(state, "retrieved_docs", [])
 
     if retrieved_docs:
         first_doc = retrieved_docs[0]
@@ -513,14 +538,16 @@ async def smart_retrieve_content(
                 'quality_score': quality_score,
                 'confidence': quality_decision.confidence
             }
-            state["execution_log"] = state.get("execution_log", []) + [log_entry]
+            state["execution_log"] = _get_state_value(state, "execution_log", []) + [log_entry]
             return state, None
 
         complexity_skipper = ComplexityBasedSkipper()
-        current_step_index = state.get("current_step_index", 0)
-        outline = state.get("outline", [])
+        current_step_index = _get_state_value(state, "current_step_index", 0)
+        outline = _get_state_value(state, "outline", [])
         current_step = outline[current_step_index] if current_step_index < len(outline) else None
-        query_length = len(current_step.get("description", "")) if current_step else 0
+        if isinstance(current_step, dict):
+            current_step = OutlineStep(**current_step)
+        query_length = len(current_step.description) if current_step else 0
         complexity_score = min(1.0, query_length / 500 + len(retrieved_docs) / 10)
 
         mode = complexity_skipper.get_processing_mode(complexity_score)
@@ -537,7 +564,7 @@ async def smart_retrieve_content(
                 'complexity_score': complexity_score,
                 'mode': mode
             }
-            state["execution_log"] = state.get("execution_log", []) + [log_entry]
+            state["execution_log"] = _get_state_value(state, "execution_log", []) + [log_entry]
             return state, None
 
     return await retrieve_content(
@@ -545,7 +572,6 @@ async def smart_retrieve_content(
         retrieval_service=retrieval_service,
         parser_service=parser_service,
         summarization_service=summarization_service,
-        workspace_id=workspace_id,
         enable_parallel=True,
         enable_quality_eval=enable_quality_eval,
         llm_service=llm_service,

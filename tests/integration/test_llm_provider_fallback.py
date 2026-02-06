@@ -177,9 +177,8 @@ async def test_fallback_provider_used_on_primary_failure(
         llm_service=mock_llm_service_with_fallback,
         retrieval_service=mock_retrieval_service,
         parser_service=mock_parser_service,
-        summarization_service=mock_summarization_service,
-        workspace_id="test-workspace"
-    )
+        summarization_service=mock_summarization_service
+            )
     
     result = await orchestrator.execute(initial_state, recursion_limit=100)
     
@@ -214,9 +213,8 @@ async def test_provider_switch_logged(
         llm_service=mock_llm_service_with_fallback,
         retrieval_service=mock_retrieval_service,
         parser_service=mock_parser_service,
-        summarization_service=mock_summarization_service,
-        workspace_id="test-workspace"
-    )
+        summarization_service=mock_summarization_service
+            )
     
     result = await orchestrator.execute(initial_state, recursion_limit=500)
     
@@ -241,9 +239,8 @@ async def test_llm_call_logs_recorded(
         llm_service=mock_llm_service_with_fallback,
         retrieval_service=mock_retrieval_service,
         parser_service=mock_parser_service,
-        summarization_service=mock_summarization_service,
-        workspace_id="test-workspace"
-    )
+        summarization_service=mock_summarization_service
+            )
     
     result = await orchestrator.execute(initial_state, recursion_limit=500)
     
@@ -265,9 +262,8 @@ async def test_workflow_completes_with_fallback_provider(
         llm_service=mock_llm_service_with_fallback,
         retrieval_service=mock_retrieval_service,
         parser_service=mock_parser_service,
-        summarization_service=mock_summarization_service,
-        workspace_id="test-workspace"
-    )
+        summarization_service=mock_summarization_service
+            )
     
     result = await orchestrator.execute(initial_state, recursion_limit=500)
     
@@ -333,9 +329,8 @@ async def test_multiple_provider_failures_handled(
         llm_service=llm_service,
         retrieval_service=mock_retrieval_service,
         parser_service=mock_parser_service,
-        summarization_service=mock_summarization_service,
-        workspace_id="test-workspace"
-    )
+        summarization_service=mock_summarization_service
+            )
     
     result = await orchestrator.execute(initial_state, recursion_limit=500)
     
@@ -355,9 +350,8 @@ async def test_provider_failure_doesnt_halt_workflow(
         llm_service=mock_llm_service_with_fallback,
         retrieval_service=mock_retrieval_service,
         parser_service=mock_parser_service,
-        summarization_service=mock_summarization_service,
-        workspace_id="test-workspace"
-    )
+        summarization_service=mock_summarization_service
+            )
     
     result = await orchestrator.execute(initial_state, recursion_limit=500)
     
@@ -385,9 +379,8 @@ async def test_response_time_logged_for_llm_calls(
         llm_service=mock_llm_service_with_fallback,
         retrieval_service=mock_retrieval_service,
         parser_service=mock_parser_service,
-        summarization_service=mock_summarization_service,
-        workspace_id="test-workspace"
-    )
+        summarization_service=mock_summarization_service
+            )
     
     result = await orchestrator.execute(initial_state, recursion_limit=500)
     
@@ -412,9 +405,8 @@ async def test_token_count_tracked_for_llm_calls(
         llm_service=mock_llm_service_with_fallback,
         retrieval_service=mock_retrieval_service,
         parser_service=mock_parser_service,
-        summarization_service=mock_summarization_service,
-        workspace_id="test-workspace"
-    )
+        summarization_service=mock_summarization_service
+            )
     
     result = await orchestrator.execute(initial_state, recursion_limit=500)
     
@@ -441,9 +433,8 @@ async def test_all_providers_fail_gracefully(
         llm_service=llm_service,
         retrieval_service=mock_retrieval_service,
         parser_service=mock_parser_service,
-        summarization_service=mock_summarization_service,
-        workspace_id="test-workspace"
-    )
+        summarization_service=mock_summarization_service
+            )
     
     result = await orchestrator.execute(initial_state, recursion_limit=500)
     

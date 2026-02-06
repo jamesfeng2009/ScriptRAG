@@ -102,7 +102,6 @@ class NodeFactory:
         retrieval_service: RetrievalService,
         parser_service: IParserService,
         summarization_service: SummarizationService,
-        workspace_id: str = "",
         use_task_stack: bool = False,
         max_task_depth: int = 3
     ):
@@ -110,7 +109,6 @@ class NodeFactory:
         self.retrieval_service = retrieval_service
         self.parser_service = parser_service
         self.summarization_service = summarization_service
-        self.workspace_id = workspace_id
         
         self.use_task_stack = use_task_stack
         self.max_task_depth = max_task_depth
@@ -364,7 +362,6 @@ class NodeFactory:
             
             if hasattr(self, 'retrieval_service') and self.retrieval_service:
                 retrieved_docs = await self.retrieval_service.hybrid_retrieve(
-                    workspace_id=self.workspace_id or "",
                     query=query,
                     top_k=5
                 )
@@ -1402,14 +1399,12 @@ def create_node_factory(
     llm_service: LLMService,
     retrieval_service: RetrievalService,
     parser_service: IParserService,
-    summarization_service: SummarizationService,
-    workspace_id: str = ""
+    summarization_service: SummarizationService
 ) -> NodeFactory:
     """创建节点工厂的便捷函数"""
     return NodeFactory(
         llm_service=llm_service,
         retrieval_service=retrieval_service,
         parser_service=parser_service,
-        summarization_service=summarization_service,
-        workspace_id=workspace_id
+        summarization_service=summarization_service
     )

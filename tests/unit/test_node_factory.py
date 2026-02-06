@@ -30,15 +30,13 @@ class TestNodeFactoryInitialization:
             llm_service=mock_llm,
             retrieval_service=mock_retrieval,
             parser_service=mock_parser,
-            summarization_service=mock_summarization,
-            workspace_id="test-workspace"
-        )
+            summarization_service=mock_summarization
+                    )
 
         assert factory.llm_service is mock_llm
         assert factory.retrieval_service is mock_retrieval
         assert factory.parser_service is mock_parser
         assert factory.summarization_service is mock_summarization
-        assert factory.workspace_id == "test-workspace"
 
     def test_node_factory_direct_instantiation(self):
         """测试直接实例化 NodeFactory"""
@@ -51,9 +49,8 @@ class TestNodeFactoryInitialization:
             llm_service=mock_llm,
             retrieval_service=mock_retrieval,
             parser_service=mock_parser,
-            summarization_service=mock_summarization,
-            workspace_id="default"
-        )
+            summarization_service=mock_summarization
+                    )
 
         assert hasattr(factory, "llm_service")
         assert hasattr(factory, "retrieval_service")
@@ -116,9 +113,8 @@ class TestPlannerNode:
             llm_service=mock_llm,
             retrieval_service=Mock(),
             parser_service=Mock(),
-            summarization_service=Mock(),
-            workspace_id="test"
-        )
+            summarization_service=Mock()
+                    )
 
         state: GlobalState = {
             "user_topic": "测试主题",
@@ -146,9 +142,8 @@ class TestPlannerNode:
             llm_service=Mock(),
             retrieval_service=Mock(),
             parser_service=Mock(),
-            summarization_service=Mock(),
-            workspace_id="test"
-        )
+            summarization_service=Mock()
+                    )
 
         state: GlobalState = {
             "user_topic": "",
@@ -187,9 +182,8 @@ class TestNavigatorNode:
             llm_service=mock_llm,
             retrieval_service=mock_retrieval,
             parser_service=Mock(),
-            summarization_service=Mock(),
-            workspace_id="test"
-        )
+            summarization_service=Mock()
+                    )
 
         state: GlobalState = {
             "user_topic": "测试主题",
@@ -216,9 +210,8 @@ class TestNavigatorNode:
             llm_service=Mock(),
             retrieval_service=Mock(),
             parser_service=Mock(),
-            summarization_service=Mock(),
-            workspace_id="test"
-        )
+            summarization_service=Mock()
+                    )
 
         state: GlobalState = {
             "user_topic": "测试主题",
@@ -248,9 +241,8 @@ class TestStepAdvancerNode:
             llm_service=Mock(),
             retrieval_service=Mock(),
             parser_service=Mock(),
-            summarization_service=Mock(),
-            workspace_id="test"
-        )
+            summarization_service=Mock()
+                    )
 
         state: GlobalState = {
             "user_topic": "主题",
@@ -276,9 +268,8 @@ class TestStepAdvancerNode:
             llm_service=Mock(),
             retrieval_service=Mock(),
             parser_service=Mock(),
-            summarization_service=Mock(),
-            workspace_id="test"
-        )
+            summarization_service=Mock()
+                    )
 
         state: GlobalState = {
             "user_topic": "主题",
@@ -314,9 +305,8 @@ class TestDirectorNode:
             llm_service=mock_llm,
             retrieval_service=Mock(),
             parser_service=Mock(),
-            summarization_service=Mock(),
-            workspace_id="test"
-        )
+            summarization_service=Mock()
+                    )
 
         state: GlobalState = {
             "user_topic": "主题",
@@ -352,9 +342,8 @@ class TestWriterNode:
             llm_service=mock_llm,
             retrieval_service=Mock(),
             parser_service=Mock(),
-            summarization_service=Mock(),
-            workspace_id="test"
-        )
+            summarization_service=Mock()
+                    )
 
         state: GlobalState = {
             "user_topic": "主题",

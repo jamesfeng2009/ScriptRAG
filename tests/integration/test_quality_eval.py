@@ -94,8 +94,7 @@ class TestNavigatorWithQualityEvaluation:
             retrieval_service=mock_retrieval,
             parser_service=mock_parser,
             summarization_service=mock_summarizer,
-            workspace_id="test-workspace",
-            enable_intent_parsing=False,
+                        enable_intent_parsing=False,
             enable_parallel=False,
             llm_service=mock_llm
         )
@@ -140,8 +139,7 @@ class TestNavigatorWithQualityEvaluation:
                 retrieval_service=mock_retrieval,
                 parser_service=mock_parser,
                 summarization_service=mock_summarizer,
-                workspace_id="test-workspace",
-                enable_intent_parsing=False,
+                                enable_intent_parsing=False,
                 enable_parallel=False,
                 llm_service=mock_llm
             )

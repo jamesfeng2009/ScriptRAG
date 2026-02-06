@@ -30,8 +30,7 @@ class TestWorkflowOrchestratorBasic:
             retrieval_service=mock_retrieval,
             parser_service=mock_parser,
             summarization_service=mock_summarization,
-            workspace_id="test-workspace",
-            enable_dynamic_adjustment=False
+                        enable_dynamic_adjustment=False
         )
 
         assert orchestrator.workspace_id == "test-workspace"
@@ -50,8 +49,7 @@ class TestWorkflowOrchestratorBasic:
             retrieval_service=mock_retrieval,
             parser_service=mock_parser,
             summarization_service=mock_summarization,
-            workspace_id="test-workspace",
-            enable_dynamic_adjustment=True
+                        enable_dynamic_adjustment=True
         )
 
         assert orchestrator.enable_dynamic_adjustment is True
@@ -70,9 +68,8 @@ class TestWorkflowOrchestratorBasic:
             llm_service=mock_llm,
             retrieval_service=mock_retrieval,
             parser_service=mock_parser,
-            summarization_service=mock_summarization,
-            workspace_id="test"
-        )
+            summarization_service=mock_summarization
+                    )
 
         assert orchestrator.node_factory is not None
 
@@ -92,8 +89,7 @@ class TestGraphConstruction:
             retrieval_service=mock_retrieval,
             parser_service=mock_parser,
             summarization_service=mock_summarization,
-            workspace_id="test",
-            enable_dynamic_adjustment=False
+                        enable_dynamic_adjustment=False
         )
 
         graph = orchestrator.graph
@@ -111,8 +107,7 @@ class TestGraphConstruction:
             retrieval_service=mock_retrieval,
             parser_service=mock_parser,
             summarization_service=mock_summarization,
-            workspace_id="test",
-            enable_dynamic_adjustment=True
+                        enable_dynamic_adjustment=True
         )
 
         graph = orchestrator.graph
@@ -133,9 +128,8 @@ class TestRouterFunctions:
             llm_service=mock_llm,
             retrieval_service=mock_retrieval,
             parser_service=mock_parser,
-            summarization_service=mock_summarization,
-            workspace_id="test"
-        )
+            summarization_service=mock_summarization
+                    )
 
         state: GlobalState = {
             "user_topic": "主题",
@@ -164,9 +158,8 @@ class TestRouterFunctions:
             llm_service=mock_llm,
             retrieval_service=mock_retrieval,
             parser_service=mock_parser,
-            summarization_service=mock_summarization,
-            workspace_id="test"
-        )
+            summarization_service=mock_summarization
+                    )
 
         state: GlobalState = {
             "user_topic": "主题",
@@ -195,9 +188,8 @@ class TestRouterFunctions:
             llm_service=mock_llm,
             retrieval_service=mock_retrieval,
             parser_service=mock_parser,
-            summarization_service=mock_summarization,
-            workspace_id="test"
-        )
+            summarization_service=mock_summarization
+                    )
 
         state: GlobalState = {
             "user_topic": "主题",
@@ -227,9 +219,8 @@ class TestRouterFunctions:
             llm_service=mock_llm,
             retrieval_service=mock_retrieval,
             parser_service=mock_parser,
-            summarization_service=mock_summarization,
-            workspace_id="test"
-        )
+            summarization_service=mock_summarization
+                    )
 
         state: GlobalState = {
             "user_topic": "主题",
@@ -259,9 +250,8 @@ class TestRouterFunctions:
             llm_service=mock_llm,
             retrieval_service=mock_retrieval,
             parser_service=mock_parser,
-            summarization_service=mock_summarization,
-            workspace_id="test"
-        )
+            summarization_service=mock_summarization
+                    )
 
         state: GlobalState = {
             "user_topic": "主题",
@@ -290,9 +280,8 @@ class TestRouterFunctions:
             llm_service=mock_llm,
             retrieval_service=mock_retrieval,
             parser_service=mock_parser,
-            summarization_service=mock_summarization,
-            workspace_id="test"
-        )
+            summarization_service=mock_summarization
+                    )
 
         state: GlobalState = {
             "user_topic": "主题",
@@ -325,9 +314,8 @@ class TestGetCurrentStep:
             llm_service=mock_llm,
             retrieval_service=mock_retrieval,
             parser_service=mock_parser,
-            summarization_service=mock_summarization,
-            workspace_id="test"
-        )
+            summarization_service=mock_summarization
+                    )
 
         state: GlobalState = {
             "user_topic": "主题",
@@ -357,9 +345,8 @@ class TestGetCurrentStep:
             llm_service=mock_llm,
             retrieval_service=mock_retrieval,
             parser_service=mock_parser,
-            summarization_service=mock_summarization,
-            workspace_id="test"
-        )
+            summarization_service=mock_summarization
+                    )
 
         state: GlobalState = {
             "user_topic": "主题",
@@ -388,9 +375,8 @@ class TestGetCurrentStep:
             llm_service=mock_llm,
             retrieval_service=mock_retrieval,
             parser_service=mock_parser,
-            summarization_service=mock_summarization,
-            workspace_id="test"
-        )
+            summarization_service=mock_summarization
+                    )
 
         state: GlobalState = {
             "user_topic": "主题",
@@ -424,8 +410,7 @@ class TestDynamicDirectorRouting:
             retrieval_service=mock_retrieval,
             parser_service=mock_parser,
             summarization_service=mock_summarization,
-            workspace_id="test",
-            enable_dynamic_adjustment=True
+                        enable_dynamic_adjustment=True
         )
 
         state: GlobalState = {
@@ -456,8 +441,7 @@ class TestDynamicDirectorRouting:
             retrieval_service=mock_retrieval,
             parser_service=mock_parser,
             summarization_service=mock_summarization,
-            workspace_id="test",
-            enable_dynamic_adjustment=True
+                        enable_dynamic_adjustment=True
         )
 
         state: GlobalState = {
@@ -488,8 +472,7 @@ class TestDynamicDirectorRouting:
             retrieval_service=mock_retrieval,
             parser_service=mock_parser,
             summarization_service=mock_summarization,
-            workspace_id="test",
-            enable_dynamic_adjustment=True
+                        enable_dynamic_adjustment=True
         )
 
         state: GlobalState = {
@@ -523,9 +506,8 @@ class TestInitialState:
             llm_service=mock_llm,
             retrieval_service=mock_retrieval,
             parser_service=mock_parser,
-            summarization_service=mock_summarization,
-            workspace_id="test"
-        )
+            summarization_service=mock_summarization
+                    )
 
         initial_state: GlobalState = {
             "user_topic": "",

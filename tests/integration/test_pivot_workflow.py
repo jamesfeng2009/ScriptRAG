@@ -206,9 +206,8 @@ async def test_pivot_triggered_on_deprecation_conflict(
         llm_service=mock_llm_service_with_conflict,
         retrieval_service=mock_retrieval_service_with_deprecated,
         parser_service=mock_parser_service,
-        summarization_service=mock_summarization_service,
-        workspace_id="test-workspace"
-    )
+        summarization_service=mock_summarization_service
+            )
     
     # Execute workflow with increased recursion limit
     # Note: This test will hit recursion limit due to pivot loop complexity
@@ -252,9 +251,8 @@ async def test_outline_modified_after_pivot(
         llm_service=mock_llm_service_with_conflict,
         retrieval_service=mock_retrieval_service_with_deprecated,
         parser_service=mock_parser_service,
-        summarization_service=mock_summarization_service,
-        workspace_id="test-workspace"
-    )
+        summarization_service=mock_summarization_service
+            )
     
     # Execute workflow with increased recursion limit
     result = await orchestrator.execute(initial_state, recursion_limit=100)
@@ -299,9 +297,8 @@ async def test_re_retrieval_after_pivot(
         llm_service=mock_llm_service_with_conflict,
         retrieval_service=mock_retrieval_service_with_deprecated,
         parser_service=mock_parser_service,
-        summarization_service=mock_summarization_service,
-        workspace_id="test-workspace"
-    )
+        summarization_service=mock_summarization_service
+            )
     
     # Execute workflow with increased recursion limit
     result = await orchestrator.execute(initial_state, recursion_limit=100)
@@ -333,9 +330,8 @@ async def test_pivot_loop_completes_successfully(
         llm_service=mock_llm_service_with_conflict,
         retrieval_service=mock_retrieval_service_with_deprecated,
         parser_service=mock_parser_service,
-        summarization_service=mock_summarization_service,
-        workspace_id="test-workspace"
-    )
+        summarization_service=mock_summarization_service
+            )
     
     # Execute workflow with increased recursion limit
     result = await orchestrator.execute(initial_state, recursion_limit=100)
@@ -375,9 +371,8 @@ async def test_skill_switch_to_warning_mode(
         llm_service=mock_llm_service_with_conflict,
         retrieval_service=mock_retrieval_service_with_deprecated,
         parser_service=mock_parser_service,
-        summarization_service=mock_summarization_service,
-        workspace_id="test-workspace"
-    )
+        summarization_service=mock_summarization_service
+            )
     
     # Execute workflow with increased recursion limit
     result = await orchestrator.execute(initial_state, recursion_limit=100)
@@ -411,9 +406,8 @@ async def test_pivot_reason_logged(
         llm_service=mock_llm_service_with_conflict,
         retrieval_service=mock_retrieval_service_with_deprecated,
         parser_service=mock_parser_service,
-        summarization_service=mock_summarization_service,
-        workspace_id="test-workspace"
-    )
+        summarization_service=mock_summarization_service
+            )
     
     # Execute workflow with increased recursion limit
     result = await orchestrator.execute(initial_state, recursion_limit=100)
@@ -447,9 +441,8 @@ async def test_multiple_pivots_handled(
         llm_service=mock_llm_service_with_conflict,
         retrieval_service=mock_retrieval_service_with_deprecated,
         parser_service=mock_parser_service,
-        summarization_service=mock_summarization_service,
-        workspace_id="test-workspace"
-    )
+        summarization_service=mock_summarization_service
+            )
     
     # Execute workflow with increased recursion limit
     result = await orchestrator.execute(initial_state, recursion_limit=100)

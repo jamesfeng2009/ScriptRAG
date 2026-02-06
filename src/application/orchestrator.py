@@ -83,7 +83,6 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
         retrieval_service: RetrievalService,
         parser_service: IParserService,
         summarization_service: SummarizationService,
-        workspace_id: str = "",  # 已废弃，保留参数兼容
         enable_dynamic_adjustment: bool = False,
         enable_agentic_rag: bool = True,
         enable_task_stack: bool = False,
@@ -100,7 +99,6 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             retrieval_service: 检索服务实例
             parser_service: 解析服务实例
             summarization_service: 摘要服务实例
-            workspace_id: 已废弃，保留用于向后兼容
             enable_dynamic_adjustment: 是否启用动态方向调整（默认关闭以保持兼容性）
             enable_agentic_rag: 是否启用 Agentic RAG（默认启用：意图解析 + 质量评估）
             enable_task_stack: 是否启用 Task Stack（用于嵌套任务管理，默认关闭）
@@ -151,8 +149,7 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             self.tool_executor = ToolExecutor(
                 llm_service=llm_service,
                 retrieval_service=retrieval_service,
-                node_factory=self.node_factory,
-                workspace_id=workspace_id
+                node_factory=self.node_factory
             )
             self.tool_service = ToolService(
                 llm_service=llm_service,
@@ -1074,7 +1071,6 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             retrieval_service=self.retrieval_service,
             parser_service=self.parser_service,
             summarization_service=self.summarization_service,
-            workspace_id=self.workspace_id,
             enable_parallel=True,
             enable_quality_eval=False,
             llm_service=self.llm_service,
@@ -1315,7 +1311,7 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
         
         config = {
             "configurable": {
-                "thread_id": self.workspace_id
+                "thread_id": "default"
             }
         }
         

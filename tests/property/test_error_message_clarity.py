@@ -48,8 +48,7 @@ async def test_mock_retrieval_error_handling():
     mock_retrieval = create_mock_retrieval_service()
 
     result = await mock_retrieval.hybrid_retrieve(
-        workspace_id="nonexistent",
-        query="test query",
+                query="test query",
         top_k=5
     )
 
@@ -140,8 +139,7 @@ async def test_retrieval_results_have_clear_structure(query):
     mock_retrieval = create_mock_retrieval_service()
 
     results = await mock_retrieval.hybrid_retrieve(
-        workspace_id="test",
-        query=query,
+                query=query,
         top_k=3
     )
 
