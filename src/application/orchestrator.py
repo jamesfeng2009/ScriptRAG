@@ -3,25 +3,25 @@
 
 该模块实现了 LangGraph 状态机，用于编排多智能体剧本生成工作流。
 
-增强功能（当 enable_dynamic_adjustment=True 时）：
-1. RAGContentAnalyzer 集成用于语义内容分析
-2. DynamicDirector 用于实时方向调整
-3. SkillRecommender 用于智能技能选择
+增强功能（Agentic RAG 集成）：
+1. IntentParserAgent 集成用于意图解析和查询增强
+2. QualityEvalAgent 集成用于质量评估和自适应检索
+3. 基于质量评估的条件重试循环
 
 v2.1 架构变更：
 - 使用 GlobalState TypedDict 替代 SharedState
 - 采用 Reducer 模式进行状态更新
 - 函数级隔离和错误处理标准化
+- Agentic RAG：意图解析 + 质量评估 + 自适应检索
 """
 
 import logging
-import operator
 from datetime import datetime
-from typing import List, Literal, Dict, Any, Optional, Annotated
+from typing import Dict, Any, Optional
 from langgraph.graph import StateGraph, END
 
 from ..domain.state_types import GlobalState
-from ..domain.agents.node_factory import NodeFactory, create_success_log, create_error_log
+from ..domain.agents.node_factory import NodeFactory, create_success_log
 from ..domain.tools.tool_service import ToolService
 from ..domain.tools.tool_executor import ToolExecutor
 from ..domain.agents.editor_agent import EditorAgent
@@ -30,17 +30,16 @@ from ..domain.agents.enhanced_agents import (
     DynamicDirector,
     SkillRecommender,
     StructuredScreenplayWriter,
-    ContentAnalysis,
-    DirectionAdjustment,
-    DirectionAdjustmentType
+    ContentAnalysis
 )
 from ..domain.agents.agent_collaboration import (
-    AgentNegotiator,
-    ParallelAgentExecutor,
     AgentExecutionTracer,
     AgentReflection,
     CollaborationManager
 )
+from ..domain.agents.intent_parser import IntentParserAgent, IntentAnalysis
+from ..domain.agents.quality_eval import QualityEvalAgent
+from ..domain.agents.navigator import retrieve_content
 from ..services.llm.service import LLMService
 from ..services.retrieval_service import RetrievalService
 from ..services.parser.tree_sitter_parser import IParserService
@@ -49,19 +48,27 @@ from ..services.session_manager import SessionManager
 from ..infrastructure.langgraph_error_handler import (
     with_error_handling,
 )
+from ..infrastructure.logging import get_agent_logger
 from .base_orchestrator import BaseWorkflowOrchestrator
 
 
 logger = logging.getLogger(__name__)
+agent_logger = get_agent_logger(__name__)
 
 
 class WorkflowOrchestrator(BaseWorkflowOrchestrator):
     """
     工作流编排器 - 管理 LangGraph 状态机
     
-    支持两种模式：
-    - 基础模式（enable_dynamic_adjustment=False）：标准工作流
-    - 增强模式（enable_dynamic_adjustment=True）：支持 RAG 内容分析和动态方向调整
+    支持三种模式：
+    - 基础模式（enable_agentic_rag=False）：标准工作流
+    - Agentic RAG 模式（enable_agentic_rag=True）：意图解析 + 质量评估 + 自适应检索
+    - 增强模式（enable_dynamic_adjustment=True）：RAG 内容分析和动态方向调整
+    
+    Agentic RAG 工作流：
+        planner → intent_parser → navigator → quality_eval → director
+                                            ↘              ↗
+                                              如果质量差 → 重试
     
     职责：
     1. 构建和编译 LangGraph 状态图
@@ -78,13 +85,15 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
         summarization_service: SummarizationService,
         workspace_id: str,
         enable_dynamic_adjustment: bool = False,
+        enable_agentic_rag: bool = True,
         session_manager: Optional[SessionManager] = None,
         auto_save_sessions: bool = False,
         save_interval_steps: int = 5,
         enable_task_stack: bool = False,
         max_task_depth: int = 3,
         enable_tools: bool = False,
-        tool_max_iterations: int = 10
+        tool_max_iterations: int = 10,
+        max_retrieval_retries: int = 2
     ):
         """
         初始化工作流编排器
@@ -96,6 +105,7 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             summarization_service: 摘要服务实例
             workspace_id: 工作空间 ID
             enable_dynamic_adjustment: 是否启用动态方向调整（默认关闭以保持兼容性）
+            enable_agentic_rag: 是否启用 Agentic RAG（默认启用：意图解析 + 质量评估）
             session_manager: 会话管理器实例（可选，用于断点续传）
             auto_save_sessions: 是否自动保存会话状态
             save_interval_steps: 自动保存间隔（步数）
@@ -103,6 +113,7 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             max_task_depth: Task Stack 最大嵌套深度
             enable_tools: 是否启用工具服务（用于 Function Calling，默认关闭）
             tool_max_iterations: 工具调用最大迭代次数
+            max_retrieval_retries: 最大检索重试次数（Agentic RAG）
         """
         self.llm_service = llm_service
         self.retrieval_service = retrieval_service
@@ -110,11 +121,8 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
         self.summarization_service = summarization_service
         self.workspace_id = workspace_id
         self.enable_dynamic_adjustment = enable_dynamic_adjustment
-        self.session_manager = session_manager
-        self.auto_save_sessions = auto_save_sessions
-        self.save_interval_steps = save_interval_steps
-        self.enable_task_stack = enable_task_stack
-        self.enable_tools = enable_tools
+        self.enable_agentic_rag = enable_agentic_rag
+        self.max_retrieval_retries = max_retrieval_retries
         
         self.node_factory = NodeFactory(
             llm_service=llm_service,
@@ -128,6 +136,14 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
         
         super().__init__(self.node_factory)
         
+        if enable_agentic_rag:
+            self.intent_parser = IntentParserAgent(llm_service)
+            self.quality_eval_agent = QualityEvalAgent(llm_service)
+            logger.info(
+                f"Agentic RAG 初始化完成 "
+                f"(intent_parser=True, quality_eval=True, max_retries={max_retrieval_retries})"
+            )
+        
         if enable_dynamic_adjustment:
             self.rag_analyzer = RAGContentAnalyzer(llm_service)
             self.dynamic_director = DynamicDirector(llm_service)
@@ -137,6 +153,7 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
         self.collaboration_manager = CollaborationManager(llm_service)
         self.execution_tracer = AgentExecutionTracer()
         self.agent_reflection = AgentReflection(llm_service)
+        self.enable_tools = enable_tools
         
         if enable_tools:
             self.tool_executor = ToolExecutor(
@@ -160,7 +177,7 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
 
         logger.info(
             f"WorkflowOrchestrator 初始化完成 "
-            f"(dynamic_adjustment={enable_dynamic_adjustment}, "
+            f"(agentic_rag={enable_agentic_rag}, dynamic_adjustment={enable_dynamic_adjustment}, "
             f"task_stack={enable_task_stack}, max_depth={max_task_depth}, "
             f"tools={enable_tools})"
         )
@@ -169,19 +186,30 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
         """
         构建 LangGraph 状态图
         
-        根据 enable_dynamic_adjustment 参数决定是否启用增强功能。
+        根据 enable_agentic_rag 参数决定是否启用 Agentic RAG 增强功能。
+        
+        Agentic RAG 工作流：
+            planner → intent_parser → navigator → quality_eval → director
+                                                ↘              ↗
+                                                  如果质量差 → 重试
         
         返回:
             编译后的状态图
-            
-        验证需求: 14.2, 14.3, 14.4, 14.5
         """
-        logger.info(f"构建 LangGraph 状态机 (dynamic_adjustment={self.enable_dynamic_adjustment})")
+        logger.info(f"构建 LangGraph 状态机 (agentic_rag={self.enable_agentic_rag}, dynamic_adjustment={self.enable_dynamic_adjustment})")
         
         workflow = StateGraph(GlobalState)
         
         workflow.add_node("planner", self._planner_node)
+        
+        if self.enable_agentic_rag:
+            workflow.add_node("intent_parser", self._intent_parser_node)
+        
         workflow.add_node("navigator", self._navigator_node)
+        
+        if self.enable_agentic_rag:
+            workflow.add_node("quality_eval", self._quality_eval_node)
+        
         workflow.add_node("director", self._director_node)
         workflow.add_node("pivot_manager", self._pivot_manager_node)
         workflow.add_node("retry_protection", self._retry_protection_node)
@@ -204,49 +232,70 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
         
         workflow.set_entry_point("planner")
         
-        workflow.add_edge("planner", "navigator")
-        
-        if self.enable_dynamic_adjustment:
-            workflow.add_edge("navigator", "rag_analyzer")
-            workflow.add_edge("rag_analyzer", "dynamic_director")
+        if self.enable_agentic_rag:
+            workflow.add_edge("planner", "intent_parser")
+            workflow.add_edge("intent_parser", "navigator")
+            workflow.add_edge("navigator", "quality_eval")
             
             workflow.add_conditional_edges(
-                "dynamic_director",
-                self._route_dynamic_director_decision,
+                "quality_eval",
+                self._route_quality_eval_decision,
                 {
-                    "pivot": "pivot_manager",
-                    "skill_switch": "skill_recommender",
-                    "continue": "retry_protection"
+                    "good": "director",
+                    "retry": "navigator",
+                    "failed": "director"
                 }
             )
             
-            workflow.add_edge("skill_recommender", "retry_protection")
-        else:
-            workflow.add_edge("navigator", "director")
-            
-            if self.enable_tools:
+            if self.enable_dynamic_adjustment:
+                workflow.add_edge("quality_eval", "rag_analyzer")
+                workflow.add_edge("rag_analyzer", "dynamic_director")
+                
                 workflow.add_conditional_edges(
-                    "director",
-                    self._route_director_decision_with_editor,
+                    "dynamic_director",
+                    self._route_dynamic_director_decision,
                     {
-                        "pivot": "pivot_manager", 
-                        "navigate": "navigator",
-                        "write": "retry_protection",
-                        "editor": "editor"
+                        "pivot": "pivot_manager",
+                        "skill_switch": "skill_recommender",
+                        "continue": "retry_protection"
                     }
                 )
+                
+                workflow.add_edge("skill_recommender", "retry_protection")
             else:
+                workflow.add_edge("quality_eval", "director")
+        else:
+            workflow.add_edge("planner", "navigator")
+            
+            if self.enable_dynamic_adjustment:
+                workflow.add_edge("navigator", "rag_analyzer")
+                workflow.add_edge("rag_analyzer", "dynamic_director")
+                
                 workflow.add_conditional_edges(
-                    "director",
-                    self._route_director_decision,
+                    "dynamic_director",
+                    self._route_dynamic_director_decision,
                     {
-                        "pivot": "pivot_manager", 
-                        "navigate": "navigator",
-                        "write": "retry_protection"
+                        "pivot": "pivot_manager",
+                        "skill_switch": "skill_recommender",
+                        "continue": "retry_protection"
                     }
                 )
+                
+                workflow.add_edge("skill_recommender", "retry_protection")
+            else:
+                workflow.add_edge("navigator", "director")
         
-        workflow.add_edge("pivot_manager", "navigator")
+        workflow.add_conditional_edges(
+            "director",
+            self._route_director_decision,
+            {
+                "pivot": "pivot_manager", 
+                "navigate": "intent_parser" if self.enable_agentic_rag else "navigator",
+                "write": "retry_protection"
+            }
+        )
+        
+        workflow.add_edge("pivot_manager", "intent_parser" if self.enable_agentic_rag else "navigator")
         workflow.add_edge("retry_protection", "writer")
         workflow.add_edge("writer", "fact_checker")
         
@@ -259,7 +308,7 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
         workflow.add_conditional_edges(
             "step_advancer",
             self._route_completion,
-            {"continue": "navigator", "done": "compiler"}
+            {"continue": "intent_parser" if self.enable_agentic_rag else "navigator", "done": "compiler"}
         )
         
         if self.enable_tools:
@@ -300,6 +349,53 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
         if isinstance(feedback, dict):
             return feedback
         return {}
+    
+    def _route_quality_eval_decision(self, state: GlobalState) -> str:
+        """
+        路由质量评估决策
+        
+        根据质量评估结果决定下一步：
+        - good: 质量可接受，继续到 director
+        - retry: 质量差，需要重新检索
+        - failed: 评估失败，继续到 director
+        
+        参数:
+            state: 当前全局状态
+            
+        返回:
+            路由目标节点标识
+        """
+        quality_evaluation = self._get_state_value(state, "quality_evaluation", None)
+        
+        if not quality_evaluation:
+            logger.warning("没有质量评估结果，跳转到 director")
+            return "failed"
+        
+        if isinstance(quality_evaluation, dict):
+            needs_refinement = quality_evaluation.get("needs_refinement", False)
+            quality_level = quality_evaluation.get("quality_level", "unknown")
+            overall_score = quality_evaluation.get("overall_score", 0.0)
+        else:
+            needs_refinement = quality_evaluation.needs_refinement
+            quality_level = quality_evaluation.quality_level.value if hasattr(quality_evaluation.quality_level, 'value') else str(quality_evaluation.quality_level)
+            overall_score = quality_evaluation.overall_score
+        
+        retry_count = self._get_state_value(state, "retrieval_retry_count", 0)
+        
+        logger.info(
+            f"route_quality_eval: level={quality_level}, score={overall_score:.2f}, "
+            f"needs_refinement={needs_refinement}, retry_count={retry_count}"
+        )
+        
+        if needs_refinement and retry_count < self.max_retrieval_retries:
+            logger.info(f"质量评估需要改进，触发重试 (尝试 {retry_count + 1}/{self.max_retrieval_retries})")
+            return "retry"
+        elif needs_refinement and retry_count >= self.max_retrieval_retries:
+            logger.warning(f"已达到最大重试次数 ({self.max_retrieval_retries})，继续处理")
+            return "failed"
+        else:
+            logger.info(f"质量评估通过 (level={quality_level})")
+            return "good"
     
     def _route_director_decision(self, state: GlobalState) -> str:
         """
@@ -458,6 +554,254 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             "exceeded_max_iterations": result.get("exceeded_max_iterations", False)
         }
     
+    @with_error_handling(agent_name="intent_parser", action_name="parse_intent")
+    async def _intent_parser_node(self, state: GlobalState) -> Dict[str, Any]:
+        """
+        意图解析节点 - Agentic RAG 核心组件
+        
+        职责:
+            - 分析当前步骤的查询意图
+            - 提取关键词和数据源建议
+            - 生成增强查询
+            - 更新意图分析结果
+        
+        参数:
+            state: 当前全局状态
+            
+        返回:
+            状态更新字典
+        """
+        logger.info("执行意图解析节点")
+        
+        current_step = self._get_current_step(state)
+        if not current_step:
+            return {}
+        
+        query = current_step.get("description", "")
+        previous_intent = self._get_state_value(state, "current_intent", None)
+        
+        retry_count = self._get_state_value(state, "retrieval_retry_count", 0)
+        
+        context = None
+        if previous_intent and retry_count > 0:
+            previous_suggestions = self._get_state_value(state, "quality_suggestions", [])
+            context = {
+                "retry_count": retry_count,
+                "previous_intent": previous_intent if isinstance(previous_intent, dict) else {
+                    "primary_intent": previous_intent.primary_intent if hasattr(previous_intent, 'primary_intent') else str(previous_intent),
+                    "keywords": previous_intent.keywords if hasattr(previous_intent, 'keywords') else []
+                },
+                "quality_suggestions": previous_suggestions,
+                "quality_issues": self._get_state_value(state, "quality_issues", [])
+            }
+            
+            logger.info(
+                f"意图解析重试上下文: retry_count={retry_count}, "
+                f"suggestions={len(previous_suggestions)}"
+            )
+        
+        agent_logger.log_agent_transition(
+            from_agent="planner",
+            to_agent="intent_parser",
+            step_id=current_step.get("step_id"),
+            reason="parse_query_intent"
+        )
+        
+        if context:
+            intent = await self.intent_parser.parse_intent_with_context(query, context)
+        else:
+            intent = await self.intent_parser.parse_intent(query)
+        
+        agent_logger.log_agent_transition(
+            from_agent="intent_parser",
+            to_agent="navigator",
+            step_id=current_step.get("step_id"),
+            reason=f"intent_parsed: {intent.intent_type}"
+        )
+        
+        logger.info(
+            f"意图解析完成: intent={intent.primary_intent[:50]}..., "
+            f"keywords={intent.keywords[:3]}, sources={intent.search_sources}, "
+            f"confidence={intent.confidence:.2f}"
+        )
+        
+        updates = {
+            "current_intent": {
+                "primary_intent": intent.primary_intent,
+                "keywords": intent.keywords,
+                "search_sources": intent.search_sources,
+                "confidence": intent.confidence,
+                "intent_type": intent.intent_type,
+                "reasoning": intent.reasoning if hasattr(intent, 'reasoning') else ""
+            }
+        }
+        
+        updates["execution_log"] = create_success_log(
+            agent="intent_parser",
+            action_name="parse_intent",
+            details={
+                "step_id": current_step.get("step_id"),
+                "query": query[:100],
+                "primary_intent": intent.primary_intent[:100],
+                "keywords": intent.keywords,
+                "search_sources": intent.search_sources,
+                "confidence": intent.confidence,
+                "intent_type": intent.intent_type,
+                "retry_count": retry_count
+            }
+        )
+        
+        return updates
+    
+    @with_error_handling(agent_name="quality_eval", action_name="evaluate_quality")
+    async def _quality_eval_node(self, state: GlobalState) -> Dict[str, Any]:
+        """
+        质量评估节点 - Agentic RAG 核心组件
+        
+        职责:
+            - 评估检索结果的质量
+            - 生成改进建议
+            - 决定是否需要重新检索
+            - 记录质量评估日志
+        
+        参数:
+            state: 当前全局状态
+            
+        返回:
+            状态更新字典
+        """
+        logger.info("执行质量评估节点")
+        
+        current_step = self._get_current_step(state)
+        retrieved_docs = self._get_state_value(state, "retrieved_docs", [])
+        current_intent = self._get_state_value(state, "current_intent", None)
+        enhanced_query = self._get_state_value(state, "enhanced_query", "")
+        
+        if not current_step:
+            return {}
+        
+        if not retrieved_docs:
+            logger.warning("没有检索结果可供评估")
+            
+            agent_logger.log_agent_transition(
+                from_agent="navigator",
+                to_agent="quality_eval",
+                step_id=current_step.get("step_id"),
+                reason="no_documents_to_evaluate"
+            )
+            
+            return {
+                "quality_evaluation": {
+                    "overall_score": 0.0,
+                    "relevance_score": 0.0,
+                    "completeness_score": 0.0,
+                    "accuracy_score": 0.0,
+                    "quality_level": "insufficient",
+                    "retrieval_status": "no_results",
+                    "strengths": [],
+                    "weaknesses": ["没有检索到相关文档"],
+                    "suggestions": ["尝试修改查询关键词", "检查数据源配置"],
+                    "needs_refinement": True,
+                    "refinement_strategy": None
+                },
+                "execution_log": create_success_log(
+                    agent="quality_eval",
+                    action_name="evaluate_quality",
+                    details={
+                        "step_id": current_step.get("step_id"),
+                        "doc_count": 0,
+                        "quality_level": "insufficient",
+                        "needs_refinement": True
+                    }
+                )
+            }
+        
+        intent_obj = None
+        if current_intent:
+            if isinstance(current_intent, dict):
+                intent_obj = IntentAnalysis(
+                    primary_intent=current_intent.get("primary_intent", ""),
+                    keywords=current_intent.get("keywords", []),
+                    search_sources=current_intent.get("search_sources", []),
+                    confidence=current_intent.get("confidence", 0.5),
+                    intent_type=current_intent.get("intent_type", "informational")
+                )
+            else:
+                intent_obj = current_intent
+        
+        agent_logger.log_agent_transition(
+            from_agent="navigator",
+            to_agent="quality_eval",
+            step_id=current_step.get("step_id"),
+            reason="evaluate_retrieval_quality"
+        )
+        
+        quality_evaluation = await self.quality_eval_agent.evaluate_quality(
+            query=enhanced_query or current_step.get("description", ""),
+            documents=retrieved_docs,
+            intent=intent_obj
+        )
+        
+        retry_count = self._get_state_value(state, "retrieval_retry_count", 0)
+        
+        agent_logger.log_agent_transition(
+            from_agent="quality_eval",
+            to_agent=("director" if not quality_evaluation.needs_refinement else "navigator"),
+            step_id=current_step.get("step_id"),
+            reason=f"quality_{quality_evaluation.quality_level.value}_decision"
+        )
+        
+        logger.info(
+            f"质量评估完成: score={quality_evaluation.overall_score:.2f}, "
+            f"level={quality_evaluation.quality_level.value}, "
+            f"needs_refinement={quality_evaluation.needs_refinement}, "
+            f"retry_count={retry_count}"
+        )
+        
+        updates = {
+            "quality_evaluation": {
+                "overall_score": quality_evaluation.overall_score,
+                "relevance_score": quality_evaluation.relevance_score,
+                "completeness_score": quality_evaluation.completeness_score,
+                "accuracy_score": quality_evaluation.accuracy_score,
+                "quality_level": quality_evaluation.quality_level.value,
+                "retrieval_status": quality_evaluation.retrieval_status.value if hasattr(quality_evaluation.retrieval_status, 'value') else str(quality_evaluation.retrieval_status),
+                "strengths": quality_evaluation.strengths,
+                "weaknesses": quality_evaluation.weaknesses,
+                "suggestions": quality_evaluation.suggestions,
+                "needs_refinement": quality_evaluation.needs_refinement,
+                "refinement_strategy": quality_evaluation.refinement_strategy,
+                "retry_count": retry_count
+            },
+            "quality_suggestions": quality_evaluation.suggestions,
+            "quality_issues": quality_evaluation.weaknesses
+        }
+        
+        if quality_evaluation.needs_refinement and retry_count < self.max_retrieval_retries:
+            updates["retrieval_retry_count"] = retry_count + 1
+            logger.info(f"触发重试机制: retry_count={retry_count + 1}/{self.max_retrieval_retries}")
+        
+        updates["execution_log"] = create_success_log(
+            agent="quality_eval",
+            action_name="evaluate_quality",
+            details={
+                "step_id": current_step.get("step_id"),
+                "doc_count": len(retrieved_docs),
+                "overall_score": quality_evaluation.overall_score,
+                "relevance_score": quality_evaluation.relevance_score,
+                "completeness_score": quality_evaluation.completeness_score,
+                "accuracy_score": quality_evaluation.accuracy_score,
+                "quality_level": quality_evaluation.quality_level.value,
+                "needs_refinement": quality_evaluation.needs_refinement,
+                "retry_count": retry_count,
+                "strengths_count": len(quality_evaluation.strengths),
+                "weaknesses_count": len(quality_evaluation.weaknesses),
+                "suggestions_count": len(quality_evaluation.suggestions)
+            }
+        )
+        
+        return updates
+    
     @with_error_handling(agent_name="rag_analyzer", action_name="analyze_content")
     async def _rag_analyzer_node(self, state: GlobalState) -> Dict[str, Any]:
         """
@@ -477,7 +821,7 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
         logger.info("执行 RAG 分析器节点")
         
         current_step = self._get_current_step(state)
-        retrieved_docs = self._get_state_value(state, "last_retrieved_docs", [])
+        retrieved_docs = self._get_state_value(state, "retrieved_docs", [])
         
         if not current_step or not retrieved_docs:
             logger.warning("没有内容可分析")
@@ -554,7 +898,6 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             confidence=rag_analysis.get("confidence", 0.5)
         )
         
-        current_step = self._get_current_step(state)
         adjustment = await self.dynamic_director.evaluate_and_adjust(
             state=state,
             content_analysis=analysis
@@ -665,9 +1008,18 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
         logger.info("执行规划器节点")
         
         user_topic = self._get_state_value(state, "user_topic", "")
-        project_context = self._get_state_value(state, "project_context", "")
         
-        return await self.node_factory.planner_node(state)
+        updates = await self.node_factory.planner_node(state)
+        
+        if self.enable_agentic_rag:
+            agent_logger.log_agent_transition(
+                from_agent="entry",
+                to_agent="planner",
+                step_id=None,
+                reason="generate_outline"
+            )
+        
+        return updates
     
     @with_error_handling(agent_name="navigator", action_name="retrieve_content")
     async def _navigator_node(self, state: GlobalState) -> Dict[str, Any]:
@@ -678,6 +1030,7 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             - 根据当前步骤检索相关内容
             - 解析和摘要检索结果
             - 更新检索文档列表
+            - 支持意图解析后的增强查询
         
         参数:
             state: 当前全局状态
@@ -689,6 +1042,8 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
         
         outline = self._get_state_value(state, "outline", [])
         current_step_index = self._get_state_value(state, "current_step_index", 0)
+        current_intent = self._get_state_value(state, "current_intent", None)
+        retry_count = self._get_state_value(state, "retrieval_retry_count", 0)
         
         if current_step_index >= len(outline):
             return {
@@ -700,7 +1055,56 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
                 }]
             }
         
-        return await self.node_factory.navigator_node(state)
+        intent_obj = None
+        if current_intent and isinstance(current_intent, dict):
+            intent_obj = IntentAnalysis(
+                primary_intent=current_intent.get("primary_intent", ""),
+                keywords=current_intent.get("keywords", []),
+                search_sources=current_intent.get("search_sources", []),
+                confidence=current_intent.get("confidence", 0.5),
+                intent_type=current_intent.get("intent_type", "informational")
+            )
+        elif current_intent:
+            intent_obj = current_intent
+        
+        current_step = outline[current_step_index]
+        
+        if self.enable_agentic_rag:
+            agent_logger.log_agent_transition(
+                from_agent=("quality_eval" if retry_count > 0 else "intent_parser"),
+                to_agent="navigator",
+                step_id=current_step.get("step_id"),
+                reason=("retry_retrieval" if retry_count > 0 else "retrieve_content")
+            )
+        
+        updated_state, quality_evaluation = await retrieve_content(
+            state=state,
+            retrieval_service=self.retrieval_service,
+            parser_service=self.parser_service,
+            summarization_service=self.summarization_service,
+            workspace_id=self.workspace_id,
+            enable_parallel=True,
+            enable_quality_eval=False,
+            llm_service=self.llm_service,
+            intent=intent_obj
+        )
+        
+        enhanced_query = intent_obj.primary_intent if intent_obj else current_step.get("description", "")
+        
+        if isinstance(updated_state, dict):
+            updates = {
+                "retrieved_docs": updated_state.get("retrieved_docs", []),
+                "enhanced_query": enhanced_query,
+                "execution_log": updated_state.get("execution_log", [])
+            }
+        else:
+            updates = {
+                "retrieved_docs": updated_state.retrieved_docs,
+                "enhanced_query": enhanced_query,
+                "execution_log": updated_state.execution_log
+            }
+        
+        return updates
     
     @with_error_handling(agent_name="director", action_name="evaluate_and_decide")
     async def _director_node(self, state: GlobalState) -> Dict[str, Any]:
@@ -908,6 +1312,7 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
                     current_session_id = None
 
             logger.info(f"开始执行工作流，recursion_limit={recursion_limit}")
+            logger.info(f"Agentic RAG 模式: {self.enable_agentic_rag}")
 
             config = {
                 "recursion_limit": recursion_limit,
@@ -1073,45 +1478,29 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
         except Exception as e:
             logger.error(f"执行追踪失败: {str(e)}")
             return {"tracing_error": str(e)}
-
-    @with_error_handling(agent_name="agent_reflection", action_name="reflect_on_failure")
+    
+    @with_error_handling(agent_name="agent_reflection", action_name="agent_reflection")
     async def _agent_reflection_node(self, state: GlobalState) -> Dict[str, Any]:
         """
-        自我反思节点
+        Agent 反思节点
 
         职责：
             - 从失败中学习
-            - 分析失败模式
-            - 生成调整建议
+            - 调整策略
+            - 记录反思结果
         """
         try:
-            recent_failures = state.get("recent_failures", [])
-            current_agent = state.get("current_agent", "unknown")
-
-            if not recent_failures:
-                return {"reflection_result": None}
-
             reflection_result = await self.agent_reflection.reflect_on_failure(
-                agent_name=current_agent,
-                failure_context={
-                    "failures": recent_failures,
-                    "query": state.get("query", ""),
-                    "step_index": state.get("current_step_index", 0)
-                },
-                state=dict(state)
+                agent_name=state.get("current_agent", "unknown"),
+                failure_context=state.get("last_error", {}),
+                state=state
             )
-
+            
             return {
-                "reflection_result": {
-                    "reflection_id": reflection_result.reflection_id,
-                    "failure_pattern": reflection_result.failure_pattern,
-                    "suggested_adjustments": reflection_result.suggested_adjustments,
-                    "confidence": reflection_result.confidence,
-                    "reason": reflection_result.reason
-                },
-                "agent_reflection_history": state.get("agent_reflection_history", []) + [dict(reflection_result)]
+                "reflection_result": reflection_result,
+                "strategy_adjustment": reflection_result.get("adjustments", {}) if reflection_result else {}
             }
-
+            
         except Exception as e:
-            logger.error(f"自我反思失败: {str(e)}")
+            logger.error(f"Agent 反思失败: {str(e)}")
             return {"reflection_error": str(e)}

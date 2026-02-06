@@ -5,9 +5,63 @@
 所有模型使用 Pydantic 进行数据验证和序列化。
 """
 
-from typing import List, Dict, Optional, Literal, Any
+from typing import List, Dict, Optional, Literal, Any, TYPE_CHECKING
 from pydantic import BaseModel, Field, field_validator, model_validator
 from datetime import datetime
+
+
+if TYPE_CHECKING:
+    pass
+
+
+class IntentAnalysis(BaseModel):
+    """意图分析结果
+    
+    表示意图解析智能体输出的分析结果，包含主要意图、关键词和建议数据源。
+    """
+    primary_intent: str = Field(
+        ...,
+        description="主要意图描述",
+        min_length=1
+    )
+    keywords: List[str] = Field(
+        default_factory=list,
+        description="用于检索的关键词列表"
+    )
+    search_sources: List[str] = Field(
+        default_factory=list,
+        description="建议的检索数据源，如 ['rag', 'mysql', 'web']"
+    )
+    confidence: float = Field(
+        default=0.8,
+        description="分析置信度",
+        ge=0.0,
+        le=1.0
+    )
+    alternative_intents: List[Dict[str, Any]] = Field(
+        default_factory=list,
+        description="备选意图列表"
+    )
+    intent_type: str = Field(
+        default="informational",
+        description="意图类型：informational/navigational/transactional/computational"
+    )
+    language: str = Field(
+        default="zh",
+        description="查询语言：zh/en/mixed"
+    )
+    
+    def model_dump_for_logging(self) -> Dict[str, Any]:
+        """转换为日志友好的格式"""
+        return {
+            "primary_intent": self.primary_intent,
+            "keywords": self.keywords,
+            "search_sources": self.search_sources,
+            "confidence": self.confidence,
+            "intent_type": self.intent_type,
+            "language": self.language,
+            "alternative_intents_count": len(self.alternative_intents)
+        }
 
 
 class RetrievedDocument(BaseModel):
@@ -125,6 +179,12 @@ class SharedState(BaseModel):
     retrieved_docs: List[RetrievedDocument] = Field(
         default_factory=list,
         description="检索到的文档列表"
+    )
+    
+    # 意图解析（Agentic RAG）
+    current_intent: Optional["IntentAnalysis"] = Field(
+        None,
+        description="当前步骤的意图分析结果"
     )
     
     # 生成
@@ -315,7 +375,6 @@ class SharedState(BaseModel):
         self.skill_history.append(skill_change)
         
         # 更新当前 Skill
-        old_skill = self.current_skill
         self.current_skill = new_skill
         self.updated_at = datetime.now()
         
