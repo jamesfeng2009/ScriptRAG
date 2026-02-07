@@ -82,6 +82,24 @@ class SkillsConfigFile(BaseModel):
         return v
 
 
+class ThemeConfigFile(BaseModel):
+    """主题配置文件模型"""
+    version: str = Field(default="1.0", description="配置版本")
+    theme: Dict[str, Any] = Field(default_factory=dict, description="主题信息")
+    keywords: List[Dict[str, Any]] = Field(default_factory=list, description="关键词配置")
+    skills: Dict[str, Any] = Field(default_factory=dict, description="技能配置")
+    default_skill: str = Field(default="", description="默认技能")
+    skill_options: List[Dict[str, Any]] = Field(default_factory=list, description="技能选项")
+    script_config: Dict[str, Any] = Field(default_factory=dict, description="剧本配置")
+
+    @field_validator('version')
+    @classmethod
+    def validate_version(cls, v):
+        if v not in ["1.0"]:
+            raise ValueError(f"Unsupported theme version: {v}. Must be 1.0")
+        return v
+
+
 class SkillConfigLoader:
     """
     技能配置加载器
@@ -94,18 +112,22 @@ class SkillConfigLoader:
     - 支持热重载
     """
 
-    def __init__(self, config_path: Optional[str] = None):
+    def __init__(self, config_path: Optional[str] = None, themes_dir: Optional[str] = None):
         """
         初始化技能配置加载器
 
         Args:
             config_path: 技能配置文件的路径
+            themes_dir: 主题配置目录路径
         """
         self.config_path = Path(config_path) if config_path else Path("config/skills.yaml")
+        self.themes_dir = Path(themes_dir) if themes_dir else Path("config/themes")
         self.observer: Optional[Observer] = None
         self.reload_callbacks: List[Callable] = []
+        self._theme_cache: Dict[str, Any] = {}
 
         logger.info(f"SkillConfigLoader initialized with config: {self.config_path}")
+        logger.info(f"Themes directory: {self.themes_dir}")
 
     def load_from_yaml(self, path: Optional[Path] = None) -> Dict[str, SkillConfig]:
         """
@@ -266,6 +288,36 @@ class SkillConfigLoader:
             logger.error(f"Failed to load routing configuration: {str(e)}")
             raise
 
+    def load_themes(self, path: Optional[Path] = None) -> Dict[str, Any]:
+        """
+        从 YAML 文件加载主题配置
+
+        Args:
+            path: YAML 文件路径（如果未提供则使用默认路径）
+
+        Returns:
+            主题配置字典
+        """
+        config_file = path or self.config_path
+
+        if not config_file.exists():
+            raise FileNotFoundError(f"Skills configuration file not found: {config_file}")
+
+        logger.info(f"Loading themes from: {config_file}")
+
+        try:
+            with open(config_file, 'r', encoding='utf-8') as f:
+                raw_config = yaml.safe_load(f)
+
+            config = SkillsConfigFile(**raw_config)
+
+            logger.info(f"Successfully loaded {len(config.themes)} themes")
+            return config.themes
+
+        except Exception as e:
+            logger.error(f"Failed to load themes configuration: {str(e)}")
+            raise
+
     def validate_config(self, config_dict: dict) -> bool:
         """
         验证技能配置
@@ -304,6 +356,165 @@ class SkillConfigLoader:
         except Exception as e:
             logger.error(f"Configuration validation failed: {str(e)}")
             return False
+
+    def list_available_themes(self) -> List[str]:
+        """
+        列出可用的主题配置
+
+        Returns:
+            主题名称列表（不含 .yaml 后缀）
+        """
+        if not self.themes_dir.exists():
+            logger.warning(f"Themes directory not found: {self.themes_dir}")
+            return []
+
+        themes = []
+        for f in self.themes_dir.glob("*.yaml"):
+            if f.stem not in ["__init__", "example"]:
+                themes.append(f.stem)
+
+        logger.info(f"Available themes: {themes}")
+        return themes
+
+    def load_theme(self, theme_id: str) -> Optional[Dict[str, Any]]:
+        """
+        加载指定主题的配置
+
+        Args:
+            theme_id: 主题 ID（如 "saint_seiya"）
+
+        Returns:
+            主题配置字典，未找到返回 None
+        """
+        if theme_id in self._theme_cache:
+            return self._theme_cache[theme_id]
+
+        theme_path = self.themes_dir / f"{theme_id}.yaml"
+
+        if not theme_path.exists():
+            logger.warning(f"Theme configuration not found: {theme_path}")
+            return None
+
+        try:
+            with open(theme_path, 'r', encoding='utf-8') as f:
+                raw_config = yaml.safe_load(f)
+
+            config = ThemeConfigFile(**raw_config)
+
+            theme_data = {
+                "id": theme_id,
+                "name": config.theme.get("name", theme_id),
+                "description": config.theme.get("description", ""),
+                "keywords": config.keywords,
+                "skills": config.skills,
+                "default_skill": config.default_skill,
+                "skill_options": config.skill_options,
+                "script_config": config.script_config,
+                "config_path": str(theme_path)
+            }
+
+            self._theme_cache[theme_id] = theme_data
+            logger.info(f"Loaded theme: {theme_id} from {theme_path}")
+
+            return theme_data
+
+        except Exception as e:
+            logger.error(f"Failed to load theme {theme_id}: {str(e)}")
+            return None
+
+    def detect_theme(self, query: str) -> Optional[str]:
+        """
+        根据查询检测主题
+
+        Args:
+            query: 用户查询
+
+        Returns:
+            检测到的主题名称，未检测到返回 None
+        """
+        for theme_id in self.list_available_themes():
+            theme = self.load_theme(theme_id)
+            if not theme:
+                continue
+
+            for kw_group in theme.get("keywords", []):
+                priority = kw_group.get("priority", 10)
+                words = kw_group.get("words", [])
+
+                for word in words:
+                    if word.lower() in query.lower():
+                        logger.info(f"Detected theme: {theme_id} (matched: {word}, priority: {priority})")
+                        return theme_id
+
+        return None
+
+    def get_theme_keywords(self, theme_id: str) -> List[str]:
+        """
+        获取主题的所有关键词
+
+        Args:
+            theme_id: 主题 ID
+
+        Returns:
+            关键词列表
+        """
+        theme = self.load_theme(theme_id)
+        if not theme:
+            return []
+
+        keywords = []
+        for kw_group in theme.get("keywords", []):
+            keywords.extend(kw_group.get("words", []))
+
+        return keywords
+
+    def get_theme_skills(self, theme_id: str) -> Dict[str, Any]:
+        """
+        获取主题的技能配置
+
+        Args:
+            theme_id: 主题 ID
+
+        Returns:
+            技能配置字典
+        """
+        theme = self.load_theme(theme_id)
+        if not theme:
+            return {}
+
+        return theme.get("skills", {})
+
+    def get_theme_skill_options(self, theme_id: str) -> List[Dict[str, Any]]:
+        """
+        获取主题的技能选项（给前端展示）
+
+        Args:
+            theme_id: 主题 ID
+
+        Returns:
+            技能选项列表
+        """
+        theme = self.load_theme(theme_id)
+        if not theme:
+            return []
+
+        return theme.get("skill_options", [])
+
+    def get_theme_default_skill(self, theme_id: str) -> str:
+        """
+        获取主题的默认技能
+
+        Args:
+            theme_id: 主题 ID
+
+        Returns:
+            默认技能名称
+        """
+        theme = self.load_theme(theme_id)
+        if not theme:
+            return ""
+
+        return theme.get("default_skill", "")
 
     def export_to_yaml(self, skills: Dict[str, SkillConfig], output_path: Path):
         """

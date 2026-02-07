@@ -1,7 +1,10 @@
-# Skills 配置文件
-# 
-# 本文件定义 RAG 剧本生成系统的技能配置。
+# Skills 配置文件（通用版）
+#
+# 本文件定义 RAG 剧本生成系统的通用技能配置。
 # 支持分层认知框架和信号路由系统。
+#
+# 注意：此文件为通用配置，不包含任何特定主题的信息。
+# 主题相关配置请放在 config/themes/{theme_id}.yaml 文件中。
 #
 # 结构说明：
 #   version: 配置版本
@@ -18,6 +21,8 @@
 #     - prompt_config: 提示词配置
 #     - enabled: 是否启用
 #     - metadata: 元数据
+#   routing: 路由规则配置
+#   compatibility: 兼容性规则配置
 
 version: "2.0"
 
@@ -27,13 +32,13 @@ layers:
     compatible_layers:
       - semantic
       - domain
-  
+
   semantic:
     description: "语义层：概念解释、原理说明、类比分析"
     compatible_layers:
       - foundation
       - domain
-  
+
   domain:
     description: "领域层：特定场景、专业领域、API文档"
     compatible_layers:
@@ -42,7 +47,7 @@ layers:
 
 skills:
   # ============ FOUNDATION 层技能 ============
-  
+
   standard_tutorial:
     description: "清晰、结构化的教程格式"
     tone: "professional"
@@ -92,10 +97,10 @@ skills:
         - 引用来源时使用 [来源: 文件路径] 格式
       user_template: |
         步骤描述: {step_description}
-        
+
         检索到的相关内容:
         {retrieved_content}
-        
+
         请基于以上内容生成这一步骤的剧本片段。确保所有陈述都有来源支持。
       temperature: 0.7
       max_tokens: 2000
@@ -151,10 +156,10 @@ skills:
         - 所有代码必须基于检索内容
       user_template: |
         步骤描述: {step_description}
-        
+
         检索到的代码内容:
         {retrieved_content}
-        
+
         请生成以代码为主体的教学剧本。
       temperature: 0.6
       max_tokens: 2500
@@ -188,10 +193,10 @@ skills:
         - 基于可用的检索内容提供摘要
       user_template: |
         步骤描述: {step_description}
-        
+
         可用的内容:
         {retrieved_content}
-        
+
         请提供高层次的概述性剧本片段。
       temperature: 0.5
       max_tokens: 1000
@@ -201,7 +206,7 @@ skills:
       auto_trigger: true
 
   # ============ SEMANTIC 层技能 ============
-  
+
   visualization_analogy:
     description: "使用类比和可视化解释复杂概念"
     tone: "engaging"
@@ -250,10 +255,10 @@ skills:
         - 所有类比必须基于检索内容的实际功能
       user_template: |
         步骤描述: {step_description}
-        
+
         检索到的技术内容:
         {retrieved_content}
-        
+
         请使用类比和可视化方法生成易于理解的剧本片段。
       temperature: 0.8
       max_tokens: 2000
@@ -314,10 +319,10 @@ skills:
         - 使用 '需要进一步研究' 或 '信息不足' 等明确表述
       user_template: |
         步骤描述: {step_description}
-        
+
         检索到的内容（可能不完整）:
         {retrieved_content}
-        
+
         请生成承认信息缺口的剧本片段，并建议研究方向。
       temperature: 0.7
       max_tokens: 1500
@@ -356,10 +361,10 @@ skills:
         - 所有技术细节必须基于检索内容
       user_template: |
         步骤描述: {step_description}
-        
+
         检索到的技术内容:
         {retrieved_content}
-        
+
         请用轻松幽默的方式生成剧本片段。
       temperature: 0.9
       max_tokens: 2000
@@ -369,7 +374,7 @@ skills:
       audience: "casual_learners"
 
   # ============ DOMAIN 层技能 ============
-  
+
   warning_mode:
     description: "突出显示废弃/风险内容"
     tone: "cautionary"
@@ -403,10 +408,10 @@ skills:
         - 使用 ⚠️ 符号标记重要警告
       user_template: |
         步骤描述: {step_description}
-        
+
         检索到的内容（包含警告标记）:
         {retrieved_content}
-        
+
         请生成突出显示风险和废弃内容的剧本片段。
       temperature: 0.6
       max_tokens: 2000
@@ -472,10 +477,10 @@ skills:
         - 所有信息必须基于检索内容
       user_template: |
         API 描述: {step_description}
-        
+
         API 相关信息:
         {retrieved_content}
-        
+
         请生成专业的 API 文档片段。
       temperature: 0.5
       max_tokens: 2500
@@ -523,10 +528,10 @@ skills:
         - 所有分析必须基于检索内容
       user_template: |
         代码/配置描述: {step_description}
-        
+
         安全相关信息:
         {retrieved_content}
-        
+
         请生成安全审计报告片段。
       temperature: 0.5
       max_tokens: 2000
@@ -537,7 +542,6 @@ skills:
 
 # 路由规则配置
 routing:
-  # 标记信号优先级（数值越小优先级越高）
   marker_priorities:
     "@deprecated": 1
     "FIXME": 1
@@ -549,13 +553,11 @@ routing:
     "NOTE": 5
     "IMPORTANT": 5
 
-  # 复杂度阈值
   complexity_thresholds:
     high: 0.7
     medium: 0.4
     low: 0.2
 
-  # 领域映射
   domain_mapping:
     api: "api_documentation"
     database: "api_documentation"
@@ -567,7 +569,6 @@ routing:
 
 # 兼容性规则
 compatibility:
-  # 层次间兼容性
   layer_compatibility:
     foundation:
       - semantic
@@ -579,7 +580,6 @@ compatibility:
       - foundation
       - semantic
 
-  # 语气兼容性
   tone_compatibility:
     professional:
       - "technical"

@@ -9,6 +9,7 @@ import logging
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 from uuid import uuid4
+import json
 
 from sqlalchemy import Column, String, Text, DateTime, JSON, select, update, delete, func
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
@@ -18,6 +19,30 @@ from sqlalchemy.dialects.postgresql import insert
 from src.domain.entities import Base, AgentExecution
 
 logger = logging.getLogger(__name__)
+
+
+def _safe_serialize(obj: Any) -> Any:
+    """安全地序列化对象，处理无法 JSON 序列化的类型"""
+    if obj is None:
+        return None
+    if isinstance(obj, (str, int, float, bool)):
+        return obj
+    if isinstance(obj, list):
+        return [_safe_serialize(item) for item in obj]
+    if isinstance(obj, dict):
+        return {key: _safe_serialize(value) for key, value in obj.items()}
+    # 处理 Pydantic 模型
+    if hasattr(obj, 'model_dump'):
+        return _safe_serialize(obj.model_dump())
+    if hasattr(obj, 'dict'):
+        return _safe_serialize(obj.dict())
+    if hasattr(obj, '__dict__'):
+        return _safe_serialize(obj.__dict__)
+    # 处理 datetime
+    if isinstance(obj, datetime):
+        return obj.isoformat()
+    # 其他对象转换为字符串
+    return str(obj)
 
 
 class AgentExecutionRecord:
@@ -60,7 +85,7 @@ class AgentExecutionRecord:
         self.created_at = created_at or datetime.now()
 
     def to_dict(self) -> Dict[str, Any]:
-        """转换为字典"""
+        """转换为字典（安全序列化）"""
         return {
             "execution_id": self.execution_id,
             "task_id": self.task_id,
@@ -70,18 +95,18 @@ class AgentExecutionRecord:
             "step_id": self.step_id,
             "step_index": self.step_index,
             "action": self.action,
-            "input_data": self.input_data,
-            "output_data": self.output_data,
+            "input_data": _safe_serialize(self.input_data),
+            "output_data": _safe_serialize(self.output_data),
             "status": self.status,
             "error_message": self.error_message,
             "execution_time_ms": self.execution_time_ms,
             "retry_count": self.retry_count,
-            "extra_data": self.extra_data,
+            "extra_data": _safe_serialize(self.extra_data),
             "created_at": self.created_at.isoformat() if self.created_at else None
         }
 
     def to_entity(self) -> AgentExecution:
-        """转换为数据库实体"""
+        """转换为数据库实体（安全序列化）"""
         return AgentExecution(
             execution_id=self.execution_id,
             task_id=self.task_id,
@@ -91,13 +116,13 @@ class AgentExecutionRecord:
             step_id=self.step_id,
             step_index=self.step_index,
             action=self.action,
-            input_data=self.input_data,
-            output_data=self.output_data,
+            input_data=_safe_serialize(self.input_data),
+            output_data=_safe_serialize(self.output_data),
             status=self.status,
             error_message=self.error_message,
             execution_time_ms=self.execution_time_ms,
             retry_count=self.retry_count,
-            extra_data=self.extra_data,
+            extra_data=_safe_serialize(self.extra_data),
             created_at=self.created_at
         )
 

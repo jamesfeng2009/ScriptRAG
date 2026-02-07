@@ -230,6 +230,10 @@ class GlobalState(TypedDict):
     retrieved_docs: Annotated[List[Dict[str, Any]], overwrite_reducer]
     director_feedback: Annotated[Optional[Dict[str, Any]], overwrite_reducer]
     fact_check_passed: Annotated[Optional[bool], overwrite_reducer]
+    quality_evaluation: Annotated[Optional[Dict[str, Any]], overwrite_reducer]
+    quality_suggestions: Annotated[Optional[List[str]], overwrite_reducer]
+    quality_issues: Annotated[Optional[List[str]], overwrite_reducer]
+    intent_analysis: Annotated[Optional[Dict[str, Any]], overwrite_reducer]
     
     # ============================================================
     # 5. 审计日志 (Audit - Append Only ⭐)
@@ -241,6 +245,7 @@ class GlobalState(TypedDict):
     # ============================================================
     error_flag: Annotated[Optional[str], overwrite_reducer]
     retry_count: Annotated[int, overwrite_reducer]
+    retrieval_retry_count: Annotated[int, overwrite_reducer]
     workflow_complete: Annotated[Optional[bool], overwrite_reducer]
     
     # ============================================================

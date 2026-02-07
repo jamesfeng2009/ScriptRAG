@@ -23,6 +23,7 @@ from langgraph.graph import StateGraph, END
 
 from ..domain.state_types import GlobalState
 from ..domain.agents.node_factory import NodeFactory, create_success_log
+from ..domain.agents.navigator import RetrievedDocument
 from ..domain.tools.tool_service import ToolService
 from ..domain.tools.tool_executor import ToolExecutor
 from ..domain.agents.editor_agent import EditorAgent
@@ -191,7 +192,8 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             current_step_index = self._get_state_value(state, "current_step_index", 0)
             outline = self._get_state_value(state, "outline", [])
             current_step = outline[current_step_index] if current_step_index < len(outline) else {}
-            step_id = current_step.get("step_id", None)
+            step_id_raw = current_step.get("step_id", None)
+            step_id = str(step_id_raw) if step_id_raw is not None else None
 
             retry_count = self._get_state_value(state, "retrieval_retry_count", 0)
 
@@ -211,7 +213,7 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
                     "current_step_index": current_step_index,
                     "retry_count": retry_count
                 },
-                output_data=updates,
+                output_data=self._serialize_updates(updates),
                 status="error" if error else "success",
                 error_message=error,
                 execution_time_ms=execution_time_ms,
@@ -227,6 +229,25 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
 
         except Exception as e:
             logger.error(f"[WorkflowOrchestrator] Agent 执行记录落库失败: {e}")
+
+    def _serialize_updates(self, updates: Dict[str, Any]) -> Dict[str, Any]:
+        """序列化 updates 字典，处理 Pydantic 对象"""
+        def serialize_value(value: Any) -> Any:
+            if isinstance(value, RetrievedDocument):
+                return {
+                    "content": getattr(value, "content", ""),
+                    "source": getattr(value, "source", ""),
+                    "confidence": getattr(value, "confidence", 0.0),
+                    "metadata": getattr(value, "metadata", {})
+                }
+            elif isinstance(value, dict):
+                return {k: serialize_value(v) for k, v in value.items()}
+            elif isinstance(value, list):
+                return [serialize_value(item) for item in value]
+            else:
+                return value
+        
+        return serialize_value(updates)
 
     def _build_graph(self) -> StateGraph:
         """
@@ -303,7 +324,9 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
                     {
                         "pivot": "pivot_manager",
                         "skill_switch": "skill_recommender",
-                        "continue": "retry_protection"
+                        "continue": "retry_protection",
+                        "retry_protection": "retry_protection",
+                        "write": "writer"
                     }
                 )
                 
@@ -323,7 +346,9 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
                     {
                         "pivot": "pivot_manager",
                         "skill_switch": "skill_recommender",
-                        "continue": "retry_protection"
+                        "continue": "retry_protection",
+                        "retry_protection": "retry_protection",
+                        "write": "writer"
                     }
                 )
                 
@@ -337,12 +362,13 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             {
                 "pivot": "pivot_manager", 
                 "navigate": "intent_parser" if self.enable_agentic_rag else "navigator",
-                "write": "retry_protection"
+                "retry_protection": "retry_protection",
+                "write": "writer"
             }
         )
         
         workflow.add_edge("pivot_manager", "intent_parser" if self.enable_agentic_rag else "navigator")
-        workflow.add_edge("retry_protection", "writer")
+        workflow.add_edge("retry_protection", "navigator")
         workflow.add_edge("writer", "fact_checker")
         
         workflow.add_conditional_edges(
@@ -455,21 +481,58 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
         """
         director_feedback = self._get_director_feedback(state)
         trigger_retrieval = director_feedback.get("trigger_retrieval", False)
+        decision = director_feedback.get("decision", None)
+        
+        outline = self._get_state_value(state, "outline", [])
+        current_step_index = self._get_state_value(state, "current_step_index", 0)
+        current_step = outline[current_step_index] if current_step_index < len(outline) else {}
+        
+        if isinstance(current_step, dict):
+            retry_count = current_step.get("retry_count", 0)
+        else:
+            retry_count = getattr(current_step, "retry_count", 0)
+        
+        logger.info(f"route_director: trigger_retrieval={trigger_retrieval}, decision={decision}, retry_count={retry_count}")
+        logger.info(f"route_director: director_feedback keys={list(director_feedback.keys()) if director_feedback else None}")
+        
+        if decision == "pivot":
+            return "pivot"
+        
+        if decision == "retry":
+            outline = self._get_state_value(state, "outline", [])
+            current_step_index = self._get_state_value(state, "current_step_index", 0)
+            current_step = outline[current_step_index] if current_step_index < len(outline) else {}
+            
+            if isinstance(current_step, dict):
+                retry_count = current_step.get("retry_count", 0)
+            else:
+                retry_count = getattr(current_step, "retry_count", 0)
+            
+            if retry_count >= self.max_retrieval_retries:
+                logger.warning(f"已达到最大重试次数 ({self.max_retrieval_retries})，强制继续到 writer")
+                return "write"
+            logger.info(f"触发重试: retry_count={retry_count}/{self.max_retrieval_retries}，经过 retry_protection 递增计数")
+            return "retry_protection"
         
         if trigger_retrieval:
             return "navigate"
         
-        decision = director_feedback.get("decision", None)
-        if decision:
-            if decision == "continue":
-                decision = "write"
-            elif decision == "retry":
-                decision = "navigate"
-            return decision
+        if decision == "continue":
+            return "write"
         
-        pivot_triggered = self._get_state_value(state, "pivot_triggered", False)
-        if pivot_triggered:
-            return "pivot"
+        if decision is None:
+            quality_evaluation = self._get_state_value(state, "quality_evaluation", None)
+            logger.info(f"route_director: quality_evaluation exists={quality_evaluation is not None}")
+            if quality_evaluation:
+                if isinstance(quality_evaluation, dict):
+                    q_level = quality_evaluation.get("quality_level", "unknown")
+                else:
+                    q_level = getattr(quality_evaluation, "quality_level", "unknown")
+                
+                logger.info(f"route_director: q_level={q_level}")
+                if q_level in ["good", "excellent"]:
+                    logger.info(f"route_director: 信任质量评估结果 (level={q_level})，直接跳转到 writer")
+                    return "write"
         
         return "write"
     
@@ -572,7 +635,14 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             状态更新字典
         """
         logger.info("执行编辑器节点")
-        
+
+        await self._record_agent_execution(
+            agent_name="editor",
+            node_name="editor",
+            state=state,
+            updates={}
+        )
+
         if not self.enable_tools:
             return {"editor_response": "工具未启用"}
         
@@ -600,15 +670,8 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             "exceeded_max_iterations": result.get("exceeded_max_iterations", False)
         }
 
-        await self._record_agent_execution(
-            agent_name="editor",
-            node_name="editor",
-            state=state,
-            updates=updates
-        )
-
         return updates
-    
+
     @with_error_handling(agent_name="intent_parser", action_name="parse_intent")
     async def _intent_parser_node(self, state: GlobalState) -> Dict[str, Any]:
         """
@@ -627,7 +690,14 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             状态更新字典
         """
         logger.info("执行意图解析节点")
-        
+
+        await self._record_agent_execution(
+            agent_name="intent_parser",
+            node_name="intent_parser",
+            state=state,
+            updates={}
+        )
+
         current_step = self._get_current_step(state)
         if not current_step:
             return {}
@@ -706,13 +776,6 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             }
         )
 
-        await self._record_agent_execution(
-            agent_name="intent_parser",
-            node_name="intent_parser",
-            state=state,
-            updates=updates
-        )
-
         return updates
     
     @with_error_handling(agent_name="quality_eval", action_name="evaluate_quality")
@@ -733,7 +796,14 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             状态更新字典
         """
         logger.info("执行质量评估节点")
-        
+
+        await self._record_agent_execution(
+            agent_name="quality_eval",
+            node_name="quality_eval",
+            state=state,
+            updates={}
+        )
+
         current_step = self._get_current_step(state)
         retrieved_docs = self._get_state_value(state, "retrieved_docs", [])
         current_intent = self._get_state_value(state, "current_intent", None)
@@ -839,6 +909,15 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             "quality_issues": quality_evaluation.weaknesses
         }
         
+        if isinstance(quality_evaluation, dict):
+            level = quality_evaluation.get('quality_level', 'unknown')
+            score = quality_evaluation.get('overall_score', 0.0)
+        else:
+            level = quality_evaluation.quality_level.value if hasattr(quality_evaluation.quality_level, 'value') else str(quality_evaluation.quality_level)
+            score = quality_evaluation.overall_score
+        
+        logger.info(f"质量评估结果: level={level}, score={score:.2f}")
+        
         if quality_evaluation.needs_refinement and retry_count < self.max_retrieval_retries:
             updates["retrieval_retry_count"] = retry_count + 1
             logger.info(f"触发重试机制: retry_count={retry_count + 1}/{self.max_retrieval_retries}")
@@ -862,15 +941,8 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             }
         )
 
-        await self._record_agent_execution(
-            agent_name="quality_eval",
-            node_name="quality_eval",
-            state=state,
-            updates=updates
-        )
-
         return updates
-    
+
     @with_error_handling(agent_name="rag_analyzer", action_name="analyze_content")
     async def _rag_analyzer_node(self, state: GlobalState) -> Dict[str, Any]:
         """
@@ -888,7 +960,14 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             状态更新字典
         """
         logger.info("执行 RAG 分析器节点")
-        
+
+        await self._record_agent_execution(
+            agent_name="rag_analyzer",
+            node_name="rag_analyzer",
+            state=state,
+            updates={}
+        )
+
         current_step = self._get_current_step(state)
         retrieved_docs = self._get_state_value(state, "retrieved_docs", [])
         
@@ -929,15 +1008,8 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             )
         }
 
-        await self._record_agent_execution(
-            agent_name="rag_analyzer",
-            node_name="rag_analyzer",
-            state=state,
-            updates=updates
-        )
-
         return updates
-    
+
     @with_error_handling(agent_name="dynamic_director", action_name="direction_adjustment")
     async def _dynamic_director_node(self, state: GlobalState) -> Dict[str, Any]:
         """
@@ -955,7 +1027,14 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             状态更新字典
         """
         logger.info("执行动态导演节点")
-        
+
+        await self._record_agent_execution(
+            agent_name="dynamic_director",
+            node_name="dynamic_director",
+            state=state,
+            updates={}
+        )
+
         director_feedback = self._get_director_feedback(state)
         rag_analysis = director_feedback.get("rag_analysis", {})
         
@@ -998,15 +1077,8 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             )
         }
 
-        await self._record_agent_execution(
-            agent_name="dynamic_director",
-            node_name="dynamic_director",
-            state=state,
-            updates=updates
-        )
-
         return updates
-    
+
     @with_error_handling(agent_name="skill_recommender", action_name="recommend_skill")
     async def _skill_recommender_node(self, state: GlobalState) -> Dict[str, Any]:
         """
@@ -1024,7 +1096,14 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             状态更新字典
         """
         logger.info("执行技能推荐器节点")
-        
+
+        await self._record_agent_execution(
+            agent_name="skill_recommender",
+            node_name="skill_recommender",
+            state=state,
+            updates={}
+        )
+
         current_step = self._get_current_step(state)
         if not current_step:
             return {}
@@ -1075,15 +1154,8 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
 
         updates["execution_log"] = logs
 
-        await self._record_agent_execution(
-            agent_name="skill_recommender",
-            node_name="skill_recommender",
-            state=state,
-            updates=updates
-        )
-
         return updates
-    
+
     @with_error_handling(agent_name="planner", action_name="generate_outline")
     async def _planner_node(self, state: GlobalState) -> Dict[str, Any]:
         """
@@ -1101,11 +1173,18 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             状态更新字典（包含 outline 和 execution_log）
         """
         logger.info("执行规划器节点")
-        
+
+        await self._record_agent_execution(
+            agent_name="planner",
+            node_name="planner",
+            state=state,
+            updates={}
+        )
+
         user_topic = self._get_state_value(state, "user_topic", "")
-        
+
         updates = await self.node_factory.planner_node(state)
-        
+
         if self.enable_agentic_rag:
             agent_logger.log_agent_transition(
                 from_agent="entry",
@@ -1113,13 +1192,6 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
                 step_id=None,
                 reason="generate_outline"
             )
-
-        await self._record_agent_execution(
-            agent_name="planner",
-            node_name="planner",
-            state=state,
-            updates=updates
-        )
 
         return updates
     
@@ -1141,12 +1213,20 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             状态更新字典
         """
         logger.info("执行导航器节点")
-        
+
         outline = self._get_state_value(state, "outline", [])
         current_step_index = self._get_state_value(state, "current_step_index", 0)
+
+        await self._record_agent_execution(
+            agent_name="navigator",
+            node_name="navigator",
+            state=state,
+            updates={}
+        )
+
         current_intent = self._get_state_value(state, "current_intent", None)
         retry_count = self._get_state_value(state, "retrieval_retry_count", 0)
-        
+
         if current_step_index >= len(outline):
             updates = {
                 "workflow_complete": True,
@@ -1156,12 +1236,6 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
                     "action": f"navigation complete - all {len(outline)} steps processed"
                 }]
             }
-            await self._record_agent_execution(
-                agent_name="navigator",
-                node_name="navigator",
-                state=state,
-                updates=updates
-            )
             return updates
         
         intent_obj = None
@@ -1239,14 +1313,14 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
         """
         logger.info("执行导演节点")
 
-        updates = await self.node_factory.director_node(state)
-
         await self._record_agent_execution(
             agent_name="director",
             node_name="director",
             state=state,
-            updates=updates
+            updates={}
         )
+
+        updates = await self.node_factory.director_node(state)
 
         return updates
     
@@ -1268,14 +1342,14 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
         """
         logger.info("执行转向管理器节点")
 
-        updates = await self.node_factory.pivot_manager_node(state)
-
         await self._record_agent_execution(
             agent_name="pivot_manager",
             node_name="pivot_manager",
             state=state,
-            updates=updates
+            updates={}
         )
+
+        updates = await self.node_factory.pivot_manager_node(state)
 
         return updates
     
@@ -1297,14 +1371,14 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
         """
         logger.info("执行重试保护节点")
 
-        updates = await self.node_factory.retry_protection_node(state)
-
         await self._record_agent_execution(
             agent_name="retry_protection",
             node_name="retry_protection",
             state=state,
-            updates=updates
+            updates={}
         )
+
+        updates = await self.node_factory.retry_protection_node(state)
 
         return updates
     
@@ -1326,14 +1400,14 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
         """
         logger.info("执行编剧节点")
 
-        updates = await self.node_factory.writer_node(state)
-
         await self._record_agent_execution(
             agent_name="writer",
             node_name="writer",
             state=state,
-            updates=updates
+            updates={}
         )
+
+        updates = await self.node_factory.writer_node(state)
 
         return updates
     
@@ -1355,20 +1429,28 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
         """
         logger.info("执行事实检查器节点")
 
-        updates = await self.node_factory.fact_checker_node(state)
-
         await self._record_agent_execution(
             agent_name="fact_checker",
             node_name="fact_checker",
             state=state,
-            updates=updates
+            updates={}
         )
+
+        updates = await self.node_factory.fact_checker_node(state)
 
         return updates
     
-    def _step_advancer_node(self, state: GlobalState) -> Dict[str, Any]:
+    async def _step_advancer_node(self, state: GlobalState) -> Dict[str, Any]:
         old_index = self._get_state_value(state, "current_step_index", 0)
         outline = self._get_state_value(state, "outline", [])
+
+        await self._record_agent_execution(
+            agent_name="step_advancer",
+            node_name="step_advancer",
+            state=state,
+            updates={}
+        )
+
         skip_current_step = self._get_state_value(state, "skip_current_step", False)
         
         is_complete = old_index >= len(outline)
@@ -1423,14 +1505,14 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
         """
         logger.info("执行编译器节点")
 
-        updates = await self.node_factory.compiler_node(state)
-
         await self._record_agent_execution(
             agent_name="compiler",
             node_name="compiler",
             state=state,
-            updates=updates
+            updates={}
         )
+
+        updates = await self.node_factory.compiler_node(state)
 
         return updates
     
@@ -1511,6 +1593,13 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             - 处理技能切换协商
             - 执行并行任务
         """
+        await self._record_agent_execution(
+            agent_name="collaboration_manager",
+            node_name="collaboration_manager",
+            state=state,
+            updates={}
+        )
+
         try:
             negotiation_result = await self.collaboration_manager.negotiate_skill_switch(
                 director_recommendation=state.get("director_recommendation", ""),
@@ -1532,16 +1621,7 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
 
         except Exception as e:
             logger.error(f"协作管理失败: {str(e)}")
-            updates = {"collaboration_error": str(e)}
-
-            await self._record_agent_execution(
-                agent_name="collaboration_manager",
-                node_name="collaboration_manager",
-                state=state,
-                updates=updates
-            )
-
-            return updates
+            return {"collaboration_error": str(e)}
 
     @with_error_handling(agent_name="execution_tracer", action_name="trace_execution")
     async def _execution_tracer_node(self, state: GlobalState) -> Dict[str, Any]:
@@ -1553,6 +1633,13 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             - 追踪决策过程
             - 分析执行模式
         """
+        await self._record_agent_execution(
+            agent_name="execution_tracer",
+            node_name="execution_tracer",
+            state=state,
+            updates={}
+        )
+
         try:
             current_agent = state.get("current_agent", "unknown")
             input_state = {
@@ -1579,16 +1666,7 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
 
         except Exception as e:
             logger.error(f"执行追踪失败: {str(e)}")
-            updates = {"tracing_error": str(e)}
-
-            await self._record_agent_execution(
-                agent_name="execution_tracer",
-                node_name="execution_tracer",
-                state=state,
-                updates=updates
-            )
-
-            return updates
+            return {"tracing_error": str(e)}
     
     @with_error_handling(agent_name="agent_reflection", action_name="agent_reflection")
     async def _agent_reflection_node(self, state: GlobalState) -> Dict[str, Any]:
@@ -1600,6 +1678,13 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
             - 调整策略
             - 记录反思结果
         """
+        await self._record_agent_execution(
+            agent_name="agent_reflection",
+            node_name="agent_reflection",
+            state=state,
+            updates={}
+        )
+
         try:
             reflection_result = await self.agent_reflection.reflect_on_failure(
                 agent_name=state.get("current_agent", "unknown"),
@@ -1607,29 +1692,11 @@ class WorkflowOrchestrator(BaseWorkflowOrchestrator):
                 state=state
             )
 
-            updates = {
+            return {
                 "reflection_result": reflection_result,
                 "strategy_adjustment": reflection_result.get("adjustments", {}) if reflection_result else {}
             }
 
-            await self._record_agent_execution(
-                agent_name="agent_reflection",
-                node_name="agent_reflection",
-                state=state,
-                updates=updates
-            )
-
-            return updates
-
         except Exception as e:
             logger.error(f"Agent 反思失败: {str(e)}")
-            updates = {"reflection_error": str(e)}
-
-            await self._record_agent_execution(
-                agent_name="agent_reflection",
-                node_name="agent_reflection",
-                state=state,
-                updates=updates
-            )
-
-            return updates
+            return {"reflection_error": str(e)}

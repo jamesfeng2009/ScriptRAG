@@ -5,6 +5,7 @@
 2. 提取检索关键词
 3. 推荐数据源
 4. 生成备选意图
+5. 从配置文件动态检测主题
 
 用于 Agentic RAG 系统的第一步，让检索更智能。
 """
@@ -12,11 +13,12 @@
 import json
 import logging
 import re
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 
 from ...services.llm.service import LLMService
 from ...infrastructure.logging import get_agent_logger
 from ...domain.models import IntentAnalysis
+from ...domain.skill_loader import SkillConfigLoader
 
 
 logger = logging.getLogger(__name__)
@@ -31,6 +33,7 @@ class IntentParserAgent:
     2. 关键词 - 用于向量检索的关键词
     3. 建议数据源 - rag/mysql/es/neo4j/web
     4. 置信度 - 分析的可信程度
+    5. 主题检测 - 从独立的主题配置文件动态检测
     
     示例:
         query = "Python 异步编程怎么实现"
@@ -40,14 +43,17 @@ class IntentParserAgent:
         # result.search_sources = ["rag"]
     """
     
-    def __init__(self, llm_service: LLMService):
+    def __init__(self, llm_service: LLMService, config_path: str = "config/skills.yaml"):
         """
         初始化意图解析智能体
         
         Args:
             llm_service: LLM 服务实例
+            config_path: 技能配置文件路径
         """
         self.llm_service = llm_service
+        self.config_path = config_path
+        self._theme_loader = SkillConfigLoader(config_path)
     
     async def parse_intent(self, query: str) -> IntentAnalysis:
         """
@@ -91,6 +97,91 @@ class IntentParserAgent:
         except Exception as e:
             logger.error(f"Intent parsing failed: {str(e)}")
             return self._fallback_intent(query)
+    
+    def detect_theme(self, query: str) -> Optional[str]:
+        """
+        从配置文件中检测主题
+        
+        Args:
+            query: 用户查询
+            
+        Returns:
+            检测到的主题名称，未检测到返回 None
+        """
+        try:
+            theme = self._theme_loader.detect_theme(query)
+            if theme:
+                logger.info(f"Detected theme from config: {theme}")
+                return theme
+            return None
+        except Exception as e:
+            logger.warning(f"Theme detection failed: {str(e)}")
+            return None
+    
+    def get_theme_skills(self, theme: str) -> Optional[Dict[str, Any]]:
+        """
+        获取主题的可用技能列表
+        
+        Args:
+            theme: 主题名称
+            
+        Returns:
+            技能配置字典，未找到返回 None
+        """
+        try:
+            skills = self._theme_loader.get_theme_skills(theme)
+            if skills:
+                logger.info(f"Loaded {len(skills)} skills for theme: {theme}")
+                return skills
+            return None
+        except Exception as e:
+            logger.warning(f"Failed to load theme skills: {str(e)}")
+            return None
+    
+    def get_theme_skill_options(self, theme: str) -> List[Dict[str, Any]]:
+        """
+        获取主题的技能选项（给前端展示）
+        
+        Args:
+            theme: 主题名称
+            
+        Returns:
+            技能选项列表
+        """
+        try:
+            return self._theme_loader.get_theme_skill_options(theme)
+        except Exception as e:
+            logger.warning(f"Failed to load skill options: {str(e)}")
+            return []
+    
+    def get_theme_default_skill(self, theme: str) -> str:
+        """
+        获取主题的默认技能
+        
+        Args:
+            theme: 主题名称
+            
+        Returns:
+            默认技能名称
+        """
+        try:
+            return self._theme_loader.get_theme_default_skill(theme)
+        except Exception as e:
+            logger.warning(f"Failed to load default skill: {str(e)}")
+            return ""
+    
+    def list_available_themes(self) -> List[str]:
+        """
+        列出可用的主题列表
+        
+        Returns:
+            主题名称列表
+        """
+        try:
+            return self._theme_loader.list_available_themes()
+        except Exception as e:
+            logger.warning(f"Failed to list themes: {str(e)}")
+            return []
     
     def _build_prompt(self, query: str) -> List[Dict[str, str]]:
         """

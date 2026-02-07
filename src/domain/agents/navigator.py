@@ -14,7 +14,8 @@
 
 import asyncio
 import logging
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Union
+from pathlib import Path
 
 from ..state_types import GlobalState
 from ..models import RetrievedDocument, IntentAnalysis, OutlineStep
@@ -28,6 +29,7 @@ from ...services.optimization import (
 )
 from ...infrastructure.logging import get_agent_logger
 from .quality_eval import QualityEvalAgent, QualityEvaluation
+from ...services.knowledge.universal_knowledge_service import UniversalKnowledgeRetrievalService
 
 
 logger = logging.getLogger(__name__)
@@ -47,6 +49,28 @@ def _set_state_value(state: Any, key: str, value: Any) -> None:
         state[key] = value
     else:
         setattr(state, key, value)
+
+
+def _is_universal_knowledge_service(retrieval_service: Any) -> bool:
+    """检查检索服务是否是 UniversalKnowledgeRetrievalService"""
+    return isinstance(retrieval_service, UniversalKnowledgeRetrievalService)
+
+
+async def _retrieve_with_universal_service(
+    retrieval_service: UniversalKnowledgeRetrievalService,
+    query: str,
+    top_k: int = 5
+) -> List:
+    """使用 UniversalKnowledgeRetrievalService 进行检索"""
+    try:
+        result = await retrieval_service.hybrid_retrieve(
+            query=query,
+            top_k=top_k
+        )
+        return result
+    except Exception as e:
+        logger.error(f"UniversalKnowledgeRetrievalService retrieval failed: {str(e)}")
+        return []
 
 
 async def retrieve_content(
@@ -117,14 +141,23 @@ async def retrieve_content(
         f"(original: {query[:50]}...)"
     )
     
+    retrieval_method = "hybrid"
     try:
-        if enable_parallel:
+        if _is_universal_knowledge_service(retrieval_service):
+            retrieval_results = await _retrieve_with_universal_service(
+                retrieval_service=retrieval_service,
+                query=enhanced_query,
+                top_k=5
+            )
+            retrieval_method = "universal_knowledge"
+        elif enable_parallel:
             retrieval_results = await _parallel_retrieve(
                 state=state,
                 retrieval_service=retrieval_service,
                 query=enhanced_query,
                 top_k=5
             )
+            retrieval_method = "parallel"
         else:
             retrieval_results = await retrieval_service.hybrid_retrieve(
                 query=enhanced_query,
@@ -144,7 +177,7 @@ async def retrieve_content(
             step_id=current_step.step_id,
             doc_count=0,
             sources=[],
-            retrieval_method="parallel" if enable_parallel else "hybrid",
+            retrieval_method=retrieval_method,
             confidence_scores=[]
         )
         
@@ -156,7 +189,7 @@ async def retrieve_content(
             'step_id': current_step.step_id,
             'num_results': 0,
             'sources': [],
-            'retrieval_method': 'parallel' if enable_parallel else 'hybrid',
+            'retrieval_method': retrieval_method,
             'enhanced_query': enhanced_query,
             'original_query': query,
             'status': 'no_results'
@@ -204,7 +237,7 @@ async def retrieve_content(
         step_id=current_step.step_id,
         doc_count=len(retrieved_docs),
         sources=sources,
-        retrieval_method="parallel" if enable_parallel else "hybrid",
+        retrieval_method=retrieval_method,
         confidence_scores=confidence_scores
     )
     
@@ -214,7 +247,7 @@ async def retrieve_content(
         'step_id': current_step.step_id,
         'num_results': len(retrieved_docs),
         'sources': sources,
-        'retrieval_method': 'parallel' if enable_parallel else 'hybrid',
+        'retrieval_method': retrieval_method,
         'enhanced_query': enhanced_query,
         'original_query': query
     }
@@ -278,20 +311,32 @@ async def _parallel_retrieve(
         return []
 
     async def vector_search():
-        return await retrieval_service.retrieve_with_strategy(
-            workspace_id="default",
-            query=query,
-            strategy_name="vector_search",
-            top_k=top_k
-        )
+        if hasattr(retrieval_service, 'async_retrieve'):
+            result = await retrieval_service.async_retrieve(query=query, top_k=top_k)
+            return result.documents
+        elif hasattr(retrieval_service, 'retrieve_with_strategy'):
+            return await retrieval_service.retrieve_with_strategy(
+                workspace_id="default",
+                query=query,
+                strategy_name="vector_search",
+                top_k=top_k
+            )
+        else:
+            result = retrieval_service.retrieve(query=query, top_k=top_k)
+            return result.documents if hasattr(result, 'documents') else []
 
     async def keyword_search():
-        return await retrieval_service.retrieve_with_strategy(
-            workspace_id="default",
-            query=query,
-            strategy_name="keyword_search",
-            top_k=top_k
-        )
+        if hasattr(retrieval_service, 'async_retrieve'):
+            return []
+        elif hasattr(retrieval_service, 'retrieve_with_strategy'):
+            return await retrieval_service.retrieve_with_strategy(
+                workspace_id="default",
+                query=query,
+                strategy_name="keyword_search",
+                top_k=top_k
+            )
+        else:
+            return []
 
     try:
         vector_results, keyword_results = await asyncio.gather(
@@ -414,8 +459,10 @@ async def _parallel_process_results(
     """
     async def process_single_result(result) -> RetrievedDocument:
         try:
+            file_path = getattr(result, 'file_path', '') or getattr(result, 'id', '')
+
             parsed_code = parser_service.parse(
-                file_path=result.file_path,
+                file_path=file_path,
                 content=result.content
             )
 
@@ -425,7 +472,7 @@ async def _parallel_process_results(
             if summarization_service.check_size(result.content):
                 summarized = await summarization_service.summarize_document(
                     content=result.content,
-                    file_path=result.file_path,
+                    file_path=file_path,
                     parsed_code=parsed_code
                 )
                 content_to_use = summarized.summary
@@ -433,7 +480,7 @@ async def _parallel_process_results(
 
             doc = RetrievedDocument(
                 content=content_to_use,
-                source=result.file_path,
+                source=file_path,
                 confidence=getattr(result, 'confidence', 0.5),
                 metadata={
                     'similarity': getattr(result, 'similarity', 0.0),
@@ -453,10 +500,11 @@ async def _parallel_process_results(
             return doc
 
         except Exception as e:
-            logger.error(f"Failed to process result {result.file_path}: {str(e)}")
+            logger.error(f"Failed to process result {getattr(result, 'id', 'unknown')}: {str(e)}")
+            file_path = getattr(result, 'file_path', '') or getattr(result, 'id', '')
             return RetrievedDocument(
                 content=result.content,
-                source=result.file_path,
+                source=file_path,
                 confidence=getattr(result, 'confidence', 0.0),
                 metadata={'error': str(e)}
             )

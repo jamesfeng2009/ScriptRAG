@@ -148,7 +148,7 @@ class FactCheckerMinimalContext:
                 filtered_docs.append({
                     "content": doc.content[:5000],
                     "source": doc.source,
-                    "citation": doc.get("citation", f"[{len(filtered_docs) + 1}]")
+                    "citation": getattr(doc, "citation", None) or f"[{len(filtered_docs) + 1}]"
                 })
 
         max_docs = 3

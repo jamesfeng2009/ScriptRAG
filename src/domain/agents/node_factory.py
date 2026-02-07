@@ -636,6 +636,39 @@ class NodeFactory:
                     )
                 }
             
+            quality_evaluation = state.get("quality_evaluation")
+            if quality_evaluation:
+                if isinstance(quality_evaluation, dict):
+                    q_score = quality_evaluation.get("overall_score", 0.0)
+                    q_level = quality_evaluation.get("quality_level", "unknown")
+                else:
+                    q_score = getattr(quality_evaluation, "overall_score", 0.0)
+                    q_level = getattr(quality_evaluation, "quality_level", "unknown")
+                
+                logger.info(f"Director: Using quality_eval result: score={q_score}, level={q_level}")
+                
+                if q_level in ["good", "excellent"]:
+                    suggested_skill = self._recommend_skill(retrieved_docs)
+                    feedback = {
+                        "decision": "continue",
+                        "reason": "质量评估通过，检索结果充足且质量良好",
+                        "confidence": q_score,
+                        "suggested_skill": suggested_skill,
+                        "metadata": {"quality_score": q_score, "from_quality_eval": True}
+                    }
+                    logger.info(f"Director: Returning continue based on quality_eval")
+                    return {
+                        "director_feedback": feedback,
+                        "execution_log": create_success_log(
+                            agent="director",
+                            action="quality_evaluation_passed",
+                            details={"step_index": step_index, "quality_score": q_score}
+                        )
+                    }
+                else:
+                    logger.info(f"Director: quality_eval level={q_level} not in [good, excellent], skipping trust")
+            
+            logger.info(f"Director: Falling back to _evaluate_retrieval_quality")
             quality_score = self._evaluate_retrieval_quality(retrieved_docs)
             retry_count = state.get("retrieval_retry_count", 0)
             max_retries = 2
@@ -742,14 +775,21 @@ class NodeFactory:
                 "error_flag": "llm_error"
             }
     
-    def _evaluate_retrieval_quality(self, documents: List[Dict]) -> float:
+    def _evaluate_retrieval_quality(self, documents: List) -> float:
         """评估检索质量"""
         if not documents:
             return 0.0
-        
+
         doc_count = len(documents)
-        avg_score = sum(doc.get("score", 0) for doc in documents) / doc_count
-        
+
+        def get_score(doc):
+            if isinstance(doc, dict):
+                return doc.get("score", 0)
+            else:
+                return getattr(doc, "score", 0) or getattr(doc, "confidence", 0)
+
+        avg_score = sum(get_score(doc) for doc in documents) / doc_count
+
         count_score = min(doc_count / 5, 1.0)
         return 0.3 * count_score + 0.7 * avg_score
     
@@ -852,7 +892,10 @@ class NodeFactory:
             fragment = {
                 "step_id": step_index,
                 "content": fragment_content,
-                "references": [doc.get("source", "") for doc in retrieved_docs],
+                "references": [
+                    getattr(doc, "source", "") or doc.get("source", "") 
+                    for doc in retrieved_docs
+                ],
                 "skill_used": current_skill
             }
             
@@ -896,11 +939,14 @@ class NodeFactory:
         else:
             step_title = getattr(step, "title", "未知步骤")
             step_description = getattr(step, "description", "")
-        
+
         content_parts = []
         for doc in documents[:3]:
-            content_parts.append(doc.get("content", "")[:500])
-        
+            if isinstance(doc, dict):
+                content_parts.append(doc.get("content", "")[:500])
+            else:
+                content_parts.append(getattr(doc, "content", "")[:500])
+
         retrieved_text = "\n\n".join(content_parts)
         
         prompt = f"""请根据以下信息生成剧本片段：
@@ -1091,16 +1137,21 @@ class NodeFactory:
                     "max_retries_reached": True
                 }
             
+            new_retry_count = retry_count + 1
+            
+            outline[current_step_index]["retry_count"] = new_retry_count
+            
             return {
                 "execution_log": create_success_log(
                     agent="retry_protection",
                     action="retry_allowed",
                     details={
                         "step_index": current_step_index,
-                        "retry_count": retry_count,
+                        "retry_count": new_retry_count,
                         "max_retries": max_retries
                     }
-                )
+                ),
+                "outline": outline
             }
         
         except Exception as e:
@@ -1240,14 +1291,12 @@ class NodeFactory:
         if not retrieved_docs:
             return {"is_valid": True, "issues": [], "reason": "no_retrieved_docs"}
         
-        scope = verification_context.get("verification_scope", {})
-        max_docs = scope.get("max_retrieval_docs", 3)
+        max_docs = 3
         docs_to_use = retrieved_docs[:max_docs]
         
-        prompt_messages = self.fact_checker_context.create_verification_prompt(
+        prompt_messages = self.fact_checker_context.create_verification_messages(
             fragment_content=fragment_content,
-            retrieved_docs=docs_to_use,
-            verification_scope=scope
+            retrieved_docs=docs_to_use
         )
         
         try:

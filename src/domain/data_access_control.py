@@ -193,7 +193,7 @@ DATA_OWNERSHIP_CONFIG: Dict[str, FieldConfig] = {
         description="工作流完成标志"
     ),
     "final_screenplay": FieldConfig(
-        owner=DataOwner.WRITER,
+        owner=DataOwner.COMPILER,
         write_policy=WritePolicy.OWNER_ONLY,
         required_by={"*"},
         sensitivity=ContextSensitivity.MEDIUM,

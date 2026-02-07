@@ -1,0 +1,169 @@
+# 圣斗士星矢主题配置
+# 每个剧本/主题都可以创建独立的 YAML 文件，放到 config/themes/ 目录下
+
+version: "1.0"
+
+# 主题基本信息
+theme:
+  id: "saint_seiya"
+  name: "圣斗士星矢"
+  description: "以圣斗士星矢攻打十二宫为背景的剧本生成"
+
+# 主题关键词（用于意图识别）
+keywords:
+  - priority: 1
+    words:
+      - "圣斗士"
+      - "星矢"
+      - "天马座"
+      - "雅典娜"
+      - "十二宫"
+      - "黄金圣斗士"
+      - "小宇宙"
+      - "教皇"
+  - priority: 2
+    words:
+      - "撒加"
+      - "沙加"
+      - "卡妙"
+      - "修罗"
+      - "艾欧里亚"
+      - "穆"
+      - "亚鲁迪巴"
+      - "阿布罗狄"
+      - "迪斯马斯克"
+      - "卡西欧乌斯"
+  - priority: 3
+    words:
+      - "紫龙"
+      - "冰河"
+      - "瞬"
+      - "一辉"
+      - "纱织"
+      - "天马流星拳"
+      - "天马彗星拳"
+
+# 主题专用技能
+skills:
+  heated_battle:
+    description: "热血战斗模式 - 硬刚十二宫"
+    tone: "intense"
+    prompt_config:
+      system_prompt: |
+        你是一个热血战斗剧本作家。你的任务是生成圣斗士星矢攻打十二宫的战斗场面。
+
+        要求：
+        - 详细描写战斗场面，突出星矢的小宇宙爆发
+        - 天马流星拳、天马彗星拳等技能要有震撼的描写
+        - 敌我实力对比要鲜明
+        - 黄金圣斗士的强大要有压迫感
+        - 星矢被打倒后站起来的毅力描写
+        - 战斗要有燃点，让读者热血沸腾
+      user_template: |
+        当前剧情: {step_description}
+
+        战斗背景:
+        {retrieved_content}
+
+        请生成热血的战斗场面剧本。
+      temperature: 0.85
+      max_tokens: 3000
+
+  strategic_approach:
+    description: "策略智取模式 - 以柔克刚"
+    tone: "calculated"
+    prompt_config:
+      system_prompt: |
+        你是一个策略大师。任务是生成圣斗士星矢以智取胜攻打十二宫的剧本。
+
+        要求：
+        - 分析每个黄金圣斗士的弱点和神话典故
+        - 利用雅典娜之血、雅典娜的祈祷等神话元素
+        - 星矢的聪明才智和临场应变
+        - 以柔克刚，四两拨千斤的战术
+        - 不是硬拼，而是找到对手的破绽
+      user_template: |
+        当前剧情: {step_description}
+
+        策略背景:
+        {retrieved_content}
+
+        请生成以智取胜的剧本。
+      temperature: 0.6
+      max_tokens: 3000
+
+  emotional_bond:
+    description: "感情羁绊模式 - 伙伴情深"
+    tone: "touching"
+    prompt_config:
+      system_prompt: |
+        你是一个情感大师。任务是生成圣斗士星矢中深刻情感描写的剧本。
+
+        要求：
+        - 星矢与雅典娜的情感线
+        - 与紫龙、冰河、瞬、一辉的兄弟羁绊
+        - 对手的人性深度（比如撒加的悲剧、卡妙的师徒情）
+        - 卡西欧乌斯对雅典娜的单恋
+        - 战斗中的情感爆发点
+        - 让人感动的台词和场景
+      user_template: |
+        当前剧情: {step_description}
+
+        情感背景:
+        {retrieved_content}
+
+        请生成情感深刻的剧本片段。
+      temperature: 0.7
+      max_tokens: 3000
+
+# 默认技能
+default_skill: "heated_battle"
+
+# 技能选择选项（给前端展示）
+skill_options:
+  - id: "heated_battle"
+    name: "热血战斗"
+    icon: "🔥"
+    description: "硬刚十二宫，爆发小宇宙"
+    trigger_keywords:
+      - "热血"
+      - "战斗"
+      - "硬刚"
+  - id: "strategic_approach"
+    name: "策略智取"
+    icon: "🧠"
+    description: "以智取胜，找到对手弱点"
+    trigger_keywords:
+      - "策略"
+      - "智取"
+      - "巧妙"
+  - id: "emotional_bond"
+    name: "感情羁绊"
+    icon: "💕"
+    description: "伙伴情深，人性深度"
+    trigger_keywords:
+      - "感情"
+      - "情感"
+      - "羁绊"
+
+# 剧本特有配置
+script_config:
+  house_order:
+    - "白羊宫"
+    - "金牛宫"
+    - "双子宫"
+    - "巨蟹宫"
+    - "狮子宫"
+    - "处女宫"
+    - "天秤宫"
+    - "天蝎宫"
+    - "射手宫"
+    - "摩羯宫"
+    - "水瓶宫"
+    - "双鱼宫"
+
+  protagonist_skills:
+    - "天马流星拳"
+    - "天马彗星拳"
+    - "天马回旋碎击拳"
+    - "雅典娜之惊叹"
